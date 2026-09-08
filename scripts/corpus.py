@@ -94,6 +94,10 @@ CORPUS_FIELDS = (
     "extraction_path", "appraisal_path", "first_seen_query",
 )
 CORPUS_EXTENSIONS = ("seen_in_queries", "merged_from", "source_ids")
+# schema.md R9: optional bibliographic extras supplied by `eutils.py efetch` and
+# consumed by `render.py` / `okf.py`. Carried through verbatim when present, never
+# fetched or invented here. volume/issue/pages/issn are strings, never numbers.
+CORPUS_BIBLIO = ("volume", "issue", "pages", "issn", "epub_date", "abstract", "grants")
 FULLTEXT_FIELDS = (
     "status", "source_tier", "access_route", "local_path", "sha256",
     "truncation_detected",
@@ -335,7 +339,8 @@ def normalize_record(raw: dict, *, allow_extra: bool = False) -> dict:
     """Coerce an input dict into a schema-complete corpus record. Validates enums."""
     if not isinstance(raw, dict):
         raise UserError("corpus record must be a JSON object")
-    unknown = set(raw) - set(CORPUS_FIELDS) - set(CORPUS_EXTENSIONS) - {"url", "resource"}
+    unknown = (set(raw) - set(CORPUS_FIELDS) - set(CORPUS_EXTENSIONS)
+               - set(CORPUS_BIBLIO) - {"url", "resource"})
     if unknown and not allow_extra:
         raise UserError(
             "unknown corpus field(s): " + ", ".join(sorted(unknown))
@@ -417,11 +422,19 @@ def normalize_record(raw: dict, *, allow_extra: bool = False) -> dict:
     rec["seen_in_queries"] = sorted(set(seen), key=query_sort_key)
     rec["merged_from"] = sorted(set(raw.get("merged_from") or []))
     rec["source_ids"] = sorted(set(raw.get("source_ids") or []))
+    for field in CORPUS_BIBLIO:                       # R9 — present-only passthrough
+        if raw.get(field) not in (None, "", []):
+            value = raw[field]
+            if field in ("volume", "issue", "pages", "issn") and not isinstance(value, str):
+                value = str(value)
+            rec[field] = value
     return rec
 
 
 def strict_schema_view(rec: dict) -> dict:
-    return {k: rec[k] for k in CORPUS_FIELDS if k in rec}
+    # R7/R14 extensions are stripped; R9's optional bibliographic fields are §4
+    # fields and survive when present.
+    return {k: rec[k] for k in CORPUS_FIELDS + CORPUS_BIBLIO if k in rec}
 
 
 # ------------------------------------------------------------------ corpus store
@@ -574,6 +587,10 @@ def merge_records(existing: dict, incoming: dict) -> dict:
     out["source_ids"] = sorted(
         set(existing.get("source_ids") or []) | set(incoming.get("source_ids") or [])
     )
+    for field in CORPUS_BIBLIO:                       # R9 — never dropped by a merge
+        value = _prefer(existing.get(field), incoming.get(field), keep_existing)
+        if value not in (None, "", []):
+            out[field] = value
     return out
 
 
