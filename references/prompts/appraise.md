@@ -1,9 +1,17 @@
 # prompt: appraise (stage 6)
 
+<!-- coordinator notes — everything above the `---` is for the dispatching main thread, and is
+     NOT part of the prompt handed to the subagent. -->
+
 Prompt block for an appraisal subagent. Model: opus. **One paper per subagent.** Contract:
 `references/schema.md` §8 (`appraisal record`) + §1 (`receipt`) + §12 (`claim span record`).
 Domain detail: `references/appraisal.md`. Evidence layer: `references/evidence-kernel.md`.
 Coordinator substitutes `{{...}}`.
+
+The skeleton in the prompt body below is a complete, verified transcription of §8 + §1 + §12.
+Do not append the contract file to the subagent's inputs; it is 900 lines it does not need.
+`references/appraisal.md` is a different matter: it carries the RoB2 / ROBINS-I / NOS / AMSTAR-2
+domain rules, and an appraiser that has not read it will pick the wrong tool.
 
 ---
 
@@ -91,6 +99,10 @@ study view supports, and say in the record (via `extractor`-style wording in a d
 or the coordinator's synthesis notes) that inconsistency is a body-level judgement.
 
 ## Output — you write the file yourself
+
+The JSON skeleton below is the complete and authoritative contract for your output. Do not read
+`references/schema.md`: it contains nothing you need here. (`references/appraisal.md`, if the
+coordinator gave it to you, is the exception — that one you do need.)
 
 Write `workspace/appraisals/pmid-{{PMID}}.json` (non-PMID: `<evidence_id-slug>.json`), one
 pretty-printed JSON object, exactly this shape:

@@ -1,8 +1,14 @@
 # prompt: adjudicate (stage 3, dual screening only)
 
+<!-- coordinator notes — everything above the `---` is for the dispatching main thread, and is
+     NOT part of the prompt handed to the subagent. -->
+
 Prompt block for an adjudicator subagent. Runs at `systematic` / `max` when two screeners
 disagree on one record. Contract: `references/schema.md` §6 (`adjudication record`) + §1
 (`receipt`). Coordinator substitutes `{{...}}`.
+
+The skeleton in the prompt body below is a complete, verified transcription of §6 + §1. Do not
+append the contract file to the subagent's inputs; it is 900 lines it does not need.
 
 ---
 
@@ -22,6 +28,9 @@ You MUST NOT spawn subagents, screen other records, search, fetch full text, or 
 - Task id: `{{TASK_ID}}` (`adjudicate:pmid:{{PMID}}`)
 
 ## Output — you write the file yourself
+
+The JSON skeleton below is the complete and authoritative contract for your output. Do not read
+`references/schema.md`: it contains nothing you need here.
 
 Write `workspace/screening/adjudication/pmid-{{PMID}}.json`, one pretty-printed JSON object:
 

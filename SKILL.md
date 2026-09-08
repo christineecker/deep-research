@@ -13,13 +13,14 @@ Read this file, then read only the reference you need for the stage you are in.
 
 | Need | Read |
 |---|---|
-| JSON contracts for every record and receipt | `references/schema.md` |
+| JSON contracts for every record and receipt | `references/schema.md` (index → `references/schema/*.md`, one file per record) |
 | Query design, MeSH, hedges, orthogonality | `references/search-strategy.md` |
 | Full-text ladder, truncation detector, quarantine | `references/acquisition.md` |
 | RoB2 / ROBINS-I / NOS / AMSTAR-2 / GRADE | `references/appraisal.md` |
 | Effect direction, heterogeneity, conflict, the hard wall | `references/synthesis.md` |
 | PRISMA flow, citation format, report skeleton | `references/reporting.md` |
 | Wiki bundle frontmatter, taxonomy, validation rules | `references/okf-bundle.md` |
+| Snapshots, spans, freshness, the assembler gate | `references/evidence-kernel.md` |
 | Subagent prompt blocks | `references/prompts/{screen,adjudicate,extract,appraise}.md` |
 
 ---
@@ -115,6 +116,8 @@ script cannot call — the script appends `needs_mcp` tasks to
 `fulltext.py resolve-mcp` (or re-run `acquire`, which picks it up).
 Record `source_tier` + `access_route` on every record. Quarantined papers go to `missing.md`;
 alert the user, keep going, mark the synthesis provisional.
+`acquire` fetches records concurrently (`--workers`, default 4, or `budgets.max_parallel`);
+per-host rate limits hold regardless, and `--offline` runs serially.
 
 **Stage 5 — extract.** One subagent per paper, opus, `references/prompts/extract.md`. Design,
 N, population, I/C, outcomes with effect + CI + direction, funding/COI, limitations, quotes

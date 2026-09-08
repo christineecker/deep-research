@@ -1,8 +1,16 @@
 # prompt: extract (stage 5)
 
+<!-- coordinator notes — everything above the `---` is for the dispatching main thread, and is
+     NOT part of the prompt handed to the subagent. -->
+
 Prompt block for an extraction subagent. Model: opus. **One paper per subagent.** Contract:
 `references/schema.md` §7 (`extraction record`) + §1 (`receipt`) + §12 (`claim span record`).
 Evidence layer: `references/evidence-kernel.md`. Coordinator substitutes `{{...}}`.
+
+The skeleton in the prompt body below is a complete, verified transcription of §7 + §1 + §12.
+The only §7 fields it omits are `quotes[].page`, `.section` and `.text`, which R17 requires the
+subagent to leave empty. Do not append the contract file to the subagent's inputs: it is 900
+lines, and an extraction subagent's context is better spent on the paper.
 
 ---
 
@@ -53,6 +61,9 @@ Read this twice. It is the rule this whole stage exists to enforce.
 - `access` on every span is copied from `{{ACCESS}}`. You do not choose it.
 
 ## Output — you write the file yourself
+
+The JSON skeleton below is the complete and authoritative contract for your output. Do not read
+`references/schema.md`: it contains nothing you need here, and your context belongs to the paper.
 
 Write `workspace/extractions/pmid-{{PMID}}.json` (non-PMID: `<evidence_id-slug>.json`), one
 pretty-printed JSON object, exactly this shape:

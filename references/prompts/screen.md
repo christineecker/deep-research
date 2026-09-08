@@ -1,7 +1,13 @@
 # prompt: screen (stage 3)
 
+<!-- coordinator notes — everything above the `---` is for the dispatching main thread, and is
+     NOT part of the prompt handed to the subagent. -->
+
 Prompt block for a screening subagent. Model: sonnet. Contract: `references/schema.md` §5
 (`screening verdict`) + §1 (`receipt`). Coordinator substitutes `{{...}}` before pasting.
+
+The skeleton in the prompt body below is a complete, verified transcription of §5 + §1. Do not
+append the contract file to the subagent's inputs; it is 900 lines it does not need.
 
 Batching: one invocation carries exactly **one** task, which may cover several PMIDs. Write one
 output file per PMID; return exactly **one** receipt for the one `task_id`. Never return an
@@ -30,6 +36,10 @@ and say so in `reason`; missing abstract alone is not grounds for `exclude`, it 
 unless a criterion clearly fails on the title.
 
 ## Output — you write the files yourself
+
+The JSON skeleton below is the complete and authoritative contract for your output. Do not read
+`references/schema.md`: it contains nothing you need here and costs you context you should be
+spending on the records.
 
 For each record write `workspace/screening/{{SCREENER_ID}}/pmid-<pmid>.json`
 (non-PMID records: `workspace/screening/{{SCREENER_ID}}/<evidence_id-slug>.json`, with the
