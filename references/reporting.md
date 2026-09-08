@@ -153,7 +153,7 @@ Each section names its data source. `scripts/verify.py` checks section presence.
 | 0 | Title block | `config.json` | question, profile, scope, rigor, run slug, date of last search, **PROVISIONAL** marker when applicable |
 | 1 | Plain-language summary | synthesis | <=200 words; GRADE wordings only; every sentence traceable to §8 |
 | 2 | Question and protocol | `protocol.md` | PICO/PECO, inclusion/exclusion criteria with ids (`I1`, `E2`, …), pre-declared timepoint bands, moderators, MIDs |
-| 3 | Methods — search | `workspace/search/*.json` | every `query_string`, `translated_query`, `source`, `count`, `executed_at`, verbatim and reproducible |
+| 3 | Methods — search | `workspace/search/*.json`, `config.json` `connectors` | every `query_string`, `translated_query`, `source`, `count`, `executed_at`, verbatim and reproducible. Name any source the profile assumes but the session could not reach (an unauthorized connector), and say what it means for coverage — a `max` run without Scholar Gateway / Consensus searched a `wide` set and must say so |
 | 4 | Methods — screening, retrieval, appraisal | `taskboard.jsonl`, `config.json` | dual-screening design, acquisition-ladder rungs used, appraisal tools by design, models per stage |
 | 5 | PRISMA flow + screening log | `corpus.py prisma` | §1 counters, exclusion reasons by criterion id, dual-screening agreement |
 | 6 | Characteristics of included studies | `corpus.jsonl` + `workspace/extractions/*.json` | evidence table: study, design, N, population, I/C, outcomes, funding/COI, evidence basis, source tier |

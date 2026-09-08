@@ -45,8 +45,46 @@ re-prompt for a value already in `config.json` unless the user asks to change it
 - **medium** — + `scripts/eutils.py` (exact boolean/MeSH, hit counts, large result sets)
 - **wide** — + Europe PMC REST (indexes bioRxiv / medRxiv / Research Square; preprints tagged loudly)
 - **max** — + web: guidelines, grey literature, Scholar Gateway / Consensus connectors.
-  Both connectors are currently **unauthorized**. Detect this and tell the user to authorize
-  them in claude.ai connector settings. Never fail silently, never fake the coverage.
+  Never assume these are available: check at Stage 0 (below) and never fake the coverage.
+
+### Connector preflight — before the first query, every run
+
+Tool availability is a property of **this session**, not of the skill: MCP servers attach at
+session start, so a connector authorized ten minutes ago is still absent here until the user
+starts a new session. Never carry a claim about what is connected across sessions, and never
+copy one out of this file — it would be a fact with an expiry date.
+
+Check your own tool list, once, at Stage 0:
+
+| Source | Look for | Needed by |
+|---|---|---|
+| PubMed MCP | `mcp__claude_ai_PubMed__*` (`search_articles`, `get_article_metadata`, `get_full_text_article`, `find_related_articles`) | **every** scope; also ladder rung 1 |
+| Scholar Gateway | its `mcp__*` tools | `max` only |
+| Consensus | its `mcp__*` tools | `max` only |
+
+`scripts/eutils.py` and Europe PMC are plain HTTPS and need no connector; `narrow` through
+`wide` therefore run on PubMed MCP alone.
+
+What to do about a missing one, in the turn you find it:
+
+- **Tell the user which server is missing, by name**, and that it is authorized in
+  claude.ai → Settings → Connectors, then picked up by a **new** session — not this one.
+- You cannot authorize it yourself: it is a browser OAuth flow. Never ask the user for an
+  authorization code, token, or callback URL, and never offer a workaround that fetches the
+  same material another way.
+- Then ask whether to **proceed at a reduced scope now** or **stop and resume after
+  connecting**. Their call, not yours. `max` without Scholar Gateway and Consensus is `wide`
+  with extra steps — say that plainly rather than running `max` and quietly returning less.
+- Missing PubMed MCP is more serious: ladder rung 1 cannot run at any scope, so paywalled
+  records lose their best source. Say so before screening, not after.
+
+Record what you found in `config.json` under `connectors`, e.g.
+`{"pubmed_mcp": true, "scholar_gateway": false, "consensus": false, "checked_at": "<iso>"}`,
+and carry it into the report's Methods section: a run that could not reach a source the
+profile assumes must say which source and what it means for coverage.
+
+On resume, re-check rather than trusting the recorded value — a resumed run is usually a new
+session, which is exactly when availability changes.
 
 ### Ask, if not already known
 
@@ -68,9 +106,29 @@ re-prompt for a value already in `config.json` unless the user asks to change it
   missing.md      inbox/
 ```
 
+**Reserved directories — scanned by the scripts, one record shape only.** `corpus.py` reads
+every `*.json` in these and treats each as a record of that stage's type:
+
+| Directory | Holds, and nothing else |
+|---|---|
+| `workspace/search/` | one *search result record* per query (`q1.json` …) |
+| `workspace/screening/<screener>/` | one *screening verdict* per record (`pmid-*.json`) |
+| `workspace/screening/adjudication/` | one *adjudication record* per disputed record |
+| `workspace/extractions/`, `workspace/appraisals/` | one record per paper |
+
+Put batch inputs, efetch payloads, rankings and other working files **outside** these — e.g.
+`workspace/batches/`, `workspace/fetch/`. A stray file of the wrong shape used to crash
+`prisma`/`screen-ingest` with a bare `AttributeError`; it is now skipped with a warning, but
+the directory contract is still the rule.
+
 Write `config.json` first: profile, scope, rigor, gates, filters, wiki target, budgets
 (`max_articles`, `max_subagents`, `max_parallel`, `max_wall_time`, `max_fulltext_failures`),
-and the stage pointer. Run `scripts/library.py init --wiki <root>` once per wiki.
+the `connectors` block from the preflight above, and the stage pointer. Run `scripts/library.py init --wiki <root>` once per wiki.
+
+**Stage pointer**: bump `config.json`'s `stage` as each stage completes, in the same turn.
+It is the only thing a resume trusts to know where the run got to — a live coordinator that
+carries the stage in its head leaves the pointer stale and sends the next session back to a
+stage that is already done.
 
 **Resume**: if the run directory exists, read `config.json` + `taskboard.jsonl` and continue
 incomplete/failed tasks. Do not restart the stage. Do not re-prompt.
@@ -162,6 +220,13 @@ reported as such.
   `{schema_version, task_id, status, output_path, summary}` — never raw paper text, never the
   full JSON. This is what keeps main context small over a long run.
 - Subagents **cannot spawn subagents**.
+- **Subagent shell hygiene.** Verify written files with `find <dir> -name '<glob>' | wc -l`
+  or a `python3` one-liner — never `ls`. A user alias (`ls` -> `eza`) hung indefinitely on an
+  iCloud-backed run directory and wedged the subagent's shell for 45 minutes after its work
+  had finished; the agent still returned its receipt, so the run looked clean while the
+  process lingered at 0% CPU. Do not end a task with a decorative listing.
+- The output directory is **shared across a stage's subagents**. Files from sibling batches
+  are expected; a subagent must not count, audit, or comment on files it did not write.
 - Launch independent subagents in a single message so they run concurrently, up to `max_parallel`.
 - Malformed subagent JSON → retry once, quoting the schema error → then mark failed/blocked.
 - Models: screening → sonnet; extraction and appraisal → opus; synthesis and verification →
@@ -176,7 +241,9 @@ through:
 scripts/corpus.py task claim|complete|fail|block|list|next --stage <stage> [...]
 ```
 
-which computes `inputs_hash`, stamps timestamps and appends. Completed outputs are immutable
+which computes `inputs_hash`, stamps timestamps and appends. Pass the subagent receipt's
+`summary` to `task complete --summary` so the one-line result is preserved on the board
+(`task list` prints it under the row) instead of living only in the coordinator's context. Completed outputs are immutable
 unless `inputs_hash` changes. Failed tasks retry independently. `task_id` grammar:
 `<stage>:<key-kind>:<key>` (e.g. `extract:pmid:12345678`).
 
@@ -191,6 +258,11 @@ unless `inputs_hash` changes. Failed tasks retry independently. `task_id` gramma
 - **No-progress guard**: repeated identical tool calls, or repeated task assignment with no
   newly completed or blocked work, → write diagnostics to `engine.log`, stop dispatching, and
   move to verification with a provisional report. Check with `corpus.py guard`.
+  Use `corpus.py guard --no-record` for a **status check**: every recording call appends a
+  probe, so polling the guard while a run is legitimately parked (waiting on the user, or
+  between stages) manufactures the very flat window it looks for. A board with nothing pending
+  and nothing active now reports `idle: true` and `dispatch-next-stage-or-finish` rather than
+  a stall — idle is not the same as stuck.
 
 ## Health alerts — tell the user when something is not working
 
@@ -204,7 +276,7 @@ the end.
 | Ladder rung 1 unreachable | `acquire` reports `needs_mcp > 0` and no PubMed MCP tool is in your tool list | Rung 1 cannot run this session; the best source for paywalled records is unavailable. Resolve each task `--status unavailable` rather than leaving it pending, and say the shortfall is partly infrastructure, not only paywalls |
 | Majority without full text | `quarantined + abstract_only > half` of the selected set | Extraction quality is materially limited; say so **before** extracting, and mark the synthesis provisional |
 | Any quarantined record | `missing.md` is non-empty | Name the highest-ranked losses specifically, and point at the `inbox/` + rerun loop |
-| A connector/tool the profile assumes is unauthorized | `max` scope, Scholar Gateway / Consensus | Name it and tell the user to authorize it. Never fake the coverage |
+| A connector/tool the profile assumes is unauthorized | Stage 0 connector preflight; `config.json` `connectors` | Name the server, say it is authorized in claude.ai → Settings → Connectors and picked up by a **new** session, and ask: reduced scope now, or stop and resume connected? Never fake the coverage |
 | A script crashes or a check cannot run | non-zero exit, traceback | Quote the actual error. Do not paraphrase a traceback into "some issues" |
 | A budget is hit | `max_articles`, `max_fulltext_failures`, `max_wall_time` | Say which budget, what it cut, and what the run would look like without it |
 | No-progress guard trips | `corpus.py guard` | Stop dispatching, report the diagnostics, move to a provisional report |

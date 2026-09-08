@@ -339,7 +339,7 @@ semantics, §6):
 | Any included record is `abstract_only`, including truncation-detected HTML | `corpus record.fulltext` |
 | Any task ended `failed` or `blocked` in a stage that feeds synthesis | `taskboard.jsonl` |
 | The no-progress guard fired and the run moved to verification early | `engine.log` |
-| A required connector was unauthorized at `max` scope | `engine.log` |
+| A required connector was unavailable at `max` scope | `config.json` `connectors` (Stage 0 preflight), `engine.log` |
 | Any verifier check has `status: "fail"` | `outputs/verification.json` |
 
 Requirements when provisional:

@@ -173,9 +173,16 @@ Verifier checks: `C-CITE-RESOLVE`, `C-CORPUS-COMPLETE`, `C-SEARCH-LOG`, `C-RETRA
 
 ## 10. Limitations, honestly
 
-- **Scholar Gateway and Consensus connectors are currently unauthorized.** The `max` scope
-  needs them. The skill detects this and tells you to authorize them in your claude.ai connector
-  settings; it will not silently skip them or pretend the coverage happened.
+- **`max` scope depends on connectors that may not be attached.** Scholar Gateway and Consensus
+  are the extra sources `max` adds; everything below it (`narrow`/`medium`/`wide`) runs on the
+  PubMed MCP, `eutils.py` and Europe PMC, which need no connector. The skill checks its own tool
+  list at Stage 0, records the result in `config.json` under `connectors`, and if one is missing
+  it names the server, tells you to authorize it in claude.ai → Settings → Connectors, and asks
+  whether to continue at reduced scope or stop. Two consequences worth knowing: a connector you
+  authorize mid-run is not picked up until a **new** session, because MCP servers attach at
+  session start; and a `max` run that could not reach both connectors searched a `wide` set, so
+  the report's Methods section says exactly that. It will not silently skip them or pretend the
+  coverage happened.
 - **The hypothesis-wall check is lexical and structural, not semantic.** `C-HYPOTHESIS-WALL`
   matches banned phrasings on each side of the evidence/hypothesis boundary and flags unhedged
   declaratives; it warns, it does not prove. A `PASS` means "no banned phrasing found", not
