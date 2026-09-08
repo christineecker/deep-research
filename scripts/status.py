@@ -93,6 +93,16 @@ def get_current_stage(run_dir: Path) -> tuple[str | None, dict]:
     return current, stage_progress
 
 
+def progress_bar(completed: int, total: int, width: int = 40) -> str:
+    """Generate a progress bar."""
+    if total <= 0:
+        return "[" + " " * width + "]"
+    fraction = completed / total
+    filled = int(fraction * width)
+    empty = width - filled
+    return "[" + "█" * filled + "░" * empty + f"] {completed}/{total}"
+
+
 def format_stage_status(stage: str | None, progress: dict) -> str:
     """Format stage progress line."""
     if not stage:
@@ -121,7 +131,8 @@ def format_stage_status(stage: str | None, progress: dict) -> str:
     else:
         status_part = f"({pending} pending, {completed} done)"
 
-    return f"{label}\n  {completed}/{total} completed  {status_part}"
+    bar = progress_bar(completed, total)
+    return f"{label}\n  {bar}  {status_part}"
 
 
 def format_corpus_table(run_dir: Path, filter_missing: bool = False, limit: int = 100) -> str:
@@ -286,7 +297,21 @@ def format_summary(run_dir: Path) -> str:
         lines.append(f"  Total records: {len(corpus)}")
         lines.append(f"  Screened: {screened} (included: {included}, excluded: {excluded}, unclear: {unclear})")
         lines.append(f"  Full text: {fulltext} | Abstract only: {abstract_only} | Missing: {missing}")
-        lines.append(f"  Extracted: {extracted} | Appraised: {appraised}")
+        lines.append("")
+
+        # Extraction/appraisal progress
+        lines.append("EXTRACTION & APPRAISAL")
+        lines.append("-" * 80)
+        extract_bar = progress_bar(extracted, included)
+        appraise_bar = progress_bar(appraised, included)
+        lines.append(f"  Extracted:  {extract_bar}")
+        lines.append(f"  Appraised:  {appraise_bar}")
+
+        # Completion message
+        if included > 0 and extracted == included and appraised == included:
+            lines.append("")
+            lines.append("  ✓ ALL EXTRACTION AND APPRAISAL COMPLETE")
+
         lines.append("")
 
     return "\n".join(lines)
