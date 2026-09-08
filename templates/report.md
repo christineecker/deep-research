@@ -9,7 +9,7 @@ status: {{REPORT_STATUS}}   # final | provisional (any verifier fail, or quarant
 # {{TITLE}}
 
 <!-- The deliverable. Every claim about evidence carries a footnote keyed to an evidence_id that
-     was actually retrieved this run (PLAN.md §6). No footnote -> the claim does not belong in
+     was actually retrieved this run (`SKILL.md` "Invariants"). No footnote -> the claim does not belong in
      sections 1-8; if it is your own inference it belongs in section 9, and nowhere else. -->
 
 > **Status: {{REPORT_STATUS}}.** {{STATUS_NOTE}}
@@ -91,7 +91,7 @@ Direction: {{OUTCOME_1_DIRECTION_TALLY}} <!-- e.g. "4 favor intervention, 2 null
 <!-- Where studies disagree, name the disagreeing studies and explain WHY: population, dose,
      comparator, outcome instrument, follow-up length, analysis model, risk of bias, funding.
      Never average a conflict away and never present a mean of contradictory findings as the
-     answer (PLAN.md §6). If the cause of the disagreement is unknown, say "unexplained". -->
+     answer (`SKILL.md` "Invariants"). If the cause of the disagreement is unknown, say "unexplained". -->
 
 | Outcome | Concordant studies | Discordant studies | Most plausible explanation |
 |---|---|---|---|
@@ -159,7 +159,7 @@ Reasons for downgrading: {{GRADE_FOOTNOTES}}
 
 ## References
 
-<!-- Markdown footnotes are the per-claim attribution layer (PLAN.md §6). Keys match
+<!-- Markdown footnotes are the per-claim attribution layer (`SKILL.md` "Invariants"). Keys match
      `sources[].id` in the OKF bundle. Every key used above appears here; every entry here is a
      record actually retrieved this run. Uncited included studies are reported by verify.py. -->
 

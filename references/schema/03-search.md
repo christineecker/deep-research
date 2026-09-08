@@ -5,7 +5,7 @@ Shared rules: `references/schema/00-shared.md`. Index: `references/schema.md`.
 ## 3. `search result record`
 
 `workspace/search/<query_id>.json`. One file per executed query. Every query and hit count is
-logged for reproducibility (`PLAN.md` §5 stage 2).
+logged for reproducibility (`SKILL.md` stage 2).
 
 ```json
 {

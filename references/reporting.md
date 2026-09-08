@@ -1,11 +1,11 @@
 # reporting.md — reporting manual
 
-Stage 8 of `PLAN.md` §5. Runs in **main**. Produces `outputs/report.md` (always), optionally
+Stage 8 of `SKILL.md` "Pipeline". Runs in **main**. Produces `outputs/report.md` (always), optionally
 `report.qmd` → PDF/docx via `scripts/render.py`, an HTML artifact, and the OKF bundle promotion
 via `scripts/okf.py`. Verified by `scripts/verify.py` → `outputs/verification.json`
 (schema §9) before delivery.
 
-Governing invariants (`PLAN.md` §6):
+Governing invariants (`SKILL.md` "Invariants"):
 
 - No claim without an `evidence_id` retrieved this run.
 - Per-claim attribution uses markdown footnotes keyed to `sources[].id`. A body-only citation
@@ -66,7 +66,7 @@ quarantined       = reports_not_retrieved = rows in missing.md
 
 ### Dual screening agreement
 
-Reported only when dual screening ran (`systematic`, `max` — `PLAN.md` §1).
+Reported only when dual screening ran (`systematic`, `max` — `SKILL.md`).
 
 | Reported value | Definition |
 |---|---|
@@ -93,7 +93,7 @@ BAD  "Inter-rater reliability was good."
 ### Per-claim footnotes
 
 Every claim-bearing sentence carries a markdown footnote whose key is a `sources[].id` from the
-OKF concept for that evidence (`PLAN.md` §6a). Source-id shapes: `pubmed-<pmid>`,
+OKF concept for that evidence (`references/okf-bundle.md`). Source-id shapes: `pubmed-<pmid>`,
 `doi-<slugified-doi>`, `pmc-<pmcid>`, `fulltext-<pmid>`, `url-<slug>`.
 
 ```markdown
@@ -121,7 +121,7 @@ Group CBT reduced depressive symptoms at 12 weeks relative to waitlist
 
 Any evidence obtained through the PubMed MCP or NCBI E-utilities carries **both** the PubMed
 citation and the DOI where a DOI exists. Satisfying only one violates the attribution requirement
-(`PLAN.md` §6).
+(`SKILL.md` "Invariants").
 
 - Methods states: "Records were identified via PubMed / NCBI E-utilities and the PubMed MCP
   connector", plus the date of the last search.
@@ -140,7 +140,7 @@ citation and the DOI where a DOI exists. Satisfying only one violates the attrib
 | Guideline / web | organisation, title, access date | canonical URL |
 
 Missing identifiers are omitted — never invented, never written as `N/A` (schema rule S3).
-Standard markdown links are the graph layer; Obsidian wikilinks are additive only (`PLAN.md` §6).
+Standard markdown links are the graph layer; Obsidian wikilinks are additive only (`SKILL.md` "Invariants").
 
 ---
 
@@ -215,7 +215,7 @@ published version, and the report states which version was read.
 
 ### Retracted / Expression of Concern
 
-Flagged at screening (`PLAN.md` §6; `screening verdict.retraction_flag`).
+Flagged at screening (`SKILL.md` "Invariants"; `screening verdict.retraction_flag`).
 
 | `retraction_status` | Handling |
 |---|---|
@@ -275,4 +275,4 @@ Reporting-stage checks defined here, added to schema §9's open `check_id` list:
 ```
 
 `outputs/report.md` is preserved even when rendering, export, or OKF promotion fails; the failure
-is recorded in `engine.log` (`PLAN.md` §5 failure semantics).
+is recorded in `engine.log` (`SKILL.md` "Failure semantics").

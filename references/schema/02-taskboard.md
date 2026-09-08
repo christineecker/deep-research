@@ -5,7 +5,7 @@ Shared rules: `references/schema/00-shared.md`. Index: `references/schema.md`.
 ## 2. `taskboard record`
 
 One line of `taskboard.jsonl`. Written **only** by `corpus.py task claim|complete|fail|block|list`
-(`PLAN.md` §5). The coordinator never edits this file by hand.
+(`SKILL.md` "Pipeline"). The coordinator never edits this file by hand.
 
 ```json
 {

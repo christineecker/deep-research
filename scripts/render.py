@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """render.py — report.md -> refs.bib + report.qmd -> `quarto render` (pdf/docx).
 
-Stage 8 output path of `PLAN.md` §5 / §8 Phase 5. Implements the contracts in
+Stage 8 output path of `SKILL.md` "Pipeline". Implements the contracts in
 `references/schema.md` §4 (corpus record) and its Resolution **R6** (BibTeX citation
 key = `evidence_id` with every non-alphanumeric character stripped:
 `pmid:12345678` -> `pmid12345678`), plus the citation rules of
@@ -26,7 +26,7 @@ Subcommands
         Shells out to `quarto render --to <fmt>`. On failure: `outputs/report.md` is
         preserved, nothing is deleted, the failure is appended to the run's
         `engine.log`, a JSON error object goes to stdout and the exit code is non-zero
-        (`PLAN.md` §5 "Failure semantics").
+        (`SKILL.md` "Failure semantics").
 
   all   --run-dir <dir> [--formats pdf,docx]
         One-shot bib -> qmd -> render over a run directory. Resumable and idempotent:
@@ -133,7 +133,7 @@ def read_corpus(path: Path) -> list[dict]:
 def find_run_dir(start: Path) -> Path | None:
     """Best-effort location of the run directory that owns `start`.
 
-    Run layout (PLAN.md §7): <run>/outputs/report.{md,qmd}. A file sitting directly in
+    Run layout (`SKILL.md` "Run directory"): <run>/outputs/report.{md,qmd}. A file sitting directly in
     an `outputs/` directory belongs to that directory's parent.
     """
     p = start if start.is_dir() else start.parent
@@ -149,7 +149,7 @@ def find_run_dir(start: Path) -> Path | None:
 
 
 def engine_log(run_dir: Path | None, message: str) -> None:
-    """Append one diagnostic line to the run's engine.log (PLAN.md §5)."""
+    """Append one diagnostic line to the run's engine.log (`SKILL.md` "Pipeline")."""
     if run_dir is None:
         return
     try:

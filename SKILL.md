@@ -192,6 +192,32 @@ unless `inputs_hash` changes. Failed tasks retry independently. `task_id` gramma
   newly completed or blocked work, → write diagnostics to `engine.log`, stop dispatching, and
   move to verification with a provisional report. Check with `corpus.py guard`.
 
+## Health alerts — tell the user when something is not working
+
+A degraded run looks exactly like a healthy one unless you say otherwise. Silence is a bug,
+not tact. **Surface each of the following to the user in the turn you discover it**, in plain
+words, with the numbers — never bury it in a stage summary and never let it surface only at
+the end.
+
+| Condition | How you find it | What the user must be told |
+|---|---|---|
+| Ladder rung 1 unreachable | `acquire` reports `needs_mcp > 0` and no PubMed MCP tool is in your tool list | Rung 1 cannot run this session; the best source for paywalled records is unavailable. Resolve each task `--status unavailable` rather than leaving it pending, and say the shortfall is partly infrastructure, not only paywalls |
+| Majority without full text | `quarantined + abstract_only > half` of the selected set | Extraction quality is materially limited; say so **before** extracting, and mark the synthesis provisional |
+| Any quarantined record | `missing.md` is non-empty | Name the highest-ranked losses specifically, and point at the `inbox/` + rerun loop |
+| A connector/tool the profile assumes is unauthorized | `max` scope, Scholar Gateway / Consensus | Name it and tell the user to authorize it. Never fake the coverage |
+| A script crashes or a check cannot run | non-zero exit, traceback | Quote the actual error. Do not paraphrase a traceback into "some issues" |
+| A budget is hit | `max_articles`, `max_fulltext_failures`, `max_wall_time` | Say which budget, what it cut, and what the run would look like without it |
+| No-progress guard trips | `corpus.py guard` | Stop dispatching, report the diagnostics, move to a provisional report |
+| Verifier check fails | `verify.py run` | Report which check id failed and what it blocks. A failing kernel check is never rounded down to "passed with warnings" |
+
+Two rules that override any instinct to keep the run looking clean:
+
+1. **Never report a stage as complete when part of it silently did not run.** "10 of 25 full
+   text" is the result; "acquisition complete" is not.
+2. **An empty result is a finding, not a failure to hide.** If a query yields 7 records where
+   you expected hundreds, say the literature is thin — do not quietly widen the query until
+   the number looks respectable.
+
 ## Failure semantics
 
 | Failure | Response |

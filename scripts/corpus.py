@@ -15,7 +15,7 @@ Files this script owns inside a run directory
 
 Schema extensions (documented deviations from references/schema.md §4)
   Two optional list fields are added to the corpus record so that dedupe can union
-  provenance without losing information, as required by PLAN.md §5 stage 3:
+  provenance without losing information, as required by `SKILL.md` stage 3:
     seen_in_queries : string[]  every query_id that surfaced this study (first_seen_query
                                 remains the single earliest one, per schema §4)
     merged_from     : string[]  evidence_ids absorbed into this record by dedupe
@@ -257,7 +257,7 @@ _BOOL_RE = re.compile(r"\b(and|or|not)\b", re.I)
 
 
 def norm_query(query: str) -> str:
-    """Normalized form used for the duplicate-query guard (PLAN.md §5)."""
+    """Normalized form used for the duplicate-query guard (`SKILL.md` "Pipeline")."""
     q = unicodedata.normalize("NFKC", query)
     for src, dst in _QUOTES.items():
         q = q.replace(src, dst)
@@ -708,6 +708,12 @@ def load_verdicts(run_dir: Path) -> dict[str, dict[str, dict]]:
             except json.JSONDecodeError as exc:
                 warn(f"{f}: malformed screening verdict ({exc}) — skipped")
                 continue
+            if not isinstance(v, dict):
+                warn(f"{f}: expected a screening verdict object, found "
+                     f"{type(v).__name__} — skipped. workspace/screening/<screener>/ "
+                     f"must contain only per-record verdict files; keep batch inputs "
+                     f"and other working files elsewhere (e.g. workspace/batches/)")
+                continue
             eid = verdict_evidence_id(v)
             sid = v.get("screener_id") or sub.name
             if v.get("decision") not in DECISIONS:
@@ -727,6 +733,10 @@ def load_adjudications(run_dir: Path) -> dict[str, dict]:
             a = read_json(f)
         except json.JSONDecodeError as exc:
             warn(f"{f}: malformed adjudication record ({exc}) — skipped")
+            continue
+        if not isinstance(a, dict):
+            warn(f"{f}: expected an adjudication record object, found "
+                 f"{type(a).__name__} — skipped")
             continue
         if a.get("final_decision") not in DECISIONS:
             warn(f"{f}: final_decision must be one of {DECISIONS} — skipped")
@@ -1032,7 +1042,16 @@ def build_prisma(run_dir: Path) -> dict:
             except json.JSONDecodeError as exc:
                 warn(f"{f}: malformed search result record ({exc})")
                 continue
+            if not isinstance(s, dict):
+                warn(f"{f}: expected a search result record object, found "
+                     f"{type(s).__name__} — skipped. workspace/search/ must contain "
+                     f"only search result records; keep efetch output and other "
+                     f"working files elsewhere (e.g. workspace/fetch/)")
+                continue
             queries_logged += 1
+            if s.get("hit_count_logged") is not True:
+                warn(f"{f}: hit_count_logged is not true — verifier check C-SEARCH-LOG "
+                     f"will fail and the PRISMA flow will be blocked")
             search_ids.update(s.get("retrieved_ids") or [])
             hit_counts[s.get("query_id") or f.stem] = s.get("count")
 
@@ -1352,7 +1371,7 @@ def cmd_query_register(args) -> int:
 
 
 def cmd_guard(args) -> int:
-    """No-progress guard (PLAN.md §5 execution guardrails)."""
+    """No-progress guard (`SKILL.md` "Pipeline" execution guardrails)."""
     run_dir = Path(args.run_dir)
     board = TaskBoard(run_dir)
     state = board.state()

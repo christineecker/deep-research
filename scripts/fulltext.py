@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""fulltext.py — the full-text acquisition ladder (PLAN.md §5 stage 4), resumable.
+"""fulltext.py — the full-text acquisition ladder (`SKILL.md` stage 4), resumable.
 
 Rungs (recorded as `fulltext.source_tier` + `fulltext.access_route`, references/schema.md §4):
 
@@ -19,15 +19,14 @@ the task's `result_path`, and calls `fulltext.py resolve-mcp` (or simply re-runs
 which picks the file up). See references/acquisition.md.
 
 Evidence kernel: whenever a rung yields usable text the ladder **registers** it into the run's
-snapshot store (`scripts/store.py`, references/schema.md §10-§11, VALIDATION_ARCHITECTURE_PLAN.md
-Phase 1). The resulting `source_id` is appended to the corpus record's `source_ids[]` (R14), so a
+snapshot store (`scripts/store.py`, references/schema.md §10-§11, `references/evidence-kernel.md`). The resulting `source_id` is appended to the corpus record's `source_ids[]` (R14), so a
 claim can trace `evidence_id -> source_id -> start:end`. Registration writes a `register` event,
 which is never fresh (R22); a rung that performed a genuine live round-trip in this run
 additionally writes a `fetch` event with `fresh: true`. Registration is purely additive and
 best-effort: a store failure is logged to `engine.log` and never aborts an acquisition that
 already succeeded, so a run with no `sources/` directory acquires text exactly as before.
 
-Forbidden by policy (PLAN.md §6): no browser automation, no credentials or institutional
+Forbidden by policy (`SKILL.md` "Invariants"): no browser automation, no credentials or institutional
 proxies, no sci-hub-class sources, no paywall circumvention of any kind. Fail closed.
 """
 
@@ -70,7 +69,7 @@ except Exception:  # pragma: no cover - store.py is a sibling and always present
 
 try:
     import requests
-except ImportError:  # pragma: no cover - requests is verified present in PLAN.md §2
+except ImportError:  # pragma: no cover - requests is verified present in `SKILL.md` "Scripts"
     requests = None
 
 SCHEMA_VERSION = 1
@@ -80,7 +79,7 @@ EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest"
 UNPAYWALL = "https://api.unpaywall.org/v2"
 PMC_PDF = "https://pmc.ncbi.nlm.nih.gov/articles/%s/pdf/"
 
-# --- truncation detector (PLAN.md §5 rung 5) ------------------------------------
+# --- truncation detector (`references/acquisition.md` rung 5) ------------------------------------
 TRUNCATION_MIN_WORDS = 1500
 PAYWALL_MARKERS = [
     "Access options",
@@ -193,7 +192,7 @@ class HttpError(RuntimeError):
 
 
 class _TextHTML(HTMLParser):
-    """stdlib HTML -> text. lxml/bs4 are NOT installed (PLAN.md §2)."""
+    """stdlib HTML -> text. lxml/bs4 are NOT installed (`SKILL.md` "Scripts")."""
 
     SKIP = {"script", "style", "noscript", "svg", "head", "nav", "footer", "header", "aside",
             "form", "button"}
@@ -235,7 +234,7 @@ def html_to_text(html: str) -> str:
 
 
 def detect_truncation(html: str, text: str) -> tuple[bool, list[str]]:
-    """Return (truncated, reasons). PLAN.md §5 rung 5 / schema.md §4."""
+    """Return (truncated, reasons). `references/acquisition.md` rung 5 / schema.md §4."""
     reasons: list[str] = []
     words = len(text.split())
     if words < TRUNCATION_MIN_WORDS:
@@ -449,7 +448,7 @@ def register_acquisition(rec: dict, ctx: Ctx, state: dict, tier: int, res: dict,
                          fulltext: dict, asset: dict | None) -> str | None:
     """Fold acquired text into the run's snapshot store. Returns the `source_id` or None.
 
-    Best-effort by contract (VALIDATION_ARCHITECTURE_PLAN.md Phase 1 is additive): every
+    Best-effort by contract (`references/evidence-kernel.md` is additive): every
     failure is logged to `engine.log` and swallowed, because the acquisition itself has
     already succeeded and must not be lost to a kernel problem. `<run>/sources/` is
     created lazily here, on the first registration of the run.
@@ -1130,7 +1129,60 @@ def cmd_acquire(args) -> int:
         "results": results,
     }
     print(json.dumps(summary, indent=2, ensure_ascii=False))
+    alert_acquisition_health(summary, email=email)
     return 0
+
+
+def alert_acquisition_health(summary: dict, *, email: str | None) -> None:
+    """Loud stderr banner for acquisition problems a coordinator must surface.
+
+    The JSON summary already carries these numbers, but a degraded run reads as a
+    successful one unless someone counts them. Anything here is meant to reach the
+    user verbatim, not to be summarised away.
+    """
+    processed = summary.get("processed") or 0
+    if not processed:
+        return
+    results = summary.get("results") or []
+    statuses = [(r.get("fulltext") or {}).get("status") for r in results]
+    abstract_only = sum(1 for s in statuses if s == "abstract_only")
+    quarantined = summary.get("quarantined") or 0
+    pending_mcp = summary.get("needs_mcp") or 0
+    no_text = quarantined + abstract_only
+
+    alerts: list[str] = []
+    if pending_mcp:
+        alerts.append(
+            f"{pending_mcp}/{processed} record(s) are waiting on ladder rung 1 "
+            f"(PubMed MCP get_full_text_article), which a script cannot call. "
+            f"If no PubMed MCP server is connected, these will NEVER resolve on their "
+            f"own: call the tool yourself, or run `fulltext.py resolve-mcp "
+            f"--status unavailable` per record so the ladder stops waiting. "
+            f"Tasks: {summary.get('mcp_tasks_path')}")
+    if quarantined:
+        alerts.append(
+            f"{quarantined}/{processed} record(s) quarantined with no text at all. "
+            f"They are listed in missing.md; the synthesis must be marked provisional.")
+    if abstract_only:
+        alerts.append(
+            f"{abstract_only}/{processed} record(s) are abstract-only. They must be "
+            f"tagged evidence_basis=abstract_only and never appraised as full text.")
+    if not summary.get("unpaywall_email"):
+        alerts.append(
+            "No Unpaywall contact email set ($DEEP_RESEARCH_EMAIL or --email): "
+            "ladder rung 4 is degraded and OA copies will be missed.")
+    if processed and no_text * 2 > processed:
+        alerts.append(
+            f"MAJORITY WITHOUT FULL TEXT: {no_text}/{processed}. Extraction quality is "
+            f"materially limited. Tell the user before extracting, not after.")
+    if not alerts:
+        return
+    print("", file=sys.stderr)
+    print("!" * 72, file=sys.stderr)
+    print("ACQUISITION ALERT — surface these to the user verbatim:", file=sys.stderr)
+    for a in alerts:
+        print(f"  * {a}", file=sys.stderr)
+    print("!" * 72, file=sys.stderr)
 
 
 def cmd_status(args) -> int:

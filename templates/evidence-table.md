@@ -37,5 +37,5 @@ Included studies: {{N_INCLUDED}} | full text: {{N_FULLTEXT}} | abstract-only: {{
 
 [^{{FOOTNOTE_KEY}}]: {{AUTHORS_ETAL}} {{TITLE}}. *{{JOURNAL}}* {{YEAR}}. PMID {{PMID}}. DOI [{{DOI}}](https://doi.org/{{DOI}}). [PubMed](https://pubmed.ncbi.nlm.nih.gov/{{PMID}}/)
 
-<!-- One footnote per study, keyed to `sources[].id` in the OKF bundle (PLAN.md §6).
+<!-- One footnote per study, keyed to `sources[].id` in the OKF bundle (`SKILL.md` "Invariants").
      Every footnote must resolve to an evidence_id actually retrieved in this run. -->

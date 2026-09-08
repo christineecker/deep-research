@@ -30,6 +30,6 @@ Shared rules: `references/schema/00-shared.md`. Index: `references/schema.md`.
 | `adjudicator_id` | string | yes | Logical adjudicator worker id. |
 
 The disagreement rate (adjudication records ÷ dual-screened records) is logged into the
-PRISMA-style screening log (`PLAN.md` §1, §5).
+PRISMA-style screening log (`SKILL.md`).
 
 ---

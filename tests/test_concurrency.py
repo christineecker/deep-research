@@ -1,4 +1,4 @@
-"""Concurrency invariants for `fulltext.py acquire --workers` (OPTIMIZATION_PLAN.md O5).
+"""Concurrency invariants for `fulltext.py acquire --workers`.
 
 Two things break silently when the acquisition ladder is parallelised, so both are pinned here:
 

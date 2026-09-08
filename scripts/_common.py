@@ -52,7 +52,7 @@ security-relevant code:
     SKILL.md invariant 9 (no credentials, no institutional proxy access, no paywall
     circumvention). `fulltext.py`'s client also carries `offline` mode and `stream`/`params`
     support that `source.py` has no use for. Unifying them would either drop the hardening or
-    silently widen `fulltext.py`'s behaviour. See OPTIMIZATION_PLAN.md O4.
+    silently widen `fulltext.py`'s behaviour.
 
 `eutils.py`'s throttle stays where it is: it is a token bucket with an NCBI API-key rate switch
 (3/s without a key, 10/s with one), a different politeness contract from the generic per-host

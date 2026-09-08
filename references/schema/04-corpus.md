@@ -53,7 +53,7 @@ deduped by `scripts/corpus.py`.
 | `article_types` | string[] | yes | PubMed publication types verbatim. |
 | `mesh_terms` | string[] | yes | MeSH descriptors verbatim. `[]` when not yet indexed. |
 | `keywords` | string[] | yes | Author keywords. |
-| `retraction_status` | enum | yes | `none` \| `retracted` \| `expression_of_concern` \| `corrected`. Set at screening (`PLAN.md` §6). |
+| `retraction_status` | enum | yes | `none` \| `retracted` \| `expression_of_concern` \| `corrected`. Set at screening (`SKILL.md` "Invariants"). |
 | `source` | enum | yes | `pubmed` \| `europepmc` \| `preprint` \| `guideline` \| `web`. |
 | `is_preprint` | bool | yes | `true` for bioRxiv/medRxiv/Research Square and any rung-6 preprint twin. Must be surfaced loudly in the report. |
 | `screening` | object \| null | yes | `{decision, reason}` — the **final** decision (post-adjudication where dual screening ran). `decision` enum: `include` \| `exclude` \| `unclear`. `null` before screening. |
@@ -66,7 +66,7 @@ deduped by `scripts/corpus.py`.
 
 | Field | Type | Req | Meaning |
 |---|---|---|---|
-| `status` | enum | yes | `fulltext` \| `abstract_only` \| `missing`. A truncation-detected HTML route is `abstract_only`, never `fulltext` (`PLAN.md` §5 rung 5). |
+| `status` | enum | yes | `fulltext` \| `abstract_only` \| `missing`. A truncation-detected HTML route is `abstract_only`, never `fulltext` (`references/acquisition.md` rung 5). |
 | `source_tier` | int \| null | yes | `0`–`7`, the acquisition-ladder rung that produced the text: 0 local library, 1 PMC MCP full text, 2 PMC PDF, 3 Europe PMC fullTextXML, 4 Unpaywall location, 5 OA PDF/HTML fetch, 6 preprint twin, 7 quarantined. `null` before stage 4. |
 | `access_route` | string \| null | yes | Short machine token for the concrete route, e.g. `library`, `pmc_mcp`, `pmc_pdf`, `epmc_xml`, `unpaywall_pdf`, `oa_html`, `preprint_twin`, `inbox_manual`, `quarantine`. |
 | `local_path` | string \| null | yes | Wiki-root-relative path of the stored PDF/text, e.g. `assets/papers/pmid-12345678.pdf`. `null` when nothing was stored. |

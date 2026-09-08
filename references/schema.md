@@ -2,7 +2,7 @@
 
 Authoritative data contracts for every deep-research script and subagent. Anything written to
 `workspace/`, `outputs/`, `corpus.jsonl`, or `taskboard.jsonl` conforms to one of the records
-below. Source of truth for design decisions: `PLAN.md` §5, §6, §7.
+below. Source of truth for design decisions: `SKILL.md`.
 
 **This file is an index.** Each contract lives in its own file under `references/schema/`, so a
 reader who needs one record does not load the other thirteen. A reference of the form

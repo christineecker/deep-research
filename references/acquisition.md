@@ -1,6 +1,6 @@
 # acquisition.md — the full-text ladder
 
-Stage 4 of the pipeline (`PLAN.md` §5). Goal: full text, not abstracts. Every paper walks the
+Stage 4 of the pipeline (`SKILL.md` "Pipeline"). Goal: full text, not abstracts. Every paper walks the
 rungs in order until text is in hand; the rung that succeeded is recorded as
 `fulltext.source_tier` + `fulltext.access_route` in the corpus record (`references/schema.md` §4).
 
@@ -41,7 +41,7 @@ text), `skipped` (precondition absent — no PMCID, no DOI, no email, offline), 
 Invariants (enforced, `references/schema.md` §4): `status == "missing"` ⇒ `source_tier == 7`
 and a `missing.md` block exists; `truncation_detected == true` ⇒ `status == "abstract_only"`.
 Extraction of an `abstract_only` record sets `evidence_basis: "abstract_only"` and it is never
-appraised as if full (`PLAN.md` §6).
+appraised as if full (`SKILL.md` "Invariants").
 
 ### Politeness
 
@@ -160,7 +160,7 @@ Action: place the PDF in `inbox/` (any filename) and re-run the skill.
 ```
 
 The run never stalls: it continues, marks the synthesis provisional, and lists the gap
-(`PLAN.md` §5). The user is alerted with the count and the path to `missing.md`.
+(`SKILL.md` "Pipeline"). The user is alerted with the count and the path to `missing.md`.
 
 Resume loop:
 
@@ -274,7 +274,7 @@ Records whose `screening.decision == "exclude"` are never acquired. The wiki roo
 
 ## 9. Forbidden approaches
 
-Hard policy (`PLAN.md` §6, §9). These are not "not yet implemented" — they are never
+Hard policy (`SKILL.md` "Invariants"). These are not "not yet implemented" — they are never
 implemented, and no rung may be added that does any of them. Fail closed.
 
 | Forbidden | Why |

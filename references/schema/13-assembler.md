@@ -4,8 +4,7 @@ Shared rules: `references/schema/00-shared.md`. Index: `references/schema.md`.
 
 ## 13. `assembler result`
 
-`<run>/outputs/result.json`, written by `scripts/assemble.py` (`VALIDATION_ARCHITECTURE_PLAN.md`
-Phase 4). Reads `workspace/extractions/*.json`, `workspace/appraisals/*.json`,
+`<run>/outputs/result.json`, written by `scripts/assemble.py` (`references/evidence-kernel.md`). Reads `workspace/extractions/*.json`, `workspace/appraisals/*.json`,
 `outputs/report.md`, `sources/*.json`, `events.jsonl` and `corpus.jsonl`; writes one object.
 
 ```json
@@ -132,7 +131,7 @@ the artifact is **rejected** with the matching `reason_code` rather than silentl
 
 `result.json` is written atomically (temp file in `outputs/`, then `os.replace`). It is an input
 to `verify.py` (check `C-ASSEMBLER`) and it is the only thing `okf.py promote` reads for
-evidence — never raw agent output (`VALIDATION_ARCHITECTURE_PLAN.md` Phase 6). Ordering is fixed:
+evidence — never raw agent output (`references/evidence-kernel.md`). Ordering is fixed:
 `assemble.py` runs **before** `verify.py`, which runs before render, HTML report and OKF
 promotion (R24).
 

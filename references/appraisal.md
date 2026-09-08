@@ -1,11 +1,11 @@
 # appraisal.md — critical appraisal manual
 
-Stage 6 of `PLAN.md` §5. One subagent per paper (opus). Output conforms to the
+Stage 6 of `SKILL.md` "Pipeline". One subagent per paper (opus). Output conforms to the
 `appraisal record` in `references/schema.md` §8. This file is the human/agent-facing rationale
 behind those fields: which tool, which domains, which vocabulary, and how to say "we don't know"
 without laundering it into "low risk".
 
-Governing invariants (`PLAN.md` §6):
+Governing invariants (`SKILL.md` "Invariants"):
 
 - Abstract-only evidence is **never** appraised as if full text.
 - Absence of reporting is **never** evidence of low risk.
@@ -322,7 +322,7 @@ GOOD "Abstract-only record; randomisation process not assessable from abstract. 
 
 ## 7. Abstract-only evidence
 
-Invariant (`PLAN.md` §6, schema §7/§8): `evidence_basis` is carried on both the extraction record
+Invariant (`SKILL.md` "Invariants", schema §7/§8): `evidence_basis` is carried on both the extraction record
 and the appraisal record and must agree with `corpus record.fulltext.status`.
 
 | `fulltext.status` | `evidence_basis` | Appraisal |

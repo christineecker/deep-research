@@ -4,7 +4,7 @@ Shared rules: `references/schema/00-shared.md`. Index: `references/schema.md`.
 
 ## 7. `extraction record`
 
-`workspace/extractions/pmid-<pmid>.json`. Stage 5, one subagent per paper (`PLAN.md` §5).
+`workspace/extractions/pmid-<pmid>.json`. Stage 5, one subagent per paper (`SKILL.md` "Pipeline").
 
 ```json
 {
@@ -73,7 +73,7 @@ re-derived from the snapshot (R17).
 | `funding` | string \| null | yes | Funders and grant ids as stated. `null` = not stated (distinct from "none"). |
 | `coi` | string \| null | yes | COI statement as stated. |
 | `limitations` | string \| null | yes | Limitations stated by the authors **plus** extractor-observed ones, marked as such. |
-| `evidence_basis` | enum | yes | `fulltext` \| `abstract_only`. Must equal the corpus `fulltext.status` mapped (`missing` never reaches extraction). Abstract-only extractions may not be appraised as if full (`PLAN.md` §6). |
+| `evidence_basis` | enum | yes | `fulltext` \| `abstract_only`. Must equal the corpus `fulltext.status` mapped (`missing` never reaches extraction). Abstract-only extractions may not be appraised as if full (`SKILL.md` "Invariants"). |
 | `extractor_notes` | string \| null | yes | Ambiguities, discrepancies between text and tables, unit conversions performed. |
 | `spans` | object[] | yes | Record-level claim spans (§12) backing the narrative factual fields (`design`, `n_total`, `n_arms`, `population`, `intervention`, `comparator`, `funding`, `coi`, `limitations`). One or more entries per field that makes a factual claim about the study; each entry's `claim` names the field it backs (R19). `[]` is legal only when every one of those fields is `null`. |
 | `quotes` | object[] | yes | **DERIVED — not agent-authored.** Written by `scripts/assemble.py` by re-slicing `snapshot.text[start:end]` for each span in this record. A subagent MUST emit `quotes: []`; anything it writes here is discarded (R17). `[]` survives into `result.json` only for records with no spans, which are `unverified` (R16). |

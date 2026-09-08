@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """library.py — shared cross-run PDF library at <wiki-root>/assets/papers/.
 
-Rung 0 of the full-text acquisition ladder (PLAN.md §5) plus the inbox resume loop.
+Rung 0 of the full-text acquisition ladder (`SKILL.md` "Pipeline") plus the inbox resume loop.
 
 Subcommands
 -----------
@@ -15,7 +15,7 @@ Evidence kernel: `ingest-inbox` registers each matched PDF's extracted text into
 snapshot store (`scripts/store.py`, references/schema.md §10-§11) with
 `origin: user-supplied-pdf`, and writes a `local_pdf` event carrying the asset triple
 `{path, sha256, bytes}`. That event plus the matching hash is what makes the fresh-fetch
-exception work for a manually supplied paper (VALIDATION_ARCHITECTURE_PLAN.md Phase 3) —
+exception work for a manually supplied paper (`references/evidence-kernel.md`) —
 there is nothing to re-fetch, so the immutable hash-checked local file *is* the fresh source.
 
 PDFs are never copied per run (D3/R13): they stay in `<wiki>/assets/papers/` and the snapshot
@@ -272,7 +272,7 @@ def pdf_text_with_ocr(pdf: Path) -> tuple[str, bool]:
 
 
 def doi_from_pdf(pdf: Path) -> str | None:
-    """DOI regex over page-1 text (pdfinfo metadata rarely carries it; PLAN.md §5)."""
+    """DOI regex over page-1 text (pdfinfo metadata rarely carries it; `SKILL.md` "Pipeline")."""
     text = pdftotext(pdf, first=1, last=1)
     if len(text.strip()) < MIN_TEXT_CHARS:
         text = (text or "") + "\n" + ocr_pdf(pdf, max_pages=1)
@@ -452,7 +452,7 @@ class Library:
 
 
 def rewrite_gitignore(path: Path) -> dict:
-    """Idempotently install the four-line library pattern (PLAN.md §2).
+    """Idempotently install the four-line library pattern (`SKILL.md` "Scripts").
 
     Unrelated rules are preserved verbatim. Only a previous managed block and
     lines that would shadow it (`assets/`, `assets/*`, the four rules themselves)
@@ -522,7 +522,7 @@ def write_corpus(path: Path, records: list[dict]) -> None:
 
 
 def wiki_root_for_run(run_dir: Path) -> Path:
-    """<wiki>/outputs/deep-research/<slug>/ -> <wiki> (PLAN.md §7)."""
+    """<wiki>/outputs/deep-research/<slug>/ -> <wiki> (`SKILL.md` "Run directory")."""
     run_dir = Path(run_dir).expanduser().resolve()
     parents = run_dir.parents
     if len(parents) >= 3 and parents[0].name == "deep-research" and parents[1].name == "outputs":

@@ -7,7 +7,7 @@ and writes `outputs/verification.json` conforming to `references/schema.md` §9
 report provisional and blocks OKF promotion.
 
 **The report is never deleted, rewritten, or edited by this script.** A failing verification
-only records the failure and blocks promotion (`PLAN.md` §5 failure semantics).
+only records the failure and blocks promotion (`SKILL.md` "Failure semantics").
 
 Checks
 ------

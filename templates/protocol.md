@@ -49,7 +49,7 @@ status: draft
 ## 4. Exclusion criteria
 
 <!-- Numbered E1..En. Outcome positivity/significance is NEVER an exclusion criterion
-     (PLAN.md §6: null and negative findings are actively wanted). -->
+     (`SKILL.md` "Invariants": null and negative findings are actively wanted). -->
 
 | Id | Criterion | Decidable from abstract? |
 |---|---|---|

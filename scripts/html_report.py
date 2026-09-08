@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """html_report.py — the self-contained HTML deliverable for a deep-research run.
 
-Stage 8 output path of `PLAN.md` §5 / §8 Phase 5 ("HTML artifact — evidence table,
+Stage 8 output path of `SKILL.md` "Pipeline" ("HTML artifact — evidence table,
 effect-direction chart, per-study cards, gaps shown honestly").
 
 Reads a run directory and emits ONE offline HTML file:

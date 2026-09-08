@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """source.py — the acquisition-facing CLI over the evidence-kernel snapshot store.
 
-`VALIDATION_ARCHITECTURE_PLAN.md` migration step 2: `fetch`, `read`, `spans`, `local`.
+`references/evidence-kernel.md`: `fetch`, `read`, `spans`, `local`.
 All snapshot and span semantics live in `scripts/store.py`; this file only acquires bytes,
 turns them into text, and hands them to the store. Contracts: `references/schema.md`
 §10-§13 and R10-R24; narrative `references/evidence-kernel.md`.
@@ -11,7 +11,7 @@ turns them into text, and hands them to the store. Contracts: `references/schema
     source.py spans --run-dir D --source-id S --query T [--max N]   candidate span offsets
     source.py local --run-dir D --pdf P [--wiki R]       ingest a user-supplied PDF
 
-Policy (`PLAN.md` §6, both plans' Non-Goals — hard limits, not defaults):
+Policy (`SKILL.md` "Invariants" — hard limits, not defaults):
 
 * No paywall circumvention, no credentials, no cookies, no institutional proxies, no
   browser automation, no sci-hub-class sources. `fetch` sends one polite GET with an
@@ -57,7 +57,7 @@ from store import (  # noqa: E402
 
 try:
     import requests
-except ImportError:  # pragma: no cover - requests is verified present in PLAN.md §2
+except ImportError:  # pragma: no cover - requests is verified present in `SKILL.md` "Scripts"
     requests = None
 
 VERSION = store.VERSION
@@ -142,7 +142,7 @@ def check_url_policy(url: str) -> str:
                           % (scheme or url[:40], ", ".join(ALLOWED_SCHEMES)))
     if parts.username or parts.password or "@" in (parts.netloc.split("/")[0] or ""):
         raise PolicyError("refused: the URL carries embedded credentials. No credentials, "
-                          "proxies or paywall circumvention (PLAN.md §6).")
+                          "proxies or paywall circumvention (SKILL.md invariant 9).")
     return scheme
 
 

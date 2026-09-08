@@ -36,8 +36,8 @@ Shared rules: `references/schema/00-shared.md`. Index: `references/schema.md`.
 | `unsupported_claims` | object[] | yes | Claims in `report.md` with no backing corpus/extraction record. Each `{location, claim, reason}`. `[]` = clean. |
 | `uncited_citations` | string[] | yes | `evidence_id`s present in `corpus.jsonl` as included but never cited in the report. |
 | `missing_fulltext` | string[] | yes | `evidence_id`s with `fulltext.status == "missing"`; must match `missing.md`. |
-| `abstract_only_claims` | object[] | yes | Report claims resting on `abstract_only` evidence. Each `{location, evidence_id, labelled}`; any `labelled: false` is a `C-FULLTEXT` fail (`PLAN.md` §6). |
-| `okf_validation` | enum | yes | `pass` \| `fail` \| `skipped`. `skipped` when no wiki promotion was requested. `fail` keeps the report, blocks promotion, and writes `outputs/okf-validation.md` (`PLAN.md` §5). |
+| `abstract_only_claims` | object[] | yes | Report claims resting on `abstract_only` evidence. Each `{location, evidence_id, labelled}`; any `labelled: false` is a `C-FULLTEXT` fail (`SKILL.md` "Invariants"). |
+| `okf_validation` | enum | yes | `pass` \| `fail` \| `skipped`. `skipped` when no wiki promotion was requested. `fail` keeps the report, blocks promotion, and writes `outputs/okf-validation.md` (`SKILL.md` "Pipeline"). |
 
 ### Evidence-kernel checks
 

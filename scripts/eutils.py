@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""NCBI E-utilities client for deep-research (PLAN.md §2, §4, §5 stage 2, §8 Phase 2).
+"""NCBI E-utilities client for deep-research (`SKILL.md` "Scripts"; stage 2 of the pipeline).
 
 Three operations, usable as a CLI or as an importable module:
 
   esearch  query (+ filters) -> hit count, NCBI QueryTranslation, PMID pages
            (`search result record`, references/schema.md §3)
   efetch   PMIDs -> PubMed XML -> normalized bibliographic JSON
-           (corpus/OKF bibliographic fields, references/schema.md §4 / PLAN.md §6a)
+           (corpus/OKF bibliographic fields, references/schema.md §4 / `references/okf-bundle.md`)
   elink    citation chaining: pubmed_pubmed_citedin | pubmed_pubmed_refs | pubmed_pubmed
 
 Environment
@@ -19,7 +19,7 @@ Fixture keys are sha256 over endpoint + request params, excluding the volatile
 `api_key`, `email`, `tool` and `WebEnv` values, so fixtures are portable across
 machines. Filename: `<endpoint>-<sha16>.<json|xml|txt>`.
 
-stdlib + requests only (PLAN.md §2: no lxml/bs4/habanero, zero pip installs).
+stdlib + requests only (`SKILL.md` "Scripts": no lxml/bs4/habanero, zero pip installs).
 """
 
 from __future__ import annotations
@@ -220,7 +220,7 @@ def request(
 
 
 # --------------------------------------------------------------------------- #
-# query building (PLAN.md §4 filter -> field tag table)
+# query building (`references/search-strategy.md` filter -> field tag table)
 # --------------------------------------------------------------------------- #
 
 AUTHOR_POSITION_TAGS = {"any": "au", "first": "1au", "last": "lastau"}
@@ -331,7 +331,7 @@ def _mapped_group(values: Sequence[str], table: dict[str, str], kind: str) -> st
 
 
 def build_query(base: str, filters: dict[str, Any] | None = None) -> str:
-    """Compose base query + PLAN.md §4 filters with explicit boolean nesting.
+    """Compose base query + `references/search-strategy.md` filters with explicit boolean nesting.
 
     filters keys: years, authors, journals, article_types, languages,
     free_full_text (bool), species, ages. Unknown keys are a hard error.
@@ -404,7 +404,9 @@ def _search_record(
         "retstart": retstart,
         "retmax": retmax,
         "executed_at": _now(),
-        "hit_count_logged": False,
+        # true only when this record actually carries what C-SEARCH-LOG requires:
+        # a numeric hit count and NCBI's translated query.
+        "hit_count_logged": isinstance(count, int) and bool(translated),
     }
 
 
@@ -643,7 +645,7 @@ def _retraction_status(article: ET.Element, citation: ET.Element) -> str:
 
 
 def parse_pubmed_article(entry: ET.Element) -> dict[str, Any]:
-    """One <PubmedArticle> -> normalized record (schema.md §4 / PLAN.md §6a fields)."""
+    """One <PubmedArticle> -> normalized record (schema.md §4 / `references/okf-bundle.md` fields)."""
     citation = entry.find("./MedlineCitation")
     if citation is None:
         raise EutilsError("bad_response", "PubmedArticle without MedlineCitation")

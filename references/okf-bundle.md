@@ -109,14 +109,14 @@ chars. DOI slugs replace `/`, `:`, `.` with `-` (`10.1000/example` → `doi-10-1
 | `title` | string | yes | Short human label for the source. |
 
 Timestamps are ISO-8601 UTC with `Z`, matching `references/schema.md` rule S2. Unknown values are
-omitted or `null` consistently — never invented (`PLAN.md` §6a).
+omitted or `null` consistently — never invented (`references/okf-bundle.md`).
 
 ---
 
 ## 3. PubMed bibliographic block (canonical example)
 
 Required on every PubMed-derived concept (`type: Study` and any concept whose `resource` is a
-PubMed record). Reproduced verbatim from `PLAN.md` §6a as the canonical example:
+PubMed record). Reproduced verbatim from `references/okf-bundle.md` as the canonical example:
 
 ```yaml
 ---
@@ -214,7 +214,7 @@ No difference in remission was observed at 24 weeks.[^pubmed-12345678][^fulltext
 [^fulltext-12345678]: Local full-text PDF. ../../assets/papers/pmid-12345678.pdf
 ```
 
-Claims resting on abstract-only evidence must say so inline (`(abstract only)`), per `PLAN.md` §6.
+Claims resting on abstract-only evidence must say so inline (`(abstract only)`), per `SKILL.md` "Invariants".
 Hypothesis concepts are never footnoted as if evidence-supported; they cite the evidence they were
 generated *from*, with the generative step stated in the body.
 
@@ -262,7 +262,7 @@ Updates append to the **nearest** `log.md`.
 
 Enforced by `scripts/okf.py --validate`. Each rule is machine-checkable; a violation is reported
 as `{rule, path, detail}`. Any violation is an OKF validation failure: the report is kept, wiki
-promotion is blocked, and errors are written to `outputs/okf-validation.md` (`PLAN.md` §5).
+promotion is blocked, and errors are written to `outputs/okf-validation.md` (`SKILL.md` "Pipeline").
 
 | # | Rule | Failure condition |
 |---|---|---|
@@ -289,5 +289,5 @@ promotion is blocked, and errors are written to `outputs/okf-validation.md` (`PL
 | V21 | Every directory containing concept files also contains an `index.md`. | Missing directory `index.md`. |
 | V22 | Slugs in filenames match `^[a-z0-9][a-z0-9-]{0,79}$` (after the `pmid-`/`doi-` prefix where applicable). | Uppercase, spaces, unicode, over-length, or leading/trailing `-`. |
 | V23 | Frontmatter contains no wiki-manager OKF 0.1 fields (`timestamp`, string-valued `sources`). | Presence of `timestamp`, or `sources` that is a string/list of strings. |
-| V24 | Every `evidence_id` cited in a bundle concept exists in the run's `corpus.jsonl`. | Citation to evidence not retrieved this run (`PLAN.md` §6). |
+| V24 | Every `evidence_id` cited in a bundle concept exists in the run's `corpus.jsonl`. | Citation to evidence not retrieved this run (`SKILL.md` "Invariants"). |
 | V25 | Concepts derived from `abstract_only` evidence declare it: body contains `(abstract only)` at each such claim, or frontmatter carries `evidence_basis: abstract_only`. | Undeclared abstract-only basis. |

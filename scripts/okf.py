@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import read_json, slugify, utcnow  # noqa: E402  (sibling module, stdlib-only)
 
 # `store.py` is the single owner of snapshot hashing, span checking and freshness
-# (VALIDATION_ARCHITECTURE_PLAN.md decision D5). It is never reimplemented here.
+# (`references/evidence-kernel.md` decision D5). It is never reimplemented here.
 _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
@@ -1562,7 +1562,7 @@ class Validator:
                 detail = v.detail.replace("|", "\\|").replace("\n", " ")
                 lines.append(f"| {v.rule} | `{v.path}` | {detail} |")
             lines += ["", "Promotion into the wiki is blocked while any violation stands "
-                          "(`PLAN.md` §5, failure semantics)."]
+                          "(SKILL.md, failure semantics)."]
         return "\n".join(lines) + "\n"
 
 
@@ -1817,7 +1817,7 @@ def collect_sources(records: list[dict], concept_path: Path,
 
 # ------------------------------------------- publisher integrity preflight -----
 #
-# VALIDATION_ARCHITECTURE_PLAN.md Phase 5 / Phase 6, schema.md §10-§13, R10-R24.
+# `references/evidence-kernel.md` / Phase 6, schema.md §10-§13, R10-R24.
 #
 # Before a single byte is written into the bundle, every snapshot is re-read and both
 # digests recomputed, every accepted claim's excerpt is re-sliced from `start:end`, the
@@ -1852,7 +1852,7 @@ TAMPER_CODES = (
 UNVERIFIED_BANNER = (
     "PROMOTED UNVERIFIED: this run has no outputs/result.json, so no snapshot, span, "
     "excerpt or asset hash backs any promoted concept. Its evidence is agent-written and "
-    "span-less (pre-kernel run; VALIDATION_ARCHITECTURE_PLAN.md D7).")
+    "span-less (pre-kernel run; `references/evidence-kernel.md` D7).")
 
 
 class IntegrityFinding:
@@ -2377,7 +2377,7 @@ def cmd_promote(args) -> int:
             detail = "; ".join(f"{c.get('check_id')}: {c.get('detail')}" for c in failed)
             raise OkfError(
                 "verifier reported failing checks — OKF promotion is blocked "
-                f"(PLAN.md §5): {detail}")
+                f"(SKILL.md, pipeline stage 8): {detail}")
         warned = any(c.get("status") == "warn" for c in verification.get("checks") or [])
         status = "provisional" if (failed or warned or verification.get("missing_fulltext")) \
             else "stable"

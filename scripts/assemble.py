@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""assemble.py — the assembler gate (VALIDATION_ARCHITECTURE_PLAN.md Phase 4).
+"""assemble.py — the assembler gate (`references/evidence-kernel.md`).
 
 Reads a run's evidence and decides, **per artifact**, whether it is admissible. Writes one
 file, `<run>/outputs/result.json`, conforming to `references/schema.md` §13

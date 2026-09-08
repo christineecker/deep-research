@@ -6,7 +6,7 @@ append-only retrieval log, an assembler gate, and a publisher integrity prefligh
 Contracts: `references/schema.md` §10 (`snapshot record`), §11 (`event record`), §12
 (`claim span record`), §13 (`assembler result`), §9 (verifier checks `C-SNAPSHOT`, `C-SPAN`,
 `C-FRESH-FETCH`, `C-ASSEMBLER`), resolutions R10–R24. Design source:
-`VALIDATION_ARCHITECTURE_PLAN.md`. Scripts (built later, against those contracts):
+`references/evidence-kernel.md`. Scripts (built later, against those contracts):
 `scripts/source.py`, `scripts/store.py`, `scripts/assemble.py`.
 
 This layer does not replace the PubMed pipeline. `eutils.py`, `fulltext.py` and `library.py` keep
@@ -109,7 +109,7 @@ event on a snapshot with `asset: null` fails the rule (`ASSET_HASH_MISMATCH`).
 
 No part of this permits paywall circumvention, credentials, proxies or browser automation. The
 exception exists because a user legitimately handing over a PDF is a real acquisition route
-(`PLAN.md` rung 0 and the `inbox/` resume loop), not because retrieval rules are negotiable.
+(`references/acquisition.md` rung 0 and the `inbox/` resume loop), not because retrieval rules are negotiable.
 
 ---
 
@@ -178,7 +178,7 @@ corrected, because a silent correction hides the fact that an agent asserted som
 `gates.evidence_kernel` / `--gate` absent it does not block Stage 8. `result.json` always records
 `gate.verdict`, and the coordinator always surfaces it. Two things are never downgraded by the
 flag: `C-SNAPSHOT` and `C-SPAN` tamper failures block OKF promotion regardless. The gate flips to
-blocking-by-default only after a live dry run passes (`VALIDATION_ARCHITECTURE_PLAN.md` migration
+blocking-by-default only after a live dry run passes (`references/evidence-kernel.md` migration
 step 9).
 
 **Ordering (R24).** `assemble.py` → `verify.py` (reads `result.json`, emits `C-ASSEMBLER` among

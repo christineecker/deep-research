@@ -53,7 +53,7 @@ A source `S` is **fresh for this run** iff `events.jsonl` contains at least one 
 
 Condition 2 excludes `register` and `read`: text carried over from `corpus.jsonl`, from a previous
 run's library cache, from a search snippet, or from an existing wiki note is **not** fresh proof
-(`VALIDATION_ARCHITECTURE_PLAN.md` Non-Goals). A `fetch` served entirely from an HTTP cache or
+(`references/evidence-kernel.md`). A `fetch` served entirely from an HTTP cache or
 from an on-disk cache older than the run writes `fresh: false` and does not satisfy the rule.
 
 **User-supplied-PDF exception.** For `origin: "user-supplied-pdf"` there is nothing to re-fetch:
@@ -61,6 +61,6 @@ the immutable, hash-checked local file *is* the source. Such a source is fresh i
 event exists for it in this run **and** the file at `snapshot.asset.path` (resolved against the
 wiki root) still hashes to `snapshot.asset.sha256`. A missing file, a changed file, or a
 `local_pdf` event on a snapshot with `asset: null` fails the rule
-(`VALIDATION_ARCHITECTURE_PLAN.md` Phase 3).
+(`references/evidence-kernel.md`).
 
 ---

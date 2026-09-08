@@ -1,6 +1,6 @@
 # search-strategy.md — MeSH, hedges, field tags, orthogonal query design
 
-Reference for PLAN.md §5 stage 2 (Search). Consumed by the coordinator when it *designs*
+Reference for `SKILL.md` stage 2 (Search). Consumed by the coordinator when it *designs*
 4–8 queries and by `scripts/eutils.py` when it *executes* them. Every query in this document
 is written in PubMed/E-utilities syntax and is pasteable as-is.
 
@@ -56,7 +56,7 @@ double quotes is also never mapped. Both facts show up in `translated_query`; al
 
 ---
 
-## 2. Filters → E-utilities field tags (PLAN.md §4)
+## 2. Filters → E-utilities field tags (`references/search-strategy.md`)
 
 | Filter | Example value | Tag / syntax |
 |---|---|---|
@@ -212,7 +212,7 @@ NOT ("Animals"[mh] NOT "Humans"[mh])
 | Guidelines / grey | `("Practice Guideline"[pt] OR "Guideline"[pt] OR "Consensus Development Conference"[pt] OR "Guidelines as Topic"[mh] OR guideline*[ti] OR "consensus statement"[ti])` |
 | Economic | `("Costs and Cost Analysis"[mh] OR "Cost-Benefit Analysis"[mh] OR cost*[tiab] OR "QALY"[tiab] OR "cost-effectiveness"[tiab])` |
 | Harms / adverse effects | `("adverse effects"[sh] OR "Drug-Related Side Effects and Adverse Reactions"[mh] OR "adverse event*"[tiab] OR safety[tiab] OR tolerability[tiab] OR harm*[tiab])` |
-| **Null / negative findings** (PLAN.md §6 invariant) | `("no significant difference*"[tiab] OR "no difference"[tiab] OR "not superior"[tiab] OR "failed to"[tiab] OR nonsignificant[tiab] OR "non-significant"[tiab] OR "null result*"[tiab] OR "negative trial"[tiab] OR "equivalence trial"[tiab] OR "noninferiority"[tiab] OR "Equivalence Trials as Topic"[mh])` |
+| **Null / negative findings** (`SKILL.md` "Invariants") | `("no significant difference*"[tiab] OR "no difference"[tiab] OR "not superior"[tiab] OR "failed to"[tiab] OR nonsignificant[tiab] OR "non-significant"[tiab] OR "null result*"[tiab] OR "negative trial"[tiab] OR "equivalence trial"[tiab] OR "noninferiority"[tiab] OR "Equivalence Trials as Topic"[mh])` |
 | Retraction surveillance | `("Retracted Publication"[pt] OR "Retraction of Publication"[pt] OR "Expression of Concern"[pt])` — run over the *included* PMID set, not the topic |
 
 The null-findings hedge is not optional: it is the operationalization of "null/negative

@@ -8,7 +8,7 @@ place where "is this evidence real?" is answered.
 
 Contracts: `references/schema.md` §10 (snapshot record), §11 (event record),
 §12 (claim span record), §13 (assembler result / reason codes), resolutions R10-R24.
-Narrative: `references/evidence-kernel.md`. Design: `VALIDATION_ARCHITECTURE_PLAN.md`
+Narrative: `references/evidence-kernel.md`. Design: `references/evidence-kernel.md`
 Phases 1, 3 and 6.
 
 Layout (R13 — PDFs are never duplicated per run):
@@ -222,7 +222,7 @@ def snapshot_path(run_dir, source_id: str) -> Path:
 
 
 def wiki_root_for_run(run_dir) -> Path:
-    """`<wiki>/outputs/deep-research/<slug>/` -> `<wiki>` (PLAN.md §7)."""
+    """`<wiki>/outputs/deep-research/<slug>/` -> `<wiki>` (`SKILL.md` "Run directory")."""
     run_dir = Path(run_dir).expanduser().resolve()
     parents = run_dir.parents
     if len(parents) >= 3 and parents[0].name == "deep-research" and parents[1].name == "outputs":

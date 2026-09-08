@@ -1,6 +1,6 @@
 # deep-research — usage
 
-Operator's manual. `SKILL.md` is the agent-facing router; `PLAN.md` is the design record.
+Operator's manual. `SKILL.md` is the agent-facing router.
 This file is for the person running the skill.
 
 ## 1. What it does
@@ -198,9 +198,10 @@ Verifier checks: `C-CITE-RESOLVE`, `C-CORPUS-COMPLETE`, `C-SEARCH-LOG`, `C-RETRA
 
 ## 11. Testing
 
-**`scripts/eval.py` and `tests/fixtures/` are not built yet** (PLAN.md §8 Phase 6). When they
-land, `eval.py` runs fixture-backed tests offline by default, with `--live` opting in to real
-PubMed.
+`scripts/eval.py` runs fixture-backed evals offline by default, with `--live` opting in to
+real PubMed. `python3 -m unittest discover -s tests` runs the unit suite: store/source/assemble
+contracts, the validation pipeline, and the concurrency invariants for `acquire --workers`.
+Neither needs credentials or the network.
 
 What works today for offline testing:
 

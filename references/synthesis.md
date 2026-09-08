@@ -1,10 +1,10 @@
 # synthesis.md — synthesis manual
 
-Stage 7 of `PLAN.md` §5. Runs in **main only**, on the main model, from `corpus.jsonl`,
+Stage 7 of `SKILL.md` "Pipeline". Runs in **main only**, on the main model, from `corpus.jsonl`,
 `workspace/extractions/*.json`, and `workspace/appraisals/*.json`. Produces the synthesis sections
 of `outputs/report.md` and the inputs to stage 8 verification.
 
-Governing invariants (`PLAN.md` §6):
+Governing invariants (`SKILL.md` "Invariants"):
 
 - Conflicts are surfaced **with an explanation**, never averaged away.
 - "New insights / hypotheses" are strictly separated from "what the evidence shows".
@@ -175,7 +175,7 @@ performed a formal test of interaction. They cross the wall in §7.
 
 ## 5. Conflict handling
 
-`PLAN.md` §6: conflicts are surfaced with an explanation, never averaged away. A conflict is not a
+`SKILL.md` "Invariants": conflicts are surfaced with an explanation, never averaged away. A conflict is not a
 defect in the report; an unexplained conflict is.
 
 ### Definition
@@ -330,7 +330,7 @@ GOOD  Evidence: "No included study reported outcomes beyond 24 weeks."
 
 ## 8. Provisional syntheses
 
-A synthesis is **PROVISIONAL** whenever any of the following holds (`PLAN.md` §5 failure
+A synthesis is **PROVISIONAL** whenever any of the following holds (`SKILL.md` "Pipeline" failure
 semantics, §6):
 
 | Trigger | Source |
