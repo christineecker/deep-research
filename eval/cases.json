@@ -1,0 +1,51 @@
+[
+  {
+    "id": "valid-span",
+    "description": "Fresh snapshot, matching span, and matching PubMed paper identity are accepted.",
+    "mode": "valid",
+    "expect_verdict": "pass",
+    "expect_reason": null
+  },
+  {
+    "id": "stale-source",
+    "description": "A registered cached source without a fresh fetch/local_pdf event is rejected.",
+    "mode": "registered",
+    "expect_verdict": "warn",
+    "expect_reason": "NO_FRESH_FETCH"
+  },
+  {
+    "id": "tampered-snapshot",
+    "description": "A snapshot whose text no longer matches its hashes is a hard integrity failure.",
+    "mode": "tamper",
+    "expect_verdict": "warn",
+    "expect_reason": "SNAPSHOT_HASH_MISMATCH"
+  },
+  {
+    "id": "invented-source",
+    "description": "A span naming a non-existent source_id is rejected.",
+    "mode": "unknown_source",
+    "expect_verdict": "warn",
+    "expect_reason": "UNKNOWN_SOURCE"
+  },
+  {
+    "id": "literature-missing-id",
+    "description": "A PubMed-keyed artifact backed by a snapshot without PMID/DOI/PMCID is rejected.",
+    "mode": "no_paper_id",
+    "expect_verdict": "warn",
+    "expect_reason": "NO_PAPER_ID"
+  },
+  {
+    "id": "legacy-no-spans",
+    "description": "A pre-kernel extraction with factual fields but no spans is unverified, not accepted.",
+    "mode": "legacy",
+    "expect_verdict": "warn",
+    "expect_reason": "NO_SPANS"
+  },
+  {
+    "id": "excerpt-mismatch",
+    "description": "Agent-written excerpt text that differs from the snapshot re-slice is rejected.",
+    "mode": "mismatch",
+    "expect_verdict": "warn",
+    "expect_reason": "EXCERPT_MISMATCH"
+  }
+]

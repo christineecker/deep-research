@@ -19,9 +19,9 @@ sources, appraise risk of bias (stage 6 does that), or synthesise across studies
 - Bibliographic metadata: `{{METADATA}}`
 - Snapshot to extract from: `source_id = {{SOURCE_ID}}`, `access = {{ACCESS}}`
   (`full_text` | `abstract` | `preprint` | `guideline` | `web`)
-- Text windows: read them with `scripts/source.py read --run {{RUN_DIR}} --source {{SOURCE_ID}}
-  --start <n> --end <m>` and locate text with `scripts/source.py spans --run {{RUN_DIR}}
-  --source {{SOURCE_ID}} --query "<phrase>"`. Every window comes back stamped with its
+- Text windows: read them with `scripts/source.py read --run-dir {{RUN_DIR}} --source-id {{SOURCE_ID}}
+  --start <n> --end <m>` and locate text with `scripts/source.py spans --run-dir {{RUN_DIR}}
+  --source-id {{SOURCE_ID}} --query "<phrase>"`. Every window comes back stamped with its
   `source_id` and its absolute `start`/`end` offsets. Total snapshot length: `{{TEXT_LENGTH}}`
   characters.
 - Acquisition status from the corpus record: `fulltext.status = {{FULLTEXT_STATUS}}`

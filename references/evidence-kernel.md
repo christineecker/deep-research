@@ -230,7 +230,7 @@ route stored no file), and `text` = 61 042 characters. It appends
 
 **(b) Extraction.** The extraction subagent gets `source_id`, `access`, and the two `source.py`
 commands — not a file of prose. It runs
-`source.py spans --source src-3f9a1c... --query "CDI-2"`, gets back a window stamped
+`source.py spans --run-dir <run> --source-id src-3f9a1c... --query "CDI-2"`, gets back a window stamped
 `start=10380 end=10900`, reads it, and writes into `workspace/extractions/pmid-12345678.json`:
 
 ```json
