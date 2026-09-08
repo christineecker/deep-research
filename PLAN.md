@@ -1,6 +1,6 @@
 # deep-research — design & implementation plan
 
-Status: approved design, not yet built.
+Status: approved design, not yet built. Revised 2026-09-08 after review (see §9).
 Date: 2026-09-08
 Inspiration: ApodexAI/FrontierAgent (coordinator + parallel bounded sub-agents, sandboxed
 inputs/workspace/outputs, resumable checkpoints, transparent deliverables).
@@ -19,15 +19,20 @@ question, critically appraise it, synthesise it, and surface gaps and new hypoth
 | Defaults | Apodex-style profiles. Default one-shot profile is `standard / medium / protocol+strategy gate / report.md`; prompt only for missing high-impact choices |
 | Gates | User-selectable per run: protocol+strategy / screening / both / none |
 | Parallelism | Yes — subagent fan-out for search, screening, extraction, appraisal |
-| Outputs | `report.md` always; optional HTML artifact, Quarto `.qmd`→PDF/docx, OKF wiki promotion |
+| Outputs | `report.md` always; optional HTML artifact, Quarto `.qmd`→PDF/docx, promotion into the deep-research OKF bundle |
 | Wiki | Chosen per run at **config time** (needed early, see §5). Missing wiki → confirm creation + location |
+| Runs location | `<wiki>/outputs/deep-research/<slug>/` — data lives with data, iCloud-synced; skill dir stays code-only |
 | PDF library | `<wiki-root>/assets/papers/` — shared cross-run cache, rung 0 of the ladder |
 | Full text | Mandatory goal, not abstracts. Full ladder incl. PDF extraction (§5) |
-| Paywalled | OA ladder first; then drive the user's logged-in Chrome (chrome-devtools MCP) with per-run confirmation. **No paywall circumvention.** |
+| Paywalled | OA ladder only (library → PMC → Europe PMC → Unpaywall → OA PDF). **No browser rung, no paywall circumvention.** Not found → quarantine + alert |
 | Unobtainable | Quarantine + alert user, who drops PDFs into `inbox/`; rerun resumes |
 | Filters | Years, authors, journals, article types, species/age, language, OA-only (§4) |
-| Wiki format | OKF v0.2-compatible markdown bundle. PubMed-derived concepts include full bibliographic metadata in frontmatter |
-| Runtime model | Apodex-style run directory with inputs/workspace/outputs, trace, task board, checkpoints, logs, and trajectories |
+| Wiki format | Separate deep-research-owned OKF bundle at `<wiki>/research/`. Frontmatter convention is our own (spec: `references/okf-bundle.md`); wiki-manager's `wiki/` (OKF 0.1) is never written to. PubMed-derived concepts include full bibliographic metadata |
+| Runtime model | Run directory with inputs/workspace/outputs, `taskboard.jsonl` (CLI-managed), `engine.log`. No `trace.jsonl`/`session.json`: Claude cannot emit LLM-event traces; resume state = `config.json` + taskboard |
+| Budgets | `max_articles` after screening: fast 10 / standard 25 / systematic 60 / max 100 |
+| Models | screen → sonnet; extract + appraise → opus; synthesis/verify → main model |
+| Dual screening | `systematic` (and `max`) only: two independent screener subagents + adjudicator; disagreement rate logged |
+| Eval | Recorded fixtures by default; `--live` flag for real PubMed smoke |
 
 ---
 
@@ -43,10 +48,17 @@ question, critically appraise it, synthesise it, and surface gaps and new hypoth
 | Wikis on disk | 9 dirs, incl. `grant-wiki` and `w3-wiki` not listed in CLAUDE.md | Enumerate the wikis dir at runtime; never hardcode the list |
 | `knowledge-wiki` | git repo + Obsidian vault; already has `assets/ inbox/ raw/ outputs/ wiki/` | PDF library goes to `assets/papers/` to avoid colliding with existing images |
 
-### Open flag
-Wikis are git repos on iCloud. Plan assumes `assets/papers/*.pdf` is added to the wiki's
-`.gitignore` (PDFs stay local) while `assets/papers/index.json` IS committed, so the library
-manifest is versioned. Revisit if the user prefers committing PDFs.
+### Resolved: PDF library git policy
+Wikis are git repos on iCloud and already ignore `assets/`. PDFs stay local; only the manifest is
+versioned. A negation inside an ignored directory does not work, so `library.py init` rewrites the
+rule as:
+
+```gitignore
+assets/*
+!assets/papers/
+assets/papers/*
+!assets/papers/index.json
+```
 
 ---
 
@@ -54,7 +66,8 @@ manifest is versioned. Revisit if the user prefers committing PDFs.
 
 - **narrow** — PubMed MCP only (`search_articles`, `get_article_metadata`, `find_related_articles`)
 - **medium** — + NCBI E-utilities script (exact boolean/MeSH, hit counts, large result sets)
-- **wide** — + Europe PMC, bioRxiv/medRxiv preprints (preprints tagged loudly)
+- **wide** — + Europe PMC REST (indexes bioRxiv/medRxiv/Research Square preprints natively — one
+  API, no separate preprint clients; preprints tagged loudly)
 - **max** — + web: guidelines, grey literature, Scholar Gateway / Consensus connectors
   (both currently unauthorized — skill must detect and tell the user to authorize in
   claude.ai connector settings rather than failing silently)
@@ -77,32 +90,33 @@ manifest is versioned. Revisit if the user prefers committing PDFs.
 ## 5. Pipeline
 
 Stage 0 — **configuration**: load profile/config, infer sane defaults, then ask only for
-missing high-impact choices: scope, rigor, gates, outputs, filters, target wiki, and any
-authorized-browser use.
+missing high-impact choices: scope, rigor, gates, outputs, filters, and target wiki.
 
-| # | Stage | Runs in |
-|---|---|---|
-| 1 | Protocol: PICO/PECO, inclusion/exclusion, limits → `protocol.md` | main |
-| 2 | Search: 4–8 orthogonal queries (MeSH + free-text + citation chaining); every query and hit count logged | subagents, 1/query |
-| 3 | Screen: dedupe (PMID/DOI/normalized title) → title/abstract triage, include/exclude + reason; retraction check | subagents, batched |
-| 4 | Retrieve: full-text acquisition ladder (below) | subagents |
-| 5 | Extract: design, N, population, I/C, outcomes, effect + CI, funding/COI, limitations → `corpus.jsonl` | subagents, 1/paper |
-| 6 | Appraise: RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 by design; then GRADE domains | subagents |
-| 7 | Synthesize: direction, agreement/conflict + why, certainty, gaps, labelled hypotheses | main only |
-| 8 | Verify/report: citation audit, corpus consistency, unsupported-claim check, OKF validation | main or fast reporter |
+| # | Stage | Runs in | Model |
+|---|---|---|---|
+| 1 | Protocol: PICO/PECO, inclusion/exclusion, limits → `protocol.md` | main | main |
+| 2 | Search: 4–8 orthogonal queries (MeSH + free-text + citation chaining) designed in main, executed as parallel `eutils.py` calls; every query and hit count logged | main, scripts only | — |
+| 3 | Screen: dedupe (PMID/DOI/normalized title) → title/abstract triage, include/exclude + reason; retraction check. Dual-screen + adjudicator at `systematic`/`max` | subagents, batched | sonnet |
+| 4 | Retrieve: full-text acquisition ladder (below) | main, `fulltext.py` | — |
+| 5 | Extract: design, N, population, I/C, outcomes, effect + CI, funding/COI, limitations → `corpus.jsonl` | subagents, 1/paper | opus |
+| 6 | Appraise: RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 by design; then GRADE domains | subagents, 1/paper | opus |
+| 7 | Synthesize: direction, agreement/conflict + why, certainty, gaps, labelled hypotheses | main only | main |
+| 8 | Verify/report: citation audit, corpus consistency, unsupported-claim check, OKF validation | main | main |
 
-Subagents return structured JSON, never raw paper text → main context stays small over long runs.
+Subagents write their result file (`workspace/<stage>/pmid-<pmid>.json`) themselves and return a
+one-line receipt `{task_id, status, output_path, summary}` — never raw paper text or the full
+JSON → main context stays small over long runs. Subagent prompts live in `references/prompts/`.
 State is on disk at task granularity; a rerun resumes incomplete/failed tasks rather than
 restarting the last whole stage.
 
 ### Profiles
 
-- **fast** — `scope=narrow`, `rigor=fast`, `gates=none`, bounded article count, report only.
-- **standard** — `scope=medium`, `rigor=standard`, `gates=protocol+strategy`, report + OKF wiki when a wiki is selected. This is the default one-shot profile.
-- **systematic** — `scope=wide`, `rigor=systematic`, `gates=both`, PRISMA-style screening log, full verifier pass, report + OKF + optional Quarto export.
-- **max** — `scope=max`, `rigor=systematic`, `gates=both`, includes guidelines/grey literature/preprints with source-type tagging and connector authorization checks.
+- **fast** — `scope=narrow`, `rigor=fast`, `gates=none`, `max_articles=10`, report only.
+- **standard** — `scope=medium`, `rigor=standard`, `gates=protocol+strategy`, `max_articles=25`, report + OKF bundle when a wiki is selected. This is the default one-shot profile.
+- **systematic** — `scope=wide`, `rigor=systematic`, `gates=both`, `max_articles=60`, dual screening, PRISMA-style screening log, full verifier pass, report + OKF + optional Quarto export.
+- **max** — `scope=max`, `rigor=systematic`, `gates=both`, `max_articles=100`, dual screening, includes guidelines/grey literature/preprints with source-type tagging and connector authorization checks.
 
-Profiles are overridable by `runs/<slug>/config.json`. Resume never re-prompts for values
+Profiles are overridable by the run's `config.json`. Resume never re-prompts for values
 already present in config unless the user explicitly asks to change them.
 
 ### Task board and resumability
@@ -124,9 +138,10 @@ Every unit of work is recorded in `taskboard.jsonl`:
 }
 ```
 
-The coordinator updates task state before and after each subagent assignment. Completed task
-outputs are immutable unless their `inputs_hash` changes. Failed tasks record diagnostics and
-can be retried independently.
+The coordinator never edits `taskboard.jsonl` by hand. All transitions go through
+`corpus.py task claim|complete|fail|block|list --stage <stage>`, which computes `inputs_hash`,
+stamps timestamps, and appends the record. Completed task outputs are immutable unless their
+`inputs_hash` changes. Failed tasks record diagnostics and can be retried independently.
 
 ### Execution guardrails
 
@@ -145,8 +160,7 @@ can be retried independently.
 - Acquisition failure: quarantine the source, continue the run, and mark synthesis provisional.
 - Malformed subagent JSON: retry once with the schema error; then mark the task failed/blocked.
 - Reporter/export failure: preserve `outputs/report.md` and record the failure in `engine.log`.
-- Sandbox, authorization, or paywall-policy failure: fail closed; never fall back to unisolated
-  host access or paywall circumvention.
+- Authorization or paywall-policy failure: fail closed; never fall back to paywall circumvention.
 - OKF validation failure: keep the report, block wiki promotion, and write validation errors to
   `outputs/okf-validation.md`.
 
@@ -155,21 +169,25 @@ Each paper walks the rungs until text is in hand. Rung used is recorded as `sour
 `access_route` in `corpus.jsonl`.
 
 0. `<wiki>/assets/papers/` local library (index.json lookup by DOI/PMID/fuzzy title)
-1. PMC OA — `get_full_text_article` (PubMed MCP)
-2. Europe PMC — `convert_article_ids` → PMCID → `fullTextXML` REST
-3. Unpaywall — DOI → OA location (email as required API param)
-4. Publisher HTML — DOI resolve → defuddle/firecrawl scrape
-5. OA PDF download → `pdftotext -layout`; <100 chars → per-page `tesseract` OCR
-6. Logged-in Chrome via chrome-devtools MCP for subscribed journals — **per-run confirmation
-   before driving the browser**; saves PDF into the library
-7. Preprint twin (bioRxiv/medRxiv/SSRN), tagged as preprint — content differs from the
-   published version, so flagged loudly
-8. Quarantine → `runs/<slug>/missing.md` with PMID, DOI, title, journal, and direct links
+1. PMC full text — `get_full_text_article` (PubMed MCP)
+2. PMC PDF — `https://pmc.ncbi.nlm.nih.gov/articles/<PMCID>/pdf/` (OA subset; honor
+   `User-Agent` + rate limits) → `pdftotext -layout`
+3. Europe PMC — `convert_article_ids` → PMCID → `fullTextXML` REST; also preprint full text
+4. Unpaywall — DOI → `best_oa_location` (`email=<user email>` as required API param; user
+   consented at plan review)
+5. OA PDF/HTML from rung 3–4 location → `pdftotext -layout`; <100 chars → per-page `tesseract`
+   OCR. HTML route runs a **truncation detector** (body < 1500 words, or paywall markers such as
+   "Access options", "Purchase", "Sign in to view") → treated as abstract-only, never full text
+6. Preprint twin (via Europe PMC), tagged as preprint — content differs from the published
+   version, so flagged loudly
+7. Quarantine → `missing.md` with PMID, DOI, PMCID, title, journal, and direct links
+   (PubMed, DOI, PMC). **Alert user.** No browser automation rung.
 
 Run never stalls on quarantine: it continues, marks the synthesis provisional, lists the gap.
-**Resume loop**: user drops PDFs into `runs/<slug>/inbox/`; rerun matches each PDF to its
-quarantined record (PDF metadata DOI, else first-page text), extracts, appraises, re-synthesises,
-and files the PDF into the library. Report notes which studies arrived by manual supply.
+**Resume loop**: user drops PDFs into the run's `inbox/`; rerun matches each PDF to its
+quarantined record (DOI regex `10\.\d{4,}/\S+` on first-page `pdftotext` output — `pdfinfo`
+metadata rarely has it — else fuzzy title), extracts, appraises, re-synthesises, and files the
+PDF into the library. Report notes which studies arrived by manual supply.
 
 ---
 
@@ -184,17 +202,17 @@ and files the PDF into the library. Report notes which studies arrived by manual
 - Retracted / Expression-of-Concern papers flagged at screening
 - PubMed MCP attribution requirement honored (cite PubMed + DOIs)
 - No paywall circumvention of any kind
-- OKF concept documents use `type` plus recommended `title`, `description`, `resource`, `tags`, `generated`, `sources`, `verified`, `status`, and `stale_after` where applicable
+- Bundle concept documents follow `references/okf-bundle.md` (our own convention, not wiki-manager's OKF 0.1): `type` plus `title`, `description`, `resource`, `tags`, `generated`, `sources`, `verified`, `status`, and `stale_after` where applicable
 - PubMed-derived OKF concepts MUST preserve PubMed bibliographic metadata in frontmatter: `pmid`, `doi`, `pmcid`, `authors`, `journal`, `publication_date`, `article_types`, `mesh_terms`, `keywords`, `publication_status`, `retraction_status`, citation details, and source URLs when available
 - Per-claim attribution uses markdown footnotes keyed to `sources[].id`; do not rely on a body-only citations list
-- Root wiki `index.md` declares `okf_version: "0.2"` when deep-research creates or controls the bundle
+- Bundle root `<wiki>/research/index.md` declares `okf_version: "0.2"` and `bundle: deep-research`. The wiki-manager bundle at `<wiki>/wiki/` is never written to; cross-links from `wiki/` into `research/` are the user's/wiki-manager's business
 - Standard markdown links are the graph layer; Obsidian wikilinks may be additive only
 
 ---
 
 ## 6a. OKF PubMed metadata
 
-Every PubMed-derived concept written into the wiki is an OKF v0.2 concept. `type` is the only OKF-required field, but deep-research treats the following bibliographic fields as required when PubMed supplies them:
+Every PubMed-derived concept written into the bundle is an OKF v0.2-style concept per `references/okf-bundle.md`. `type` is the only OKF-required field, but deep-research treats the following bibliographic fields as required when PubMed supplies them:
 
 ```yaml
 ---
@@ -241,7 +259,7 @@ sources:
     resource: https://doi.org/10.1000/example
     title: DOI landing page
   - id: fulltext-12345678
-    resource: /references/papers/pmid-12345678.pdf
+    resource: ../../assets/papers/pmid-12345678.pdf
     title: Local full-text PDF
 ---
 ```
@@ -254,8 +272,8 @@ Deep-research may define domain concept types, but consumers must tolerate unkno
 OKF. Stable wiki concepts use durable paths, not run-specific paths:
 
 ```text
-<wiki-root>/
-  index.md                  # MAY include okf_version: "0.2"
+<wiki-root>/research/           # deep-research bundle; sibling of wiki-manager's wiki/
+  index.md                  # okf_version: "0.2", bundle: deep-research
   log.md
   reviews/<slug>.md         # type: Review
   protocols/<slug>.md       # type: Protocol
@@ -271,12 +289,12 @@ OKF. Stable wiki concepts use durable paths, not run-specific paths:
   gaps/<slug>.md            # type: Evidence Gap
   hypotheses/<slug>.md      # type: Hypothesis
   source-documents/<slug>.md # type: Source Document
-  references/papers/
-    index.json
+<wiki-root>/assets/papers/    # shared PDF library (rung 0); index.json versioned, PDFs not
+  index.json
 ```
 
-Run artifacts may link to durable concepts, but promoted wiki concepts do not live under
-`runs/<slug>/`. Each directory gets an `index.md` when generated by `scripts/okf.py`, and
+Run artifacts may link to durable concepts, but promoted bundle concepts do not live under the
+run directory. Each directory gets an `index.md` when generated by `scripts/okf.py`, and
 updates append to the nearest `log.md` with ISO `YYYY-MM-DD` headings.
 
 ## 7. File layout
@@ -287,35 +305,37 @@ deep-research/
   PLAN.md                  # this file
   README.md
   references/
-    schema.md              # JSON contracts for subagent returns
+    schema.md              # JSON contracts for subagent result files + receipts
+    okf-bundle.md          # bundle frontmatter spec (our OKF 0.2-style convention), taxonomy, paths
     search-strategy.md     # MeSH, hedges, filter→tag table, orthogonal query design
-    acquisition.md         # the ladder, rung by rung; chrome rung rules
+    acquisition.md         # the ladder, rung by rung; truncation detector rules
     appraisal.md           # RoB2, ROBINS-I, NOS, AMSTAR-2, GRADE
     synthesis.md           # effect direction, heterogeneity, conflict handling
     reporting.md           # PRISMA flow, citation format
+    prompts/
+      screen.md  adjudicate.md  extract.md  appraise.md   # subagent prompt blocks
   scripts/
     eutils.py              # esearch/efetch/elink, throttle, retry, hit counts
     fulltext.py            # acquisition ladder, resumable
     library.py             # assets/papers/index.json, matching, inbox ingestion
-    corpus.py              # corpus.jsonl, dedupe, PRISMA counters, task checkpoints
-    okf.py                 # OKF v0.2 concept writer + validator, PubMed metadata frontmatter
+    corpus.py              # corpus.jsonl, dedupe, PRISMA counters, `task` CLI for taskboard
+    okf.py                 # bundle concept writer + validator (references/okf-bundle.md)
     render.py              # md → qmd + bib → quarto render (pdf/docx)
     verify.py              # citation/corpus/OKF consistency checks
-    eval.py                # deterministic smoke/evaluation harness
+    eval.py                # fixture-based smoke harness; --live for real PubMed
+  tests/fixtures/          # recorded esearch/efetch XML, PMC XML, sample PDFs
   templates/
     protocol.md  evidence-table.md  report.md  report.qmd  refs.bib
-  runs/<slug>/
-    session.json           # resumable conversation/run checkpoint
-    config.json            # profile, limits, filters, wiki target, gates
-    trace.jsonl            # ordered LLM/tool/subagent events
+
+<wiki>/outputs/deep-research/<slug>/     # run directory lives in the target wiki
+    config.json            # profile, limits, filters, wiki target, gates, stage pointer
     engine.log             # warnings, failures, diagnostics
-    taskboard.jsonl        # task-level state machine
-    trajectories/          # coordinator and subagent reports
-    inputs/                # read-only user-supplied files and manual PDFs
-    workspace/             # protocol/search/screen/extract/appraise scratch state
+    taskboard.jsonl        # task-level state machine (corpus.py task CLI only)
+    inputs/                # read-only user-supplied files
+    workspace/             # search/screen/extract/appraise result files (one per task)
     outputs/               # report.md, report.qmd, validation reports, HTML
     missing.md             # quarantined papers needing user-supplied access
-    inbox/                 # backward-compatible manual PDF drop target
+    inbox/                 # manual PDF drop target for the resume loop
 ```
 
 ---
@@ -327,15 +347,18 @@ deep-research/
   "what does the evidence say", "pubmed", "deep research"), stage-0 config protocol,
   profiles, pipeline table, invariants, delegation rules, execution guardrails, and failure
   semantics. Target <=500 lines; detail in references.
-- `references/schema.md`: JSON contracts subagents must return (screening verdict,
-  extraction record, appraisal record, taskboard record, verifier result). The spine —
-  everything conforms to it.
-- `templates/*`.
+- `references/schema.md`: JSON contracts for subagent result files and receipts (screening
+  verdict, adjudication, extraction record, appraisal record, taskboard record, verifier
+  result). The spine — everything conforms to it.
+- `references/okf-bundle.md`: the bundle frontmatter spec. Written first so `okf.py` has a
+  target and wiki-manager collision is impossible by construction.
+- `references/prompts/*.md`, `templates/*`.
 
 **Phase 2 — acquisition (load-bearing)**
 - `scripts/eutils.py` — esearch returns count + translated query + PMIDs; efetch XML →
   normalized JSON; elink. 3 req/s throttle, backoff, `NCBI_API_KEY` honored. stdlib + requests.
-- `scripts/fulltext.py` — the ladder, resumable, records `source_tier`/`access_route`.
+- `scripts/fulltext.py` — the ladder, resumable, records `source_tier`/`access_route`;
+  truncation detector for HTML routes.
 - `scripts/library.py` — index.json, DOI+PMID+fuzzy-title match, sha256 dedupe, inbox ingestion.
 - `references/acquisition.md`.
 
@@ -343,9 +366,10 @@ deep-research/
 - `references/search-strategy.md` — MeSH vs free-text, filter→tag table, validated design
   hedges (Cochrane RCT filter, SIGN SR filter), citation chaining, building genuinely
   orthogonal queries rather than 8 near-duplicates.
-- `scripts/corpus.py` — corpus.jsonl, dedupe, PRISMA counters, task-level checkpointing.
-- Screening subagent prompt block in SKILL.md: criteria in,
-  `{pmid, decision, reason, criterion_failed}` out.
+- `scripts/corpus.py` — corpus.jsonl, dedupe, PRISMA counters, `task` CLI.
+- `references/prompts/screen.md` + `adjudicate.md`: criteria in, result file
+  `{pmid, decision, reason, criterion_failed}` + receipt out. Dual-screen orchestration for
+  `systematic`/`max`: two screeners, adjudicator on disagreement, agreement rate in PRISMA log.
 
 **Phase 4 — appraisal & synthesis**
 - `references/appraisal.md` — which tool for which design; how to phrase "unclear" honestly.
@@ -356,9 +380,9 @@ deep-research/
 **Phase 5 — output**
 - `scripts/render.py` — report.md → report.qmd + refs.bib (BibTeX from corpus.jsonl) →
   `quarto render` to PDF/docx.
-- `scripts/okf.py` — writes OKF v0.2 concepts into the chosen wiki, including
+- `scripts/okf.py` — writes bundle concepts into `<wiki>/research/`, including
   PubMed metadata frontmatter, `sources`, standard markdown links, `index.md`,
-  and `log.md`. Obsidian conventions may be additive only.
+  and `log.md`. Validates against `references/okf-bundle.md`. Obsidian conventions additive only.
 - `scripts/verify.py` — final reporter/verifier pass: checks every citation maps to
   `corpus.jsonl`/OKF `sources`, every included study has screening/extraction/appraisal records,
   abstract-only claims are labelled, missing full texts are listed, and hypotheses are not
@@ -367,12 +391,35 @@ deep-research/
 - `README.md` — usage, config options, inbox resume loop.
 
 **Phase 6 — evaluation harness**
-- `scripts/eval.py` deterministic smoke tests:
+- `scripts/eval.py` runs against `tests/fixtures/` by default; `--live` hits PubMed. Tests:
   known PubMed query with expected PMIDs; duplicate DOI/title merge; PMC full-text success;
-  paywalled article quarantine; inbox PDF resume; malformed subagent JSON retry/block;
+  paywalled article quarantine; HTML truncation detected as abstract-only; inbox PDF resume;
+  malformed subagent JSON retry/block; dual-screen disagreement → adjudication;
   report citation verifier; OKF v0.2 validator; interrupted run resumes by task.
 - Start with concurrency 1. Treat total possible model parallelism as evaluation concurrency
   multiplied by `max_parallel`.
 
 **Then**: end-to-end dry run on a real question at `fast` rigor; verify the quarantine →
 inbox → resume loop, taskboard resume, verifier pass, and OKF promotion actually work; fix what breaks.
+
+---
+
+## 9. Review log (2026-09-08)
+
+Decisions taken after implementation review:
+
+- **Bundle separation** — `<wiki>/research/` is deep-research-owned; wiki-manager's `wiki/`
+  (OKF 0.1, `wiki/<topic>/`, `timestamp`, string `sources`) is never written to. Our
+  frontmatter convention is documented in `references/okf-bundle.md`; it is not an external spec.
+- **Runs live in the wiki** — `<wiki>/outputs/deep-research/<slug>/`, not in the skill dir.
+- **Chrome rung dropped** — chrome-devtools MCP cannot reliably save PDFs. PMC (MCP + PDF URL),
+  Europe PMC, Unpaywall, OA PDF; else quarantine + alert. Unpaywall email use approved.
+- **Runtime trimmed** — no `trace.jsonl`, `session.json`, `trajectories/`; taskboard only via
+  `corpus.py task`; subagents write result files and return one-line receipts; search stage
+  is script-only from main.
+- **Budgets** — `max_articles` fast 10 / standard 25 / systematic 60 / max 100.
+- **Models** — sonnet screening, opus extraction + appraisal, main model for synthesis.
+- **Dual screening** — `systematic` and `max` only.
+- **Eval** — recorded fixtures default, `--live` opt-in.
+- **PDF library** — `<wiki>/assets/papers/`; PDFs gitignored, `index.json` versioned via
+  the four-line ignore pattern in §2.
