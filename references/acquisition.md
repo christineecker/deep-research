@@ -253,6 +253,7 @@ online pass still attempts them.
 fulltext.py acquire --corpus <corpus.jsonl> --run-dir <dir>
                     [--wiki <root>] [--only-pmid X] [--only-evidence-id X]
                     [--from-tier N] [--email addr] [--limit N] [--offline] [--no-ocr]
+                    [--workers N]
 fulltext.py status  --run-dir <dir> [--corpus <path>]
 fulltext.py resolve-mcp --run-dir <dir> --evidence-id <id>
                     (--text-file <path> | --status unavailable)

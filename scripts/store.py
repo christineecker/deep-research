@@ -69,7 +69,11 @@ import json
 import os
 import re
 import sys
+import threading
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _common import emit_json as _emit, utcnow  # noqa: E402  (sibling module, stdlib-only)
 
 SCHEMA_VERSION = 1
 VERSION = "deep-research/0.1"
@@ -185,11 +189,6 @@ def compute_source_id(url: str, text: str) -> str:
 def compute_content_hash(text: str) -> str:
     """R11: "sha256:" + sha256_hex(utf8(text)). The URL is deliberately excluded."""
     return "sha256:" + sha256_text(text)
-
-
-def utcnow() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
 
 def parse_ts(value: str | None) -> _dt.datetime | None:
     """Parse an ISO-8601 Z timestamp (S2). Returns None when unparseable."""
@@ -739,6 +738,17 @@ def _next_event_id(events: list[dict]) -> str:
     return "ev-%04d" % (max(highest, len(events)) + 1)
 
 
+#: Guards the read -> allocate -> dup-check -> append sequence in `append_event`.
+#:
+#: R23 requires `event_id`s to be unique within a run and allocated in append order. The
+#: `flock` below only makes the *write* atomic; without this lock two threads can both
+#: `read_events()`, both compute the same `ev-000N`, both pass the duplicate check (each
+#: having read before the other wrote), and both append it. `fulltext.py acquire --workers`
+#: registers snapshots from a thread pool, so that race is reachable in normal operation.
+#: Re-entrant because the snapshot existence check below re-enters store code.
+_EVENT_LOCK = threading.RLock()
+
+
 def append_event(run_dir, event: dict) -> dict:
     """Append one line to `<run>/events.jsonl`. Append is the only mutation (§11).
 
@@ -746,6 +756,11 @@ def append_event(run_dir, event: dict) -> dict:
     digits, unique within the run, allocated in append order). For `fetch`, `local_pdf`
     and `register` the snapshot must already exist — writing the snapshot always precedes
     appending its event.
+
+    Thread-safe: the whole allocate-and-append sequence is serialised by `_EVENT_LOCK`, and
+    the write additionally takes an `flock` so a concurrent *process* cannot interleave a
+    partial line. Threads within one process are ordered by the lock; separate processes
+    writing the same run concurrently are not, and never were.
     """
     ensure_run(run_dir)
     rec = dict(event)
@@ -754,29 +769,30 @@ def append_event(run_dir, event: dict) -> dict:
     rec.setdefault("actor", "main")
     rec.setdefault("detail", None)
     rec.setdefault("fresh", False)
-    existing = read_events(run_dir)
-    if not rec.get("event_id"):
-        rec["event_id"] = _next_event_id(existing)
-    rec = validate_event(rec)
-    if rec["type"] in ("fetch", "local_pdf", "register"):
-        # R23: the snapshot exists before its event names it.
-        read_snapshot(run_dir, rec["source_id"])
-    seen = {e.get("event_id") for e in existing}
-    if rec["event_id"] in seen:
-        raise SchemaError("duplicate event_id %s in this run (R23)" % rec["event_id"])
+    with _EVENT_LOCK:
+        existing = read_events(run_dir)
+        if not rec.get("event_id"):
+            rec["event_id"] = _next_event_id(existing)
+        rec = validate_event(rec)
+        if rec["type"] in ("fetch", "local_pdf", "register"):
+            # R23: the snapshot exists before its event names it.
+            read_snapshot(run_dir, rec["source_id"])
+        seen = {e.get("event_id") for e in existing}
+        if rec["event_id"] in seen:
+            raise SchemaError("duplicate event_id %s in this run (R23)" % rec["event_id"])
 
-    line = json.dumps(_ordered(rec, EVENT_FIELDS), ensure_ascii=False,
-                      separators=(",", ":")) + "\n"
-    path = events_path(run_dir)
-    with open(path, "a", encoding="utf-8") as fh:
-        try:
-            import fcntl
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        except (ImportError, OSError):
-            pass
-        fh.write(line)
-        fh.flush()
-        os.fsync(fh.fileno())
+        line = json.dumps(_ordered(rec, EVENT_FIELDS), ensure_ascii=False,
+                          separators=(",", ":")) + "\n"
+        path = events_path(run_dir)
+        with open(path, "a", encoding="utf-8") as fh:
+            try:
+                import fcntl
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            except (ImportError, OSError):
+                pass
+            fh.write(line)
+            fh.flush()
+            os.fsync(fh.fileno())
     return rec
 
 
@@ -1035,12 +1051,6 @@ def stats(run_dir, *, wiki_root=None) -> dict:
 
 
 # ----------------------------------------------------------------------- cli ---
-
-
-def _emit(payload: dict, *, code: int = 0) -> int:
-    print(json.dumps(payload, indent=2, ensure_ascii=False))
-    return code
-
 
 def _read_text_arg(args) -> str:
     if getattr(args, "text", None) is not None:

@@ -34,10 +34,12 @@ proxies, no sci-hub-class sources, no paywall circumvention of any kind. Fail cl
 from __future__ import annotations
 
 import argparse
+import concurrent.futures as cf
 import json
 import os
 import re
 import sys
+import threading
 import time
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
@@ -120,6 +122,8 @@ class Http:
         self.offline = offline
         self.timeout = timeout
         self._last: dict[str, float] = {}
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
         ua = "%s (+https://pubmed.ncbi.nlm.nih.gov/; literature-review agent" % VERSION
         ua += "; mailto:%s)" % email if email else ")"
         self.headers = {"User-Agent": ua, "Accept": "*/*"}
@@ -127,15 +131,31 @@ class Http:
         if self.session:
             self.session.headers.update(self.headers)
 
+    def _host_lock(self, host: str) -> "threading.Lock":
+        with self._locks_guard:
+            lock = self._locks.get(host)
+            if lock is None:
+                lock = self._locks[host] = threading.Lock()
+            return lock
+
     def _wait(self, url: str) -> None:
+        """Sleep until this host's politeness interval has elapsed, then stamp it.
+
+        Per **host**, not global: with `acquire --workers` two threads hitting
+        `pmc.ncbi.nlm.nih.gov` still serialise against each other at that host's interval,
+        while a third thread hitting `api.unpaywall.org` proceeds immediately. Holding the
+        host lock across the sleep is what makes the spacing a real floor rather than a
+        suggestion — without it, N threads all read the same `_last` and all wake together.
+        """
         host = urlsplit(url).netloc
         interval = HOST_INTERVAL.get(host, DEFAULT_INTERVAL)
-        last = self._last.get(host)
-        if last is not None:
-            delta = time.monotonic() - last
-            if delta < interval:
-                time.sleep(interval - delta)
-        self._last[host] = time.monotonic()
+        with self._host_lock(host):
+            last = self._last.get(host)
+            if last is not None:
+                delta = time.monotonic() - last
+                if delta < interval:
+                    time.sleep(interval - delta)
+            self._last[host] = time.monotonic()
 
     def get(self, url: str, *, params: dict | None = None, stream: bool = False,
             retries: int = 2):
@@ -300,11 +320,16 @@ def mark(state: dict, tier: int, status: str, detail: str = "", **extra) -> None
     state["rungs"][str(tier)] = entry
 
 
+#: Serialises `engine.log` appends so pooled workers cannot interleave a partial line.
+_LOG_LOCK = threading.Lock()
+
+
 def log(run_dir: Path, msg: str) -> None:
     path = run_dir / "engine.log"
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write("%s fulltext.py %s\n" % (utcnow(), msg))
+    with _LOG_LOCK:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("%s fulltext.py %s\n" % (utcnow(), msg))
 
 
 # ----------------------------------------------------------------- mcp tasks ---
@@ -1018,6 +1043,35 @@ def resolve_paths(args) -> tuple[Path, Path]:
     return run_dir, wiki
 
 
+#: Pool size when neither `--workers` nor `budgets.max_parallel` says otherwise. Deliberately
+#: modest: the ladder's hosts are rate-limited per host, so more threads mostly means more
+#: threads sleeping on the same host lock.
+DEFAULT_WORKERS = 4
+MAX_WORKERS = 16
+
+
+def resolve_workers(args, run_dir: Path) -> int:
+    """`--workers`, else `config.json` `budgets.max_parallel`, else `DEFAULT_WORKERS`.
+
+    Forced to 1 under `--offline`, which has no network work to overlap and whose determinism
+    the fixture tests depend on.
+    """
+    if getattr(args, "offline", False):
+        return 1
+    n = getattr(args, "workers", None)
+    if n is None:
+        try:
+            cfg = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+            n = (cfg.get("budgets") or {}).get("max_parallel")
+        except (OSError, ValueError):
+            n = None
+    try:
+        n = int(n) if n is not None else DEFAULT_WORKERS
+    except (TypeError, ValueError):
+        n = DEFAULT_WORKERS
+    return max(1, min(n, MAX_WORKERS))
+
+
 def cmd_acquire(args) -> int:
     run_dir, wiki = resolve_paths(args)
     corpus_path = Path(args.corpus).expanduser().resolve()
@@ -1028,7 +1082,11 @@ def cmd_acquire(args) -> int:
         return 1
     ctx = Ctx(run_dir, wiki, email, offline=args.offline, allow_ocr=not args.no_ocr,
               register=not args.no_register)
-    results = []
+
+    # Selection happens up front, so `--limit` means "the first N selectable records" with a
+    # pool exactly as it did with a serial loop. Breaking out of a pool mid-flight would make
+    # the set depend on which worker finished first.
+    selected = []
     for rec in records:
         if args.only_pmid and str(rec.get("pmid") or "") != str(args.only_pmid):
             continue
@@ -1036,9 +1094,23 @@ def cmd_acquire(args) -> int:
             continue
         if not selectable(rec):
             continue
-        results.append(acquire_record(rec, ctx, from_tier=args.from_tier))
-        if args.limit and len(results) >= args.limit:
+        selected.append(rec)
+        if args.limit and len(selected) >= args.limit:
             break
+
+    workers = resolve_workers(args, run_dir)
+    if workers > 1 and len(selected) > 1:
+        # Each record owns its own dict and its own output paths, so the only shared state is
+        # the HTTP throttle (per-host locked), engine.log (locked) and the snapshot store
+        # (O_EXCL snapshots, lock-serialised event append — see store._EVENT_LOCK).
+        with cf.ThreadPoolExecutor(max_workers=workers,
+                                   thread_name_prefix="acquire") as pool:
+            futures = [pool.submit(acquire_record, rec, ctx, from_tier=args.from_tier)
+                       for rec in selected]
+            results = [f.result() for f in futures]      # submission order, not completion
+    else:
+        results = [acquire_record(rec, ctx, from_tier=args.from_tier) for rec in selected]
+
     write_corpus(corpus_path, records)
     pending = [t for t in read_mcp_tasks(run_dir) if t.get("status") == "needs_mcp"
                and not (run_dir / t["result_path"]).exists()]
@@ -1178,6 +1250,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="disable the tesseract OCR fallback")
     s.add_argument("--no-register", action="store_true", dest="no_register",
                    help="do not register acquired text into <run-dir>/sources/ (kernel off)")
+    s.add_argument("--workers", type=int, default=None,
+                   help="acquire N records concurrently (default: config.json "
+                        "budgets.max_parallel, else %d; 1 disables the pool). Per-host "
+                        "rate limits are enforced regardless." % DEFAULT_WORKERS)
     s.set_defaults(func=cmd_acquire)
 
     s = sub.add_parser("status", help="acquisition state for a run")
