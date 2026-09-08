@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la /Users/sphache/.claude/skills/deep-research/ 2>&1 | head -30; echo \"---\"; ls /Users/sphache/.claude/skills/ | head -40)",
+      "Read(//Users/sphache/.claude/skills/**)"
+    ]
+  }
+}
