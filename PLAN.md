@@ -321,16 +321,19 @@ deep-research/
     corpus.py              # corpus.jsonl, dedupe, PRISMA counters, `task` CLI for taskboard
     okf.py                 # bundle concept writer + validator (references/okf-bundle.md)
     render.py              # md → qmd + bib → quarto render (pdf/docx)
+    html_report.py         # self-contained offline HTML artifact
     verify.py              # citation/corpus/OKF consistency checks
     eval.py                # fixture-based smoke harness; --live for real PubMed
   tests/fixtures/          # recorded esearch/efetch XML, PMC XML, sample PDFs
   templates/
-    protocol.md  evidence-table.md  report.md  report.qmd  refs.bib
+    protocol.md  evidence-table.md  report.md  report.qmd  report.html  refs.bib
 
 <wiki>/outputs/deep-research/<slug>/     # run directory lives in the target wiki
     config.json            # profile, limits, filters, wiki target, gates, stage pointer
     engine.log             # warnings, failures, diagnostics
     taskboard.jsonl        # task-level state machine (corpus.py task CLI only)
+    events.jsonl           # evidence-kernel event log (store.py, append-only)
+    sources/               # immutable source snapshots, src-<sha256>.json
     inputs/                # read-only user-supplied files
     workspace/             # search/screen/extract/appraise result files (one per task)
     outputs/               # report.md, report.qmd, validation reports, HTML

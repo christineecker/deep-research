@@ -11,6 +11,17 @@ Subcommands
   ingest-inbox  match every PDF in <run-dir>/inbox/ to a quarantined corpus record
   list          dump index entries
 
+Evidence kernel: `ingest-inbox` registers each matched PDF's extracted text into the run's
+snapshot store (`scripts/store.py`, references/schema.md §10-§11) with
+`origin: user-supplied-pdf`, and writes a `local_pdf` event carrying the asset triple
+`{path, sha256, bytes}`. That event plus the matching hash is what makes the fresh-fetch
+exception work for a manually supplied paper (VALIDATION_ARCHITECTURE_PLAN.md Phase 3) —
+there is nothing to re-fetch, so the immutable hash-checked local file *is* the fresh source.
+
+PDFs are never copied per run (D3/R13): they stay in `<wiki>/assets/papers/` and the snapshot
+records the wiki-root-relative path plus the sha256. Registration is additive and best-effort —
+a store failure is logged to `<run-dir>/engine.log` and never aborts a successful ingest.
+
 Everything here is stdlib only (pdftotext / pdfinfo / pdftoppm / tesseract binaries
 are shelled out to). No pip installs. See references/acquisition.md.
 """
@@ -31,6 +42,12 @@ import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:  # the evidence kernel is additive: the library must work without it
+    import store  # noqa: E402  (sibling module, stdlib-only)
+except Exception:  # pragma: no cover - store.py is a sibling and always present
+    store = None
+
 SCHEMA_VERSION = 1
 
 # --- matching thresholds (documented in references/acquisition.md) ---------------
@@ -43,6 +60,18 @@ FUZZY_PAGE_THRESHOLD = 0.85
 MIN_FUZZY_TITLE_CHARS = 25
 
 DOI_RE = re.compile(r"10\.\d{4,}/\S+")
+
+
+def entry_is_preprint(entry: dict | None) -> bool:
+    """Read an index entry's preprint flag.
+
+    The field is additive: entries written before it existed simply lack the key and
+    read back as `False`. The index is never rewritten just to backfill the default —
+    it is only persisted when something else already changed it.
+    """
+    return bool((entry or {}).get("is_preprint"))
+
+
 MIN_TEXT_CHARS = 100  # below this, pdftotext is considered to have failed
 
 GITIGNORE_RULES = [
@@ -357,6 +386,7 @@ class Library:
         year: str | None = None,
         source_tier: int | None = None,
         access_route: str | None = None,
+        is_preprint: bool = False,
         stem: str | None = None,
         move: bool = False,
     ) -> tuple[dict, bool]:
@@ -374,6 +404,10 @@ class Library:
                     existing[key] = val
             if title and not existing.get("title_norm"):
                 existing["title_norm"] = normalize_title(title)
+            # preprint-ness only ever ratchets up: an explicit true from the caller
+            # fills in a missing or false flag, a false never clears a stored true.
+            if is_preprint and not entry_is_preprint(existing):
+                existing["is_preprint"] = True
             self.save()
             if move:
                 pdf.unlink(missing_ok=True)
@@ -411,6 +445,7 @@ class Library:
             "added_at": utcnow(),
             "source_tier": source_tier,
             "access_route": access_route,
+            "is_preprint": bool(is_preprint),
         }
         self.entries.append(entry)
         self.save()
@@ -543,10 +578,104 @@ def unquarantine(run_dir: Path, evidence_id: str) -> bool:
     return True
 
 
+# ---------------------------------------------------------- evidence kernel ---
+
+
+def log(run_dir: Path, msg: str) -> None:
+    path = Path(run_dir) / "engine.log"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("%s library.py %s\n" % (utcnow(), msg))
+    except OSError:
+        pass
+
+
+def register_local_pdf(run_dir: Path, wiki_root: Path, rec: dict, entry: dict, text: str,
+                       *, actor: str = "main") -> str | None:
+    """Register a library PDF's text as a snapshot and log its `local_pdf` event.
+
+    Returns the `source_id`, or None when nothing was registered.
+
+    * `origin` is `user-supplied-pdf` and the snapshot's `asset` is the triple
+      `{path, sha256, bytes}` with a **wiki-root-relative** path (R13). The PDF is not
+      copied into the run; `<run>/sources/` holds only `src-*.json`.
+    * The bytes on disk are re-hashed here and must match `entry["sha256"]`. Only then is
+      a `local_pdf` event written with `fresh: true` — that event plus the matching hash
+      is the user-supplied-PDF exception to the fresh-fetch rule (schema.md §11). A
+      mismatch falls back to a plain `register` event, which is never fresh (R22).
+    * `access` follows R21: a PDF that yielded usable text is `full_text`, one that did
+      not is `abstract`, mirroring `fulltext.status`.
+    * Best-effort: any store failure is logged to `engine.log` and swallowed, so an
+      ingest that already succeeded is never lost to a kernel problem. `<run>/sources/`
+      is created lazily on the first registration.
+    """
+    if store is None:
+        return None
+    text = text or ""
+    if not text.strip():
+        return None
+    wiki_root = Path(wiki_root).expanduser().resolve()
+    rel = Path(entry["path"]).as_posix()
+    pdf = wiki_root / rel
+    try:
+        digest = sha256_file(pdf)
+        nbytes = pdf.stat().st_size
+    except OSError as exc:
+        log(run_dir, "cannot hash %s for registration: %r" % (rel, exc))
+        return None
+    matched = digest == entry.get("sha256")
+    if not matched:
+        log(run_dir, "asset hash mismatch for %s (%s on disk, %s indexed); registering "
+                     "without a local_pdf event" % (rel, digest[:16],
+                                                    str(entry.get("sha256"))[:16]))
+    # R21: usable text is `full_text`, unusable text is `abstract`. A preprint — flagged
+    # by the corpus record or by the library entry, an explicit true from either winning —
+    # is `preprint` instead, so a cached preprint is never mistaken for a published paper.
+    if len(text.strip()) < MIN_TEXT_CHARS:
+        access = "abstract"
+    elif bool(rec.get("is_preprint")) or entry_is_preprint(entry):
+        access = "preprint"
+    else:
+        access = "full_text"
+    paper = {
+        "pmid": rec.get("pmid") or None,
+        "doi": normalize_doi(rec.get("doi")) or normalize_doi(entry.get("doi")),
+        "pmcid": rec.get("pmcid") or None,
+    }
+    try:
+        snap = store.write_snapshot(
+            run_dir,
+            url="file:///" + rel,
+            text=text,
+            title=rec.get("title") or entry.get("title"),
+            access=access,
+            origin="user-supplied-pdf",
+            paper=paper,
+            asset={"path": rel, "sha256": digest, "bytes": nbytes},
+            event_type="local_pdf" if matched else "register",
+            fresh=matched,
+            actor=actor,
+            detail=("user-supplied pdf %s; %d chars, %d bytes, asset bytes hashed and %s"
+                    % (rel, len(text), nbytes, "matched" if matched else "MISMATCHED")),
+        )
+    except Exception as exc:  # a kernel problem must never lose a successful ingest
+        log(run_dir, "snapshot registration failed for %s: %r" % (rel, exc))
+        return None
+    source_id = snap["source_id"]
+    ids = rec.setdefault("source_ids", [])
+    if source_id not in ids:
+        ids.append(source_id)
+    log(run_dir, "%s registered %s (access=%s, origin=user-supplied-pdf%s)"
+        % (evidence_id_of(rec), source_id, access, ", local_pdf fresh" if matched else ""))
+    return source_id
+
+
 # -------------------------------------------------------------- ingest-inbox ---
 
 
-def ingest_inbox(run_dir: Path, wiki_root: Path, corpus_path: Path, apply: bool = True) -> dict:
+def ingest_inbox(run_dir: Path, wiki_root: Path, corpus_path: Path, apply: bool = True,
+                 register: bool = True) -> dict:
     run_dir = Path(run_dir).expanduser().resolve()
     inbox = run_dir / "inbox"
     lib = Library(wiki_root)
@@ -565,6 +694,8 @@ def ingest_inbox(run_dir: Path, wiki_root: Path, corpus_path: Path, apply: bool 
         "inbox": str(inbox),
         "corpus": str(corpus_path),
         "applied": apply,
+        "registered": register,
+        "sources_dir": str(run_dir / "sources") if register else None,
         "ingested": [],
         "unmatched": [],
     }
@@ -627,6 +758,7 @@ def ingest_inbox(run_dir: Path, wiki_root: Path, corpus_path: Path, apply: bool 
             year=(match.get("publication_date") or "")[:4] or None,
             source_tier=0,
             access_route="inbox_manual",
+            is_preprint=bool(match.get("is_preprint")),
             stem=record_stem(match),
             move=True,
         )
@@ -644,6 +776,9 @@ def ingest_inbox(run_dir: Path, wiki_root: Path, corpus_path: Path, apply: bool 
             "sha256": entry["sha256"],
             "truncation_detected": False,
         }
+        source_id = register_local_pdf(run_dir, wiki_root, match, entry, text) \
+            if register else None
+
         update = {
             "evidence_id": evidence_id_of(match),
             "matched_by": kind,
@@ -654,6 +789,8 @@ def ingest_inbox(run_dir: Path, wiki_root: Path, corpus_path: Path, apply: bool 
             "ocr_used": used_ocr,
             "text_path": str(text_path.relative_to(run_dir)),
             "fulltext": fulltext,
+            "source_id": source_id,
+            "source_ids": list(match.get("source_ids") or []),
         }
         updates.append(update)
         result["ingested"].append(update)
@@ -699,7 +836,7 @@ def cmd_add(args) -> int:
     entry, was_new = lib.add(
         Path(args.pdf), pmid=args.pmid, doi=args.doi, pmcid=args.pmcid, title=args.title,
         journal=args.journal, year=args.year, source_tier=args.source_tier,
-        access_route=args.access_route, move=args.move,
+        access_route=args.access_route, is_preprint=args.is_preprint, move=args.move,
     )
     print(json.dumps({"new": was_new, "entry": entry}, indent=2, ensure_ascii=False))
     return 0
@@ -709,7 +846,8 @@ def cmd_ingest_inbox(args) -> int:
     run_dir = Path(args.run_dir).expanduser().resolve()
     wiki = Path(args.wiki).expanduser().resolve() if args.wiki else wiki_root_for_run(run_dir)
     corpus = Path(args.corpus) if args.corpus else run_dir / "corpus.jsonl"
-    res = ingest_inbox(run_dir, wiki, corpus, apply=not args.no_apply)
+    res = ingest_inbox(run_dir, wiki, corpus, apply=not args.no_apply,
+                       register=not args.no_register)
     print(json.dumps(res, indent=2, ensure_ascii=False))
     return 0
 
@@ -752,6 +890,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--year")
     s.add_argument("--source-tier", type=int, dest="source_tier")
     s.add_argument("--access-route", dest="access_route")
+    s.add_argument("--is-preprint", action="store_true", dest="is_preprint",
+                   help="the PDF is a preprint; snapshots of it get access=preprint")
     s.add_argument("--move", action="store_true", help="move instead of copy")
     s.set_defaults(func=cmd_add)
 
@@ -761,6 +901,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--corpus", help="corpus.jsonl (default: <run-dir>/corpus.jsonl)")
     s.add_argument("--no-apply", action="store_true",
                    help="emit updates only; do not rewrite corpus.jsonl")
+    s.add_argument("--no-register", action="store_true", dest="no_register",
+                   help="do not register ingested PDFs into <run-dir>/sources/ (kernel off)")
     s.set_defaults(func=cmd_ingest_inbox)
 
     s = sub.add_parser("list", help="dump index entries")

@@ -117,6 +117,58 @@ RATIO_MEASURES = {
     "hazard ratio", "rate ratio", "incidence rate ratio", "prevalence ratio",
 }
 
+# ----------------------------------------------------- evidence kernel (schema §12/§13)
+
+# schema.md §12 span rule P2. Shown, never enforced here; the assembler owns enforcement.
+SPAN_MAX_CHARS = 2000
+
+# schema.md §13 `reason_code` enum, in the same order, with the one-line meaning this page
+# prints beside each code so a reader never has to look the code up elsewhere.
+REASON_CODE_MEANING = {
+    "UNKNOWN_SOURCE":
+        "a span named a source_id with no snapshot under the run's sources/ directory.",
+    "SNAPSHOT_HASH_MISMATCH":
+        "the snapshot exists but its recomputed content_hash or source_id differs from the "
+        "stored value — tampering, which is never downgraded to a warning.",
+    "SPAN_OUT_OF_RANGE":
+        "start < 0, end > len(text), or start >= end.",
+    "SPAN_TOO_LONG":
+        f"the span exceeds the {SPAN_MAX_CHARS}-character cap; it is failed, never silently "
+        "truncated.",
+    "EXCERPT_MISMATCH":
+        "an agent-written excerpt differs from the re-slice of snapshot text[start:end]. The "
+        "snapshot wins and the artifact is rejected, not corrected.",
+    "NO_SPANS":
+        "the record carries no span at all — the legacy, pre-kernel case (schema R16). It "
+        "is unverified: never accepted, never deleted, and not evidence of tampering.",
+    "URL_NOT_RETRIEVED":
+        "a citation URL in the artifact has no snapshot retrieved for that artifact in this run.",
+    "NO_FRESH_FETCH":
+        "a source backing the artifact has no fresh fetch or local_pdf event for this run "
+        "(schema §11 / R15).",
+    "UNSUPPORTED_VERDICT":
+        "outputs/verification.json records an unsupported claim for this artifact.",
+    "SOURCE_OUTSIDE_ACCEPTED":
+        "a synthesis or report claim introduced a source_id outside the accepted evidence for "
+        "its branch.",
+    "NO_PAPER_ID":
+        "the snapshot's paper object supplies no PMID, DOI or PMCID, or contradicts the "
+        "claim's evidence_id.",
+    "ASSET_HASH_MISMATCH":
+        "a user-supplied PDF is missing or no longer hashes to the recorded asset sha256.",
+}
+
+# Wording used in three places, so it is written once.
+KERNEL_ABSENT_NOTE = (
+    "This run has no <code>outputs/result.json</code>, so <code>scripts/assemble.py</code> "
+    "never ran over it. Per schema resolution <strong>R20</strong> and decision "
+    "<strong>D7</strong> the evidence-kernel gate is <strong>off by default</strong>: an "
+    "absent assembler result is a normal state of this pipeline and a run that predates the "
+    "kernel, not an error and not a failure. What it does mean is that nothing on this page "
+    "has been re-checked against an immutable snapshot — the evidence here is "
+    "<em>unverified</em>, which is neither <em>verified</em> nor <em>tampered</em>."
+)
+
 # `precise` requires the interval to exclude the null AND its width to be no more than
 # this multiple of the point estimate's magnitude (on the log scale for ratio measures).
 PRECISE_WIDTH_RATIO = 2.0
@@ -421,6 +473,148 @@ class Study:
         return " ".join(out)
 
 
+# --------------------------------------------------------------------- kernel
+
+def is_span_backed(q: dict) -> bool:
+    """True when a `quotes[]` entry carries the §7 DERIVED triple (source_id, start, end).
+
+    Entries without it are pre-kernel, agent-transcribed records: legal (R16), never
+    accepted by the assembler, and never presented here as verified.
+    """
+    if not isinstance(q, dict):
+        return False
+    sid, start, end = q.get("source_id"), q.get("start"), q.get("end")
+    if not sid or not isinstance(sid, str):
+        return False
+    if isinstance(start, bool) or isinstance(end, bool):
+        return False
+    if not isinstance(start, int) or not isinstance(end, int):
+        return False
+    return 0 <= start < end
+
+
+def split_quotes(ext: dict) -> tuple[list[dict], list[dict]]:
+    """Partition a record's `quotes[]` into (span-backed, span-less legacy) entries."""
+    derived: list[dict] = []
+    legacy: list[dict] = []
+    for q in (ext.get("quotes") or []) if isinstance(ext, dict) else []:
+        if not isinstance(q, dict):
+            continue
+        (derived if is_span_backed(q) else legacy).append(q)
+    return derived, legacy
+
+
+def quotes_from_accepted(entry: dict) -> list[dict]:
+    """The derived `quotes[]` of one `accepted[]` artifact (schema §13).
+
+    `scripts/assemble.py` re-slices the excerpts into the accepted artifact, not back into
+    `workspace/extractions/*.json`, so `result.json` is the primary source here. Where an
+    older assembler wrote only `claims[]`, the same entries are reconstructed from it —
+    both carry `excerpt`/`text` plus `source_id`/`start`/`end`, all snapshot-derived.
+    """
+    out: list[dict] = []
+    for q in entry.get("quotes") or []:
+        if is_span_backed(q):
+            out.append(q)
+    if out:
+        return out
+    for c in entry.get("claims") or []:
+        if not isinstance(c, dict) or not is_span_backed(c):
+            continue
+        out.append({"text": c.get("excerpt"), "section": c.get("section"),
+                    "page": c.get("page"), "source_id": c.get("source_id"),
+                    "start": c.get("start"), "end": c.get("end"),
+                    "claim": c.get("claim"), "field": c.get("field")})
+    return out
+
+
+def derived_quotes(st: "Study", kernel: "Kernel") -> tuple[list[dict], str]:
+    """(span-backed excerpts, where they came from: `result` | `record` | `none`)."""
+    if kernel.present:
+        acc: list[dict] = []
+        for entry in kernel.accepted_for(st.eid, "extraction"):
+            acc.extend(quotes_from_accepted(entry))
+        if acc:
+            return acc, "result"
+    rec_derived, _ = split_quotes(st.ext)
+    if rec_derived:
+        return rec_derived, "record"
+    return [], "none"
+
+
+class Kernel:
+    """Read-only index over `<run>/outputs/result.json` — the assembler result, schema §13.
+
+    `present` is False for a run that predates the assembler. That is a first-class state,
+    not an error: R20 / decision D7 keep the evidence-kernel gate off by default.
+    """
+
+    def __init__(self, result=None, has_sources: bool = False):
+        self.result = result if isinstance(result, dict) else None
+        self.has_sources = bool(has_sources)
+        self.accepted_by_eid: dict[str, list[dict]] = {}
+        self.unresolved: list[dict] = []
+        self.unresolved_by_eid: dict[str, list[dict]] = {}
+        self.sources: dict[str, dict] = {}
+        if self.result is None:
+            return
+        for a in self.result.get("accepted") or []:
+            if isinstance(a, dict):
+                self.accepted_by_eid.setdefault(str(a.get("evidence_id") or ""), []).append(a)
+        diag = self.result.get("diagnostics")
+        diag = diag if isinstance(diag, dict) else {}
+        for u in diag.get("unresolved") or []:
+            if isinstance(u, dict):
+                self.unresolved.append(u)
+                self.unresolved_by_eid.setdefault(str(u.get("evidence_id") or ""), []).append(u)
+        for s in self.result.get("sources") or []:
+            if isinstance(s, dict) and s.get("source_id"):
+                self.sources[str(s["source_id"])] = s
+
+    @property
+    def present(self) -> bool:
+        return self.result is not None
+
+    @property
+    def gate(self) -> dict:
+        g = (self.result or {}).get("gate")
+        return g if isinstance(g, dict) else {}
+
+    @property
+    def counts(self) -> dict:
+        c = (self.result or {}).get("counts")
+        return c if isinstance(c, dict) else {}
+
+    @property
+    def counts_by_reason(self) -> dict:
+        diag = (self.result or {}).get("diagnostics")
+        diag = diag if isinstance(diag, dict) else {}
+        c = diag.get("counts_by_reason")
+        return c if isinstance(c, dict) else {}
+
+    def accepted_for(self, eid: str, kind: str | None = None) -> list[dict]:
+        items = self.accepted_by_eid.get(str(eid), [])
+        return [a for a in items if kind is None or a.get("kind") == kind]
+
+    def unresolved_for(self, eid: str, kind: str | None = None) -> list[dict]:
+        items = self.unresolved_by_eid.get(str(eid), [])
+        return [u for u in items if kind is None or u.get("kind") == kind]
+
+    def source_label(self, source_id: str) -> str:
+        """Escaped one-line description of a snapshot, or an honest 'not listed'."""
+        s = self.sources.get(str(source_id))
+        if not s:
+            return ('<span class="muted">not listed in the assembler result</span>'
+                    if self.present else
+                    '<span class="muted">no assembler result to describe it</span>')
+        bits = [E(s.get("access") or NOT_STATED), E(s.get("origin") or NOT_STATED)]
+        if s.get("fresh") is True:
+            bits.append('<span class="pill pass">fresh this run</span>')
+        elif s.get("fresh") is False:
+            bits.append('<span class="pill warn">not freshly retrieved this run</span>')
+        return " &middot; ".join(bits)
+
+
 # --------------------------------------------------------------------- precision
 
 def null_value_for(measure: str | None) -> float:
@@ -575,8 +769,26 @@ def h_banner(prov: dict) -> str:
     )
 
 
+def kernel_state_html(kernel: Kernel) -> str:
+    """One line naming which of the three evidence states this whole run is in."""
+    if not kernel.present:
+        return ('<span class="pill unknown">no assembler result</span> '
+                "this run predates the evidence-kernel gate; the gate is off by default "
+                "(R20 / decision D7), so this is a normal state, not an error. Excerpts on "
+                "this page are <strong>unverified</strong>, never <em>tampered</em>."
+                + ("" if kernel.has_sources else
+                   " The run has no <code>sources/</code> snapshot store either."))
+    verdict = str(kernel.gate.get("verdict") or "unknown")
+    n_unres = len(kernel.unresolved)
+    return (f'<span class="pill {A(verdict)}">gate {E(verdict)}</span> '
+            f"{E(num(kernel.counts.get('accepted')))} artifact(s) accepted, "
+            f"{n_unres} unresolved &mdash; see "
+            '<a href="#gaps">the honesty panel</a>. Enforcing: '
+            + ("yes" if kernel.gate.get("enabled") else "no (off by default, R20/D7)") + ".")
+
+
 def h_run_section(cfg: dict, run_dir: Path, prisma_note: str | None,
-                  counts: dict, generated_at: str) -> str:
+                  counts: dict, generated_at: str, kernel: Kernel) -> str:
     def row(k, v):
         # k is always a literal owned by this module, never paper metadata
         return f'<tr><th scope="row">{k}</th><td>{v}</td></tr>'
@@ -604,6 +816,7 @@ def h_run_section(cfg: dict, run_dir: Path, prisma_note: str | None,
         row("Retrieval not yet attempted", f"{counts['not_attempted']}"),
         row("Preprints among included", f"{counts['preprints']}"),
         row("Retracted / expression of concern", f"{counts['retracted']}"),
+        row("Evidence kernel", kernel_state_html(kernel)),
         row("Generated", f"<code>{E(generated_at)}</code> by <code>{E(GENERATOR)}</code>"),
     ]
     note = ""
@@ -1217,11 +1430,19 @@ def ids_html(st: Study, links: bool) -> str:
     return " &middot; ".join(bits)
 
 
-def h_cards_section(studies: list[Study], links: bool) -> str:
+def h_cards_section(studies: list[Study], links: bool, kernel: Kernel) -> str:
     head = ('<section id="studies"><h2>5. Included studies, in detail</h2>'
             "<p>One card per included study: the extraction record, the appraisal domains, "
-            "the verbatim quotes with their anchors, and the acquisition route that produced "
-            "the text. Cards are collapsed by default and open in print.</p>"
+            "the evidence-integrity state, the source excerpts and the acquisition route that "
+            "produced the text. Cards are collapsed by default and open in print.</p>"
+            "<p class=\"small\">Excerpts are <strong>not</strong> transcribed by an agent. "
+            "Under decision <strong>D4</strong> and resolution <strong>R17</strong>, "
+            "<code>extraction.quotes[]</code> is a <em>derived</em> field: "
+            "<code>scripts/assemble.py</code> re-slices <code>snapshot.text[start:end]</code> "
+            "from an immutable snapshot and writes the result. Where a record carries no span, "
+            "no excerpt can be derived and the record is shown as <em>unverified</em> "
+            "(schema R16) &mdash; which is not the same as tampered, and not the same as "
+            "absent.</p>"
             '<p class="noprint"><button type="button" class="btn" id="expand-all" '
             'aria-pressed="false">Expand all studies</button></p>')
     if not studies:
@@ -1229,11 +1450,162 @@ def h_cards_section(studies: list[Study], links: bool) -> str:
 
     cards: list[str] = []
     for st in sorted(studies, key=lambda s: (s.first_author or "zz", s.year or "")):
-        cards.append(h_card(st, links))
+        cards.append(h_card(st, links, kernel))
     return head + "".join(cards) + "</section>"
 
 
-def h_card(st: Study, links: bool) -> str:
+def h_integrity(st: Study, kernel: Kernel) -> str:
+    """Per-study evidence-integrity block, read from `outputs/result.json` (schema §13)."""
+    head = "<h4>Evidence integrity</h4>"
+    if not kernel.present:
+        return (head + f'<p class="muted">{KERNEL_ABSENT_NOTE}</p>')
+
+    rows: list[str] = []
+    for kind, label in (("extraction", "Extraction artifact"),
+                        ("appraisal", "Appraisal artifact")):
+        acc = kernel.accepted_for(st.eid, kind)
+        unr = kernel.unresolved_for(st.eid, kind)
+        cells: list[str] = []
+        for a in acc:
+            claims = a.get("claims") or []
+            n_claims = len(claims) if isinstance(claims, list) else 0
+            sids = [str(s) for s in (a.get("source_ids") or []) if s]
+            cells.append(
+                '<div><span class="pill pass">accepted by the assembler</span> '
+                f'<code class="small">{E(a.get("artifact_id"))}</code><br>'
+                f'<span class="small muted">{n_claims} resolved claim span(s) &middot; '
+                f"access {E(a.get('access') or NOT_STATED)} &middot; "
+                + ('<span class="pill pass">fresh</span>' if a.get("fresh") is True
+                   else '<span class="pill warn">not fresh this run</span>')
+                + (" &middot; snapshots " + ", ".join(f"<code>{E(trunc(s, 20))}</code>"
+                                                      for s in sids) if sids else "")
+                + "</span></div>")
+        for u in unr:
+            code = str(u.get("reason_code") or "unknown")
+            cells.append(
+                '<div><span class="pill fail">not accepted &mdash; unresolved</span> '
+                f'<code class="small">{E(u.get("artifact_id"))}</code><br>'
+                f'<span class="small">reason <code>{E(code)}</code>'
+                + (f" at <code>{E(u.get('field'))}</code>" if u.get("field") else "")
+                + f" &mdash; {E(REASON_CODE_MEANING.get(code, 'reason code not in the §13 enum.'))}"
+                + f"<br><span class=\"muted\">{T(u.get('detail'), 'no detail recorded')}</span>"
+                "</span></div>")
+        if not cells:
+            cells.append('<span class="muted">not listed in the assembler result &mdash; '
+                         "neither accepted nor unresolved</span>")
+        rows.append(f'<tr><th scope="row">{label}</th><td>{"".join(cells)}</td></tr>')
+
+    gate = kernel.gate
+    gate_txt = (f'gate <span class="pill {A(str(gate.get("verdict") or "unknown"))}">'
+                f'{E(gate.get("verdict") or "not recorded")}</span>, '
+                f"{'enforcing' if gate.get('enabled') else 'not enforcing (off by default, R20/D7)'}")
+    return (head +
+            '<div class="tablewrap"><table class="meta"><tbody>' + "".join(rows) +
+            f'<tr><th scope="row">Run-level gate</th><td>{gate_txt}</td></tr>'
+            "</tbody></table></div>")
+
+
+def h_quotes(st: Study, kernel: Kernel) -> str:
+    """The three evidence states: verified excerpt, unverified legacy record, or absent."""
+    derived, origin = derived_quotes(st, kernel)
+    _, legacy = split_quotes(st.ext)
+    ext_accepted = bool(kernel.accepted_for(st.eid, "extraction"))
+    parts: list[str] = []
+
+    if derived:
+        if origin == "result":
+            pill = '<span class="pill pass">verified excerpt</span>'
+            standing = ("The assembler accepted this study's extraction artifact, so each "
+                        "excerpt below was re-sliced from the named snapshot and matched. It "
+                        "is read from <code>outputs/result.json</code>, not from the agent's "
+                        "extraction file.")
+        elif kernel.present and not ext_accepted:
+            pill = '<span class="pill warn">span-backed, artifact not accepted</span>'
+            standing = ("These entries carry snapshot offsets, but the assembler did not "
+                        "accept this study's extraction artifact &mdash; see <em>Evidence "
+                        "integrity</em> above for the reason code. Treat the excerpts as "
+                        "located, not as cleared.")
+        elif kernel.present:
+            pill = '<span class="pill warn">span-backed, not re-sliced by this assembler run</span>'
+            standing = ("These entries come from the extraction record rather than from the "
+                        "assembler's accepted artifact, so the text below was not re-sliced "
+                        "by the run that produced <code>outputs/result.json</code>.")
+        else:
+            pill = '<span class="pill warn">span-backed, acceptance unconfirmed</span>'
+            standing = ("These entries carry snapshot offsets, but this run has no "
+                        "<code>outputs/result.json</code>, so no assembler result confirms "
+                        "that the text still matches the snapshot at those offsets.")
+        parts.append("<h4>Source excerpts &mdash; re-sliced from immutable snapshots</h4>"
+                     f'<p class="small">{standing} The text is not typed by an agent: it is '
+                     "<code>snapshot.text[start:end]</code>, with <code>end</code> exclusive "
+                     "(schema §12, R10/R17).</p>")
+        for q in derived:
+            start, end = q.get("start"), q.get("end")
+            length = end - start
+            meta = [f"snapshot <code>{E(q.get('source_id'))}</code>",
+                    f"characters {E(start)}&ndash;{E(end)} "
+                    f"(<code>end</code> exclusive, {E(length)} chars)"]
+            if length > SPAN_MAX_CHARS:
+                meta.append('<span class="pill fail">over the '
+                            f"{SPAN_MAX_CHARS}-character span cap</span>")
+            src = kernel.source_label(str(q.get("source_id")))
+            sect = q.get("section")
+            meta.append(E(sect) if sect else '<span class="muted">no section recorded</span>')
+            if q.get("page") is not None:
+                meta.append(f"p. {E(q.get('page'))}")
+            parts.append(
+                '<blockquote class="quote">'
+                f'<div style="white-space:pre-wrap">{T(q.get("text"), "empty re-slice")}</div>'
+                f"<footer>{pill} " + " &middot; ".join(meta) + f"<br>{src}</footer>"
+                "</blockquote>")
+
+    if legacy:
+        parts.append(
+            "<h4>Unverified transcribed text &mdash; no span</h4>"
+            '<div class="banner"><p><strong>Unverified.</strong> '
+            + (f"{len(legacy)} entry below carries no "
+               if len(legacy) == 1 else f"{len(legacy)} entries below carry no ")
+            + "<code>source_id</code>/<code>start</code>/<code>end</code>, so nothing was "
+            "re-sliced from a snapshot and the text cannot be checked against one. Under "
+            "schema resolution <strong>R16</strong> such a record is legal, is never deleted, "
+            "and can never enter <code>accepted[]</code>; it appears in "
+            "<code>diagnostics.unresolved[]</code> with <code>NO_SPANS</code>. "
+            "<em>Unverified is not tampered</em> &mdash; there is simply nothing here to "
+            "verify against.</p></div>")
+        for q in legacy:
+            foot = [f'<span class="pill warn">unverified &mdash; no span recorded</span>',
+                    T(q.get("section"), "anchor not stated")]
+            if q.get("page") is not None:
+                foot.append(f"p. {E(q.get('page'))}")
+            parts.append('<blockquote class="quote">'
+                         f'<div style="white-space:pre-wrap">{T(q.get("text"))}</div>'
+                         f"<footer>{' &middot; '.join(foot)}</footer></blockquote>")
+
+    if parts:
+        return "".join(parts)
+
+    # ---- third state: genuinely no excerpt at all
+    head = "<h4>Source excerpts</h4>"
+    if not kernel.present and not kernel.has_sources:
+        return (head + '<p class="muted">None. This run predates the evidence kernel: it has '
+                "no snapshot store (<code>&lt;run&gt;/sources/</code>) and no "
+                "<code>outputs/result.json</code>, so no excerpt could be derived for any "
+                "record. This study&rsquo;s evidence is therefore <strong>unverified</strong> "
+                "&mdash; not verified, and not tampered. Nothing is missing that this run ever "
+                "claimed to produce.</p>")
+    if st.basis == "abstract_only":
+        return (head + '<p class="muted">None derived. This record rests on an abstract '
+                "alone; where no span was recorded against the abstract snapshot, there is "
+                "nothing to re-slice. The record is <strong>unverified</strong> (schema "
+                "R16), which is stated rather than hidden.</p>")
+    return (head + '<p class="muted">None derived. This full-text record carries no claim '
+            "span, so <code>scripts/assemble.py</code> had nothing to re-slice and wrote "
+            "<code>quotes: []</code>. Under schema resolution <strong>R16</strong> the record "
+            "is <strong>unverified</strong>: legal, never deleted, never accepted, reported "
+            "as <code>NO_SPANS</code>. It is not tampered and it is not silently missing.</p>")
+
+
+def h_card(st: Study, links: bool, kernel: Kernel) -> str:
     ext, app = st.ext, st.app
     ft = st.ft
     badges = st.badges_html()
@@ -1373,30 +1745,16 @@ def h_card(st: Study, links: bool) -> str:
                      f"<dt>Evidence basis</dt><dd>{T(app.get('evidence_basis'))}</dd>"
                      "</dl>" + dtable + gtable)
 
-    # -- quotes
-    quotes = ext.get("quotes") or []
-    if quotes:
-        qhtml = "".join(
-            f'<blockquote class="quote">{T(q.get("text"))}'
-            f"<footer>{T(q.get('section'), 'anchor not stated')}"
-            + (f", p. {E(q.get('page'))}" if q.get("page") is not None else "")
-            + "</footer></blockquote>"
-            for q in quotes if isinstance(q, dict))
-        qblock = "<h4>Verbatim anchors</h4>" + qhtml
-    elif st.basis == "abstract_only":
-        qblock = ('<h4>Verbatim anchors</h4><p class="muted">None recorded. This is '
-                  "acceptable for an abstract-only record and is stated rather than "
-                  "hidden.</p>")
-    else:
-        qblock = ('<h4>Verbatim anchors</h4><p class="muted">No quotes were recorded for this '
-                  "full-text extraction.</p>")
+    # -- evidence integrity and source excerpts (schema §12/§13, decisions D4/D7/D9)
+    integrity = h_integrity(st, kernel)
+    qblock = h_quotes(st, kernel)
 
     focus = (f'<p class="noprint small"><a href="#evidence" data-focus="{A(st.eid)}">'
              "Filter the evidence table to this study &rarr;</a></p>")
 
     return (f'<details class="card" id="card-{A(slug(st.eid))}">' + summary +
-            '<div class="cardbody">' + bib + acq + extraction + appraisal + qblock +
-            focus + "</div></details>")
+            '<div class="cardbody">' + bib + acq + extraction + appraisal + integrity +
+            qblock + focus + "</div></details>")
 
 
 # ---------------------------------------------------------------- gaps panel
@@ -1412,8 +1770,117 @@ def study_line(st: Study, links: bool) -> str:
               "</span></li>")
 
 
+def unverified_studies(included: list[Study], kernel: Kernel) -> list[Study]:
+    """Included studies with no span-backed excerpt at all (schema R16, `unverified`)."""
+    out: list[Study] = []
+    for s in included:
+        if not s.ext:
+            continue
+        derived, _origin = derived_quotes(s, kernel)
+        if not derived:
+            out.append(s)
+    return out
+
+
+def h_kernel_block(kernel: Kernel, included: list[Study]) -> str:
+    """Evidence-kernel surfacing inside the honesty panel (schema §13, decisions D7/D9)."""
+    unver = unverified_studies(included, kernel)
+    if unver:
+        unver_block = (
+            f"<h3>Unverified evidence &mdash; no snapshot-backed span ({len(unver)})</h3>"
+            '<div class="banner"><p>These included records carry no derived, span-backed '
+            "excerpt. Under schema resolution <strong>R16</strong> that is legal and is never "
+            "treated as tampering, but such a record can never enter "
+            "<code>accepted[]</code> and can never back a promoted OKF concept&rsquo;s "
+            "evidence footnote, gate or no gate.</p></div>"
+            '<ul class="plain">'
+            + "".join(f"<li><strong>{E(s.label)}</strong> "
+                      f'<code class="small">{E(s.eid)}</code></li>' for s in unver)
+            + "</ul>")
+    else:
+        unver_block = ("<h3>Unverified evidence &mdash; no snapshot-backed span</h3>"
+                       '<p class="muted">None: every included record with an extraction '
+                       "carries at least one excerpt re-sliced from a snapshot.</p>")
+
+    if not kernel.present:
+        return ('<h3>Evidence-integrity gate (assembler result)</h3>'
+                f'<div class="banner"><p>{KERNEL_ABSENT_NOTE}</p>'
+                "<p>Nothing here is reported as failing, because nothing was checked. The "
+                "unresolved-artifact register below is empty for the same reason &mdash; it "
+                "is unwritten, not clean.</p></div>"
+                + unver_block)
+
+    gate = kernel.gate
+    counts = kernel.counts
+    verdict = str(gate.get("verdict") or "unknown")
+    meta_rows = "".join(
+        f'<tr><th scope="row">{lab}</th><td>{val}</td></tr>' for lab, val in (
+            ("Gate verdict", f'<span class="pill {A(verdict)}">{E(verdict)}</span>'),
+            ("Gate enforcing?",
+             "yes &mdash; unresolved artifacts block stage 8" if gate.get("enabled")
+             else "no &mdash; off by default (R20 / decision D7); unresolved artifacts are "
+                  "reported and do not block"),
+            ("Artifacts seen", E(num(counts.get("artifacts_seen")))),
+            ("Accepted", E(num(counts.get("accepted")))),
+            ("Unresolved", E(num(counts.get("unresolved")))),
+            ("Spans checked", E(num(counts.get("spans_checked")))),
+            ("Snapshots referenced", E(num(counts.get("sources")))),
+            ("Assembler run at", f'<code>{E(kernel.result.get("generated_at") or NOT_STATED)}</code>'),
+        ))
+
+    if kernel.unresolved:
+        urows = "".join(
+            "<tr>"
+            f'<td><code class="small">{E(u.get("artifact_id"))}</code></td>'
+            f"<td>{T(u.get('kind'))}</td>"
+            f"<td><code class=\"small\">{T(u.get('evidence_id'), 'not in corpus.jsonl')}</code></td>"
+            f"<td>{T(u.get('field'), 'whole artifact')}</td>"
+            f'<td><code>{E(u.get("reason_code") or "unknown")}</code></td>'
+            f"<td>{T(u.get('detail'), 'no detail recorded')}</td>"
+            "</tr>"
+            for u in kernel.unresolved)
+        utable = ('<div class="tablewrap"><table class="meta"><caption>'
+                  "<code>diagnostics.unresolved[]</code> from "
+                  "<code>outputs/result.json</code>, verbatim.</caption><thead><tr>"
+                  "<th>Artifact</th><th>Kind</th><th>evidence_id</th><th>Field</th>"
+                  "<th>Reason code</th><th>Detail</th></tr></thead><tbody>"
+                  + urows + "</tbody></table></div>")
+        seen = []
+        for u in kernel.unresolved:
+            c = str(u.get("reason_code") or "")
+            if c and c not in seen:
+                seen.append(c)
+        by_reason = kernel.counts_by_reason
+        gloss = "".join(
+            f'<li><code>{E(c)}</code> &mdash; '
+            + (f"{E(by_reason[c])} artifact(s). " if c in by_reason else "")
+            + E(REASON_CODE_MEANING.get(c, "not a code in the schema §13 enum."))
+            + "</li>" for c in seen)
+        gloss_block = (f"<h4>Reason codes seen ({len(seen)})</h4>"
+                       f'<ul class="plain">{gloss}</ul>')
+        unresolved_block = (
+            f"<h3>Unresolved artifacts ({len(kernel.unresolved)})</h3>"
+            '<div class="banner"><p>The assembler could not accept these artifacts. They are '
+            "reported here at full detail rather than dropped."
+            + ("" if gate.get("enabled") else
+               " The gate is off, so they did not block this run &mdash; they still mark the "
+               "synthesis provisional.")
+            + "</p></div>" + utable + gloss_block)
+    else:
+        unresolved_block = ('<h3>Unresolved artifacts</h3><p class="muted">None: the '
+                            "assembler accepted every artifact it saw.</p>")
+
+    return ('<h3>Evidence-integrity gate (assembler result)</h3>'
+            "<p>Read from <code>outputs/result.json</code> (schema &sect;13), written by "
+            "<code>scripts/assemble.py</code> before the verifier (R24). Every excerpt on this "
+            "page is derived by that assembler from an immutable snapshot; no agent-written "
+            "quote is trusted (R17).</p>"
+            '<div class="tablewrap"><table class="meta"><tbody>' + meta_rows +
+            "</tbody></table></div>" + unresolved_block + unver_block)
+
+
 def h_gaps_section(all_studies: list[Study], included: list[Study],
-                   missing_md: str | None, links: bool) -> str:
+                   missing_md: str | None, links: bool, kernel: Kernel) -> str:
     quarantined = [s for s in all_studies if s.decision == "include" and s.quarantined]
     not_attempted = [s for s in all_studies if s.decision == "include" and s.not_yet_attempted]
     abstract_only = [s for s in included if s.basis == "abstract_only"]
@@ -1498,6 +1965,8 @@ def h_gaps_section(all_studies: list[Study], included: list[Study],
                    "<code>unclear</code> is a legitimate screening decision and was not "
                    "coerced into include or exclude."),
     ]
+
+    parts.append(h_kernel_block(kernel, included))
 
     if missing_md is not None:
         parts.append(
@@ -1662,7 +2131,7 @@ def escape_json_for_script(obj) -> str:
 
 
 def compute_provisional(all_studies: list[Study], included: list[Study],
-                        ver: dict | None) -> dict:
+                        ver: dict | None, kernel: Kernel) -> dict:
     triggers: list[str] = []
     q = [s for s in all_studies if s.decision == "include" and s.quarantined]
     if q:
@@ -1702,6 +2171,32 @@ def compute_provisional(all_studies: list[Study], included: list[Study],
     if retracted:
         triggers.append(f"{len(retracted)} retracted record(s) are present in the included "
                         "set and must be excluded from the synthesis.")
+
+    # ---- evidence-kernel triggers (schema §12/§13, decisions D4/D7/D9)
+    unver = unverified_studies(included, kernel)
+    if unver:
+        if not kernel.present and not kernel.has_sources:
+            triggers.append(
+                f"{len(unver)} included record(s) carry no snapshot-backed span, because this "
+                "run predates the evidence kernel (no <code>sources/</code>, no "
+                "<code>outputs/result.json</code>). Their evidence is "
+                "<strong>unverified</strong> under schema R16 &mdash; not verified, and not "
+                "tampered.")
+        else:
+            triggers.append(
+                f"{len(unver)} included record(s) carry no snapshot-backed span, so their "
+                "evidence is <strong>unverified</strong> (schema R16, "
+                "<code>NO_SPANS</code>): it can never be accepted by the assembler.")
+    if kernel.present:
+        if kernel.unresolved:
+            codes = sorted({str(u.get("reason_code") or "unknown")
+                            for u in kernel.unresolved})
+            triggers.append(
+                f"{len(kernel.unresolved)} artifact(s) were not accepted by the assembler "
+                f"(<code>diagnostics.unresolved[]</code>: {E(', '.join(codes))}).")
+        if str(kernel.gate.get("verdict") or "") == "fail":
+            triggers.append("The evidence-kernel gate verdict in "
+                            "<code>outputs/result.json</code> is <code>fail</code>.")
     return {"provisional": bool(triggers), "triggers": triggers}
 
 
@@ -1788,6 +2283,20 @@ def build(args) -> int:
         except (json.JSONDecodeError, OSError) as exc:
             warn(f"verification.json unreadable ({exc}); treated as absent")
 
+    # assembler result (schema §13). Absent for a pre-kernel run; per R20 / decision D7 the
+    # gate is off by default, so that is a normal state and is reported, never warned about.
+    result = None
+    res_path = run_dir / "outputs" / "result.json"
+    if res_path.is_file():
+        try:
+            loaded = read_json(res_path)
+            result = loaded if isinstance(loaded, dict) else None
+            if result is None:
+                warn("outputs/result.json is not a JSON object; treated as absent")
+        except (json.JSONDecodeError, OSError) as exc:
+            warn(f"outputs/result.json unreadable ({exc}); treated as absent")
+    kernel = Kernel(result, has_sources=(run_dir / "sources").is_dir())
+
     missing_md = None
     mm = run_dir / "missing.md"
     if mm.is_file():
@@ -1818,7 +2327,7 @@ def build(args) -> int:
     if prisma_note:
         warn(prisma_note)
 
-    prov = compute_provisional(studies, included, ver)
+    prov = compute_provisional(studies, included, ver, kernel)
     links = not args.no_external_links
 
     # ---- title block
@@ -1882,12 +2391,13 @@ def build(args) -> int:
         SUBTITLE_HTML=subtitle,
         RUN_SLUG=E(cfg.get("slug") or run_dir.name),
         BANNER=h_banner(prov),
-        RUN_SECTION=h_run_section(cfg, run_dir, prisma_note, counts, generated_at),
+        RUN_SECTION=h_run_section(cfg, run_dir, prisma_note, counts, generated_at,
+                                  kernel),
         PRISMA_SECTION=h_prisma_section(prisma, prisma_note, counts),
         EVIDENCE_SECTION=h_evidence_section(rows, counts),
         CHART_SECTION=h_chart_section(rows),
-        CARDS_SECTION=h_cards_section(included, links),
-        GAPS_SECTION=h_gaps_section(studies, included, missing_md, links),
+        CARDS_SECTION=h_cards_section(included, links, kernel),
+        GAPS_SECTION=h_gaps_section(studies, included, missing_md, links, kernel),
         VERIFY_SECTION=h_verify_section(ver),
         INSIGHTS_SECTION=h_insights_section(hyps, report_body, prov["provisional"]),
         DATA_JSON=data_json,
@@ -1914,6 +2424,10 @@ def build(args) -> int:
             "rows": len(rows),
             "status": status_word,
             "provisional_triggers": len(prov["triggers"]),
+            "evidence_kernel": ("result.json present" if kernel.present
+                                else "no result.json (pre-kernel run; gate off by default)"),
+            "unresolved_artifacts": len(kernel.unresolved),
+            "unverified_records": len(unverified_studies(included, kernel)),
             "warnings": len(WARNINGS),
         }, indent=2))
     return 0

@@ -9,7 +9,9 @@ Subcommands
 -----------
   init      create <wiki>/research/ with index.md, log.md and every taxonomy dir
   write     write one concept from a JSON input file (corpus record or concept spec)
-  promote   promote a completed run directory into the bundle
+  promote   promote a completed run directory into the bundle; `--check` runs the
+            publisher integrity preflight (snapshot hashes, re-sliced excerpts, paper
+            identifiers, PDF asset digests) and every V-rule without writing anything
   validate  enforce V1..V25; non-zero exit on any violation
   selftest  round-trip the built-in YAML serializer/parser
 
@@ -25,9 +27,21 @@ import datetime as _dt
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 import unicodedata
 from pathlib import Path
+
+# `store.py` is the single owner of snapshot hashing, span checking and freshness
+# (VALIDATION_ARCHITECTURE_PLAN.md decision D5). It is never reimplemented here.
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+try:
+    import store as _store
+except Exception:  # pragma: no cover - store.py missing is itself reported
+    _store = None
 
 OKF_VERSION = "0.2"
 BUNDLE = "deep-research"
@@ -1684,7 +1698,8 @@ def concept_from_spec(spec: dict, ctype: str, wiki: Path, generated_at: str,
 
 def write_concepts(fence: Fence, research: Path, concepts: list[Concept],
                    now: str, run_slug: str | None, log: bool = True,
-                   dry_run: bool = False) -> list[Path]:
+                   dry_run: bool = False,
+                   log_notes: list[str] | None = None) -> list[Path]:
     written: list[Path] = []
     entries: list[str] = []
     for concept in concepts:
@@ -1704,7 +1719,7 @@ def write_concepts(fence: Fence, research: Path, concepts: list[Concept],
             write_dir_index(fence, research, dirname, now, now)
         write_root_index(fence, research, now, now)
         if log:
-            append_log(fence, research / "log.md", entries)
+            append_log(fence, research / "log.md", list(log_notes or []) + entries)
     return written
 
 
@@ -1818,6 +1833,524 @@ def collect_sources(records: list[dict], concept_path: Path,
     return sources, labels
 
 
+# ------------------------------------------- publisher integrity preflight -----
+#
+# VALIDATION_ARCHITECTURE_PLAN.md Phase 5 / Phase 6, schema.md §10-§13, R10-R24.
+#
+# Before a single byte is written into the bundle, every snapshot is re-read and both
+# digests recomputed, every accepted claim's excerpt is re-sliced from `start:end`, the
+# paper identifiers carried in the evidence are matched against the snapshot's `paper`
+# metadata, and every user-supplied PDF is re-hashed against `asset.sha256`.
+#
+# All of that is delegated to `store.py` (D5); this module only decides what to do with
+# the verdicts. Two gate policies apply:
+#
+#   * TAMPER_CODES block promotion unconditionally — gate or no gate (R20). A tampered
+#     snapshot or a mismatched excerpt is never a rollout concern.
+#   * everything else (unresolved artifacts, missing fresh fetches) blocks only when the
+#     evidence-kernel gate is on. The gate is OFF by default (D7): a run with no
+#     `outputs/result.json` at all is a pre-kernel run and still promotes, loudly labelled
+#     as unverified, span-less evidence.
+
+RESULT_FILENAME = "result.json"
+RESULT_SCHEMA_VERSION = 1
+
+# schema.md §13 reason codes that are integrity failures, not rollout state (R20).
+TAMPER_CODES = (
+    "RESULT_SCHEMA_ERROR",
+    "UNKNOWN_SOURCE",
+    "SNAPSHOT_HASH_MISMATCH",
+    "SPAN_OUT_OF_RANGE",
+    "SPAN_TOO_LONG",
+    "EXCERPT_MISMATCH",
+    "ASSET_HASH_MISMATCH",
+    "NO_PAPER_ID",
+)
+
+UNVERIFIED_BANNER = (
+    "PROMOTED UNVERIFIED: this run has no outputs/result.json, so no snapshot, span, "
+    "excerpt or asset hash backs any promoted concept. Its evidence is agent-written and "
+    "span-less (pre-kernel run; VALIDATION_ARCHITECTURE_PLAN.md D7).")
+
+
+class IntegrityFinding:
+    __slots__ = ("code", "artifact", "detail", "blocking")
+
+    def __init__(self, code: str, artifact: str, detail: str, blocking: bool):
+        self.code = code
+        self.artifact = artifact
+        self.detail = detail
+        self.blocking = blocking
+
+    def as_dict(self) -> dict:
+        return {"reason_code": self.code, "artifact": self.artifact,
+                "detail": self.detail, "blocking": self.blocking}
+
+
+def _evidence_identifier(evidence_id: str) -> tuple[str | None, str | None]:
+    """`pmid:12345678` -> ('pmid', '12345678'). Non-literature ids yield (None, None)."""
+    if not isinstance(evidence_id, str) or ":" not in evidence_id:
+        return None, None
+    scheme, _, value = evidence_id.partition(":")
+    scheme = scheme.strip().lower()
+    if scheme not in ("pmid", "doi", "pmcid"):
+        return None, None
+    return scheme, value.strip()
+
+
+class Preflight:
+    """Publisher-side integrity checks over one run directory (Phase 5).
+
+    Instantiates exactly one `store.Store` for the run and reuses it, so every snapshot is
+    hashed once no matter how many spans point at it.
+    """
+
+    def __init__(self, run_dir: Path, wiki: Path, run: dict, gate: bool):
+        self.run_dir = Path(run_dir)
+        self.wiki = Path(wiki)
+        self.run = run
+        self.gate = bool(gate)
+        self.result: dict | None = None
+        self.result_path = self.run_dir / "outputs" / RESULT_FILENAME
+        self.findings: list[IntegrityFinding] = []
+        self.notes: list[str] = []
+        self.store = None
+        self.counts = {"snapshots_checked": 0, "spans_checked": 0, "assets_checked": 0,
+                       "accepted": 0, "unresolved": 0, "artifacts_refused": 0}
+        self.accepted_by_kind: dict[str, set] = {}
+        self.refused: list[tuple[str, str, str]] = []   # (kind, evidence_id, reason)
+        self.unverified = False
+
+    # -- finding helpers --
+
+    def fail(self, code: str, artifact: str, detail: str) -> None:
+        self.findings.append(IntegrityFinding(code, artifact, detail, True))
+
+    def note(self, code: str, artifact: str, detail: str) -> None:
+        """Gate-controlled: blocking only when the evidence-kernel gate is on."""
+        self.findings.append(IntegrityFinding(code, artifact, detail, self.gate))
+
+    @property
+    def blocking(self) -> list[IntegrityFinding]:
+        return [f for f in self.findings if f.blocking]
+
+    # -- entry point --
+
+    def run_checks(self) -> None:
+        if not self.result_path.exists():
+            self.unverified = True
+            self.notes.append(UNVERIFIED_BANNER)
+            # Tamper is never a rollout concern: any snapshot present in a pre-kernel run
+            # is still re-hashed, and a bad one still blocks.
+            self._check_all_snapshots()
+            return
+        if _store is None:
+            self.fail("RESULT_SCHEMA_ERROR", str(self.result_path),
+                      "scripts/store.py could not be imported; the integrity preflight "
+                      "cannot run and promotion fails closed")
+            return
+        try:
+            result = read_json(self.result_path)
+        except (OSError, json.JSONDecodeError) as exc:
+            self.fail("RESULT_SCHEMA_ERROR", str(self.result_path),
+                      f"outputs/{RESULT_FILENAME} is unreadable: {exc}")
+            return
+        if not isinstance(result, dict):
+            self.fail("RESULT_SCHEMA_ERROR", str(self.result_path),
+                      f"outputs/{RESULT_FILENAME} must be a JSON object (schema.md §13)")
+            return
+        self.result = result
+        self._check_result_schema(result)
+        if self.blocking:
+            return
+        self.store = _store.Store(self.run_dir, wiki_root=self.wiki)
+        self._check_all_snapshots()
+        self._check_result_sources(result)
+        self._check_accepted(result)
+        self._check_unresolved(result)
+
+    # -- §13 structure --
+
+    def _check_result_schema(self, result: dict) -> None:
+        path = str(self.result_path)
+        if result.get("schema_version") != RESULT_SCHEMA_VERSION:
+            self.fail("RESULT_SCHEMA_ERROR", path,
+                      f"schema_version must be {RESULT_SCHEMA_VERSION} "
+                      f"(got {result.get('schema_version')!r})")
+        for key, kind in (("accepted", list), ("sources", list),
+                          ("diagnostics", dict), ("gate", dict)):
+            if not isinstance(result.get(key), kind):
+                self.fail("RESULT_SCHEMA_ERROR", path,
+                          f"`{key}` is missing or is not a {kind.__name__} (schema.md §13)")
+        slug = self.run.get("slug")
+        if isinstance(result.get("run_slug"), str) and slug and result["run_slug"] != slug:
+            self.fail("RESULT_SCHEMA_ERROR", path,
+                      f"run_slug {result['run_slug']!r} does not belong to run {slug!r}")
+        diagnostics = result.get("diagnostics")
+        if isinstance(diagnostics, dict) and \
+                not isinstance(diagnostics.get("unresolved"), list):
+            self.fail("RESULT_SCHEMA_ERROR", path,
+                      "diagnostics.unresolved is missing or is not a list "
+                      "(an absent problem is an empty list, not a missing key)")
+
+    # -- §10 snapshots --
+
+    def _check_all_snapshots(self) -> None:
+        if _store is None:
+            return
+        store = self.store or _store.Store(self.run_dir, wiki_root=self.wiki)
+        self.store = store
+        for source_id in store.list_snapshots():
+            self.counts["snapshots_checked"] += 1
+            verdict = store.verify_snapshot(source_id)
+            if not verdict["ok"]:
+                self.fail(verdict.get("reason_code") or "SNAPSHOT_HASH_MISMATCH",
+                          source_id, verdict.get("detail") or "snapshot integrity failed")
+                continue
+            self._check_asset(source_id)
+
+    def _check_asset(self, source_id: str) -> None:
+        """User-supplied PDF bytes must still hash to the recorded asset digest."""
+        try:
+            snap = self.store.read_snapshot(source_id)
+        except Exception as exc:                       # already reported by the caller
+            self.fail("SNAPSHOT_HASH_MISMATCH", source_id, str(exc))
+            return
+        asset = snap.get("asset")
+        if not asset:
+            if snap.get("origin") == "user-supplied-pdf":
+                self.fail("ASSET_HASH_MISMATCH", source_id,
+                          "origin user-supplied-pdf with asset: null — there is no file to "
+                          "hash, so the snapshot cannot be proven (schema.md §11)")
+            return
+        self.counts["assets_checked"] += 1
+        path = self.wiki / asset["path"]
+        if not path.is_file():
+            self.fail("ASSET_HASH_MISMATCH", source_id,
+                      f"asset file missing: {asset['path']}")
+            return
+        actual = _store.sha256_file(path)
+        if actual != asset["sha256"]:
+            self.fail("ASSET_HASH_MISMATCH", source_id,
+                      f"{asset['path']} hashes to {actual}, snapshot records "
+                      f"{asset['sha256']}")
+
+    def _check_result_sources(self, result: dict) -> None:
+        """`result.sources[]` is derived from snapshots; any drift is tampering."""
+        for entry in result.get("sources") or []:
+            if not isinstance(entry, dict):
+                self.fail("RESULT_SCHEMA_ERROR", str(self.result_path),
+                          "sources[] entry is not an object")
+                continue
+            source_id = entry.get("source_id")
+            try:
+                snap = self.store.read_snapshot(source_id)
+            except Exception as exc:
+                code = getattr(exc, "reason_code", None) or "UNKNOWN_SOURCE"
+                self.fail(code, str(source_id), str(exc))
+                continue
+            for key in ("content_hash", "url", "access", "origin"):
+                if entry.get(key) is not None and entry[key] != snap[key]:
+                    self.fail("SNAPSHOT_HASH_MISMATCH", str(source_id),
+                              f"result.json records {key}={entry[key]!r} but the snapshot "
+                              f"says {snap[key]!r}; the snapshot wins (§13 derivation rule)")
+            if entry.get("paper") is not None and entry["paper"] != snap["paper"]:
+                self.fail("NO_PAPER_ID", str(source_id),
+                          f"result.json records paper={entry['paper']!r} but the snapshot "
+                          f"says {snap['paper']!r}")
+
+    # -- §13 accepted artifacts --
+
+    def _check_accepted(self, result: dict) -> None:
+        for artifact in result.get("accepted") or []:
+            if not isinstance(artifact, dict):
+                self.fail("RESULT_SCHEMA_ERROR", str(self.result_path),
+                          "accepted[] entry is not an object")
+                continue
+            self.counts["accepted"] += 1
+            aid = str(artifact.get("artifact_id") or "?")
+            kind = artifact.get("kind")
+            evidence_id = artifact.get("evidence_id")
+            claims = artifact.get("claims")
+            if not isinstance(claims, list) or not claims:
+                self.fail("RESULT_SCHEMA_ERROR", aid,
+                          "accepted artifact carries no claims[]; an accepted artifact has "
+                          "at least one resolved span (schema.md §13)")
+                continue
+            ok = self._check_claims(aid, claims)
+            ok = self._check_paper(aid, artifact, evidence_id) and ok
+            if ok and isinstance(kind, str) and isinstance(evidence_id, str):
+                self.accepted_by_kind.setdefault(kind, set()).add(evidence_id)
+
+    def _check_claims(self, aid: str, claims: list) -> bool:
+        ok = True
+        for i, claim in enumerate(claims):
+            if not isinstance(claim, dict):
+                self.fail("RESULT_SCHEMA_ERROR", aid, f"claims[{i}] is not an object")
+                ok = False
+                continue
+            self.counts["spans_checked"] += 1
+            # store.verify_span re-reads the snapshot, recomputes both digests, range- and
+            # cap-checks the offsets and re-slices text[start:end], comparing it to the
+            # excerpt carried in the record. Excerpts are re-sliced, never authored (P6).
+            verdict = self.store.verify_span(claim, excerpt=claim.get("excerpt"))
+            if not verdict["ok"]:
+                self.fail(verdict.get("reason_code") or "EXCERPT_MISMATCH",
+                          f"{aid} claims[{i}]",
+                          verdict.get("detail") or "span did not resolve")
+                ok = False
+        return ok
+
+    def _check_paper(self, aid: str, artifact: dict, evidence_id) -> bool:
+        """P4/R14: identifiers in the evidence must match the snapshot's `paper` block."""
+        scheme, value = _evidence_identifier(evidence_id)
+        source_ids = artifact.get("source_ids")
+        if not isinstance(source_ids, list) or not source_ids:
+            source_ids = sorted({c.get("source_id") for c in artifact.get("claims") or []
+                                 if isinstance(c, dict) and c.get("source_id")})
+        merged: dict = {"pmid": None, "doi": None, "pmcid": None}
+        ok = True
+        for source_id in source_ids:
+            try:
+                snap = self.store.read_snapshot(source_id)
+            except Exception as exc:
+                code = getattr(exc, "reason_code", None) or "UNKNOWN_SOURCE"
+                self.fail(code, aid, str(exc))
+                ok = False
+                continue
+            paper = snap.get("paper") or {}
+            if scheme and not any(paper.get(k) for k in ("pmid", "doi", "pmcid")):
+                self.fail("NO_PAPER_ID", aid,
+                          f"literature evidence_id {evidence_id!r} but snapshot "
+                          f"{source_id} carries no pmid/doi/pmcid")
+                ok = False
+                continue
+            if scheme:
+                claimed = paper.get(scheme)
+                if scheme == "doi":
+                    same = str(claimed or "").lower() == str(value or "").lower()
+                else:
+                    same = str(claimed or "") == str(value or "")
+                if not same:
+                    self.fail("NO_PAPER_ID", aid,
+                              f"evidence_id {evidence_id!r} disagrees with snapshot "
+                              f"{source_id} paper.{scheme}={claimed!r}")
+                    ok = False
+            for key in merged:
+                if paper.get(key):
+                    if merged[key] and merged[key] != paper[key]:
+                        self.fail("NO_PAPER_ID", aid,
+                                  f"snapshots disagree on paper.{key}: "
+                                  f"{merged[key]!r} vs {paper[key]!r}")
+                        ok = False
+                    merged[key] = merged[key] or paper[key]
+        declared = artifact.get("paper")
+        if isinstance(declared, dict):
+            for key, want in merged.items():
+                got = declared.get(key)
+                if got and want and str(got) != str(want):
+                    self.fail("NO_PAPER_ID", aid,
+                              f"result.json paper.{key}={got!r} but the snapshots say "
+                              f"{want!r}; paper is copied from the snapshot, never authored")
+                    ok = False
+        return ok
+
+    # -- §13 diagnostics --
+
+    def _check_unresolved(self, result: dict) -> None:
+        unresolved = (result.get("diagnostics") or {}).get("unresolved") or []
+        self.counts["unresolved"] = len(unresolved)
+        for entry in unresolved:
+            if not isinstance(entry, dict):
+                continue
+            code = str(entry.get("reason_code") or "NO_SPANS")
+            aid = str(entry.get("artifact_id") or "?")
+            detail = str(entry.get("detail") or "")
+            if code in TAMPER_CODES:
+                # The assembler already saw tampering. Never downgraded by the gate.
+                self.fail(code, aid, detail or "assembler recorded an integrity failure")
+            else:
+                self.note(code, aid,
+                          detail or "artifact was not accepted by the assembler")
+
+    # -- what promotion may use --
+
+    def filter_run(self) -> None:
+        """Drop evidence the assembler did not accept (Phase 6).
+
+        With `result.json` present, promotion is driven by accepted artifacts: an
+        extraction or appraisal that is not in `accepted[]` may never back a promoted
+        concept's evidence footnote, gate or no gate (R16). Study concepts are
+        bibliographic records from `corpus.jsonl`, not claims, and are kept.
+        """
+        if self.result is None:
+            return
+        for key, kind in (("extractions", "extraction"), ("appraisals", "appraisal")):
+            allowed = self.accepted_by_kind.get(kind, set())
+            kept = {}
+            for evidence_id, record in (self.run.get(key) or {}).items():
+                if evidence_id in allowed:
+                    kept[evidence_id] = record
+                else:
+                    self.refused.append((kind, evidence_id,
+                                         f"not in result.json accepted[] as {kind}"))
+            self.run[key] = kept
+        self.counts["artifacts_refused"] = len(self.refused)
+
+    # -- reporting --
+
+    def report_markdown(self) -> str:
+        lines = ["## Evidence integrity preflight", "",
+                 f"- run: `{self.run_dir}`",
+                 f"- result.json: "
+                 + (f"`{self.result_path}`" if self.result is not None else "**absent**"),
+                 f"- evidence-kernel gate: {'on' if self.gate else 'off (default, D7)'}",
+                 f"- snapshots re-hashed: {self.counts['snapshots_checked']}",
+                 f"- spans re-sliced: {self.counts['spans_checked']}",
+                 f"- assets re-hashed: {self.counts['assets_checked']}",
+                 f"- accepted artifacts: {self.counts['accepted']}",
+                 f"- unresolved artifacts: {self.counts['unresolved']}",
+                 f"- artifacts refused for promotion: {self.counts['artifacts_refused']}",
+                 ""]
+        if self.unverified:
+            lines += [f"> **{UNVERIFIED_BANNER}**", ""]
+        blocking = self.blocking
+        lines.append(f"**Preflight: {'FAIL' if blocking else 'PASS'}**")
+        lines.append("")
+        if self.findings:
+            lines += ["| reason_code | artifact | blocking | detail |",
+                      "|---|---|---|---|"]
+            for f in self.findings:
+                detail = f.detail.replace("|", "\\|").replace("\n", " ")
+                lines.append(f"| {f.code} | `{f.artifact}` | "
+                             f"{'yes' if f.blocking else 'no'} | {detail} |")
+            lines.append("")
+        else:
+            lines += ["No integrity findings.", ""]
+        if self.refused:
+            lines += ["### Refused artifacts (not accepted by the assembler)", ""]
+            for kind, evidence_id, reason in self.refused:
+                lines.append(f"- `{kind}` `{evidence_id}` — {reason}")
+            lines.append("")
+        return "\n".join(lines)
+
+
+# ------------------------------------------------- atomic bundle transaction ---
+
+
+class TxFence(Fence):
+    """A `Fence` that writes atomically and can undo the whole promotion.
+
+    Every write goes to a sibling temp file created with `O_EXCL`, is fsynced, and is then
+    moved into place with `os.replace` — so no reader ever sees a partial file. The prior
+    bytes of every touched path (or the fact that it did not exist) are journaled, so a
+    failure anywhere in the sequence restores the bundle to exactly what it was.
+
+    The fence itself is unchanged: `check()` is inherited, so every write still has to be
+    inside `<wiki>/research/**` or `<wiki>/assets/papers/**`, and `<wiki>/wiki/**` is still
+    forbidden absolutely.
+    """
+
+    def __init__(self, wiki: Path):
+        super().__init__(wiki)
+        self._journal: list[tuple[Path, bytes | None]] = []
+        self._seen: set[Path] = set()
+        self._made_dirs: list[Path] = []
+
+    def _record(self, resolved: Path) -> None:
+        if resolved in self._seen:
+            return
+        self._seen.add(resolved)
+        try:
+            old = resolved.read_bytes()
+        except FileNotFoundError:
+            old = None
+        self._journal.append((resolved, old))
+
+    def mkdir(self, target: Path) -> Path:
+        resolved = self.check(target / "_").parent
+        self._track_dirs(resolved)
+        resolved.mkdir(parents=True, exist_ok=True)
+        return resolved
+
+    def _track_dirs(self, directory: Path) -> None:
+        missing = []
+        cur = directory
+        while not cur.exists() and cur.parent != cur:
+            missing.append(cur)
+            cur = cur.parent
+        self._made_dirs.extend(reversed(missing))
+
+    def write_text(self, target: Path, text: str) -> Path:
+        resolved = self.check(target)
+        self.check(resolved.parent / "_")
+        self._record(resolved)
+        self._track_dirs(resolved.parent)
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        tmp = resolved.parent / f".{resolved.name}.okf-tmp-{os.getpid()}"
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(text)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(str(tmp), str(resolved))
+        except BaseException:
+            try:
+                os.unlink(str(tmp))
+            except OSError:
+                pass
+            raise
+        return resolved
+
+    def rollback(self) -> int:
+        """Restore every journaled path. Returns the number of paths restored."""
+        n = 0
+        for resolved, old in reversed(self._journal):
+            try:
+                if old is None:
+                    if resolved.exists():
+                        resolved.unlink()
+                else:
+                    resolved.write_bytes(old)
+                n += 1
+            except OSError:
+                pass
+        for directory in reversed(self._made_dirs):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+        self._journal.clear()
+        self._seen.clear()
+        self._made_dirs.clear()
+        return n
+
+
+def build_shadow_wiki(wiki: Path, tmpdir: Path) -> Path:
+    """A throwaway copy of the bundle used to validate a promotion before committing it.
+
+    `research/` is copied for real; `assets/papers/` is mirrored as empty stub files,
+    because the only thing V17 asks of a PDF is that it exists at the relative path a
+    concept points at. Nothing here ever touches the real wiki.
+    """
+    shadow = Path(tmpdir) / "wiki"
+    shadow.mkdir(parents=True, exist_ok=True)
+    research = Path(wiki) / "research"
+    if research.is_dir():
+        shutil.copytree(str(research), str(shadow / "research"))
+    papers = Path(wiki) / "assets" / "papers"
+    if papers.is_dir():
+        for src in papers.rglob("*"):
+            dest = shadow / "assets" / "papers" / src.relative_to(papers)
+            if src.is_dir():
+                dest.mkdir(parents=True, exist_ok=True)
+            else:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.touch()
+    return shadow
+
+
 def cmd_promote(args) -> int:
     run_dir = Path(args.run_dir).expanduser().resolve()
     if not run_dir.is_dir():
@@ -1827,6 +2360,25 @@ def cmd_promote(args) -> int:
     research = ensure_bundle(fence)
     run = load_run(run_dir)
     now = utcnow()
+    check_only = bool(getattr(args, "check", False))
+
+    # --- Phase 5 preflight: nothing is written until this passes -----------------
+    gate_flag = getattr(args, "gate", None)
+    gate = bool(gate_flag) if gate_flag is not None else \
+        bool((run["config"].get("gates") or {}).get("evidence_kernel"))
+    preflight = Preflight(run_dir, fence.wiki, run, gate=gate)
+    preflight.run_checks()
+    if gate_flag is None and preflight.result is not None and not preflight.blocking \
+            and bool((preflight.result.get("gate") or {}).get("enabled")) \
+            and not preflight.gate:
+        preflight.gate = True                 # result.json turns the gate on
+        for f in preflight.findings:
+            if not f.blocking and f.code not in TAMPER_CODES:
+                f.blocking = True
+    preflight.filter_run()
+    if preflight.blocking:
+        return finish_promote_failure(preflight, None, run_dir, fence, check_only,
+                                      f"promote {run['slug']}")
 
     verification = run["verification"]
     if verification is None:
@@ -1856,30 +2408,137 @@ def cmd_promote(args) -> int:
     slug = run["slug"]
     if not SLUG_RE.match(slug):
         raise OkfError(f"run slug {slug!r} fails the slug rule (V22)")
+    # Every concept is rendered in memory first: a build error here writes nothing.
     concepts = build_run_concepts(run, fence.wiki, research, now, verified_at, status)
+    for concept in concepts:
+        fence.check(concept.path(research))
+        concept.render()
 
     validator_corpus = run["corpus"]
-    written = write_concepts(fence, research, concepts, now, slug,
-                             log=not args.no_log, dry_run=args.dry_run)
+    log_notes = [f"- ⚠ {UNVERIFIED_BANNER}"] if preflight.unverified else []
+    scope = f"promote {slug}"
 
-    validator = Validator(fence.wiki, corpus=validator_corpus)
-    validator.run()
-    report = validator.report_markdown(scope=f"promote {slug}")
+    # --- dry validation against a throwaway shadow copy of the bundle ------------
+    # The promotion is applied in full to a temp copy and validated there. Only a
+    # completely clean prospective bundle is ever committed to the real wiki, so a
+    # concept that is invalid deep in the sequence cannot leave a half-written bundle.
+    shadow_dir = tempfile.mkdtemp(prefix="okf-promote-")
+    try:
+        shadow_wiki = build_shadow_wiki(fence.wiki, Path(shadow_dir))
+        shadow_fence = Fence(shadow_wiki)
+        shadow_research = shadow_fence.wiki / "research"
+        write_concepts(shadow_fence, shadow_research, concepts, now, slug,
+                       log=not args.no_log, log_notes=log_notes)
+        validator = Validator(shadow_fence.wiki, corpus=validator_corpus)
+        validator.run()
+    finally:
+        shutil.rmtree(shadow_dir, ignore_errors=True)
+
+    if validator.violations:
+        return finish_promote_failure(preflight, validator, run_dir, fence, check_only,
+                                      scope)
+
+    if check_only or args.dry_run:
+        report = preflight.report_markdown() + "\n" + validator.report_markdown(scope=scope)
+        if check_only:
+            sys.stdout.write(report)          # --check writes nothing, anywhere
+        else:
+            write_report(Fence(wiki), run_dir / "outputs" / "okf-validation.md",
+                         report, run_dir)
+        print(json.dumps({
+            "status": "check-ok" if check_only else "dry-run",
+            "wrote": [],
+            "concepts": len(concepts),
+            "types": sorted({c.type for c in concepts}),
+            "evidence": "unverified" if preflight.unverified else "verified",
+            "gate": "on" if preflight.gate else "off",
+            "preflight": {"findings": [f.as_dict() for f in preflight.findings],
+                          **preflight.counts},
+            "violations": 0,
+        }, indent=2))
+        if preflight.unverified:
+            sys.stderr.write(f"WARNING: {UNVERIFIED_BANNER}\n")
+        return 0
+
+    # --- commit: atomic per file, journaled as a whole --------------------------
+    tx = TxFence(fence.wiki)
+    try:
+        written = write_concepts(tx, research, concepts, now, slug,
+                                 log=not args.no_log, log_notes=log_notes)
+        post = Validator(fence.wiki, corpus=validator_corpus)
+        post.run()
+        if post.violations:                       # belt and braces; should not happen
+            raise OkfError(
+                f"post-write validation found {len(post.violations)} violation(s) the "
+                f"shadow validation did not; the promotion was rolled back")
+    except BaseException as exc:
+        restored = tx.rollback()
+        report = (preflight.report_markdown() + "\n"
+                  + f"## Promotion aborted\n\n{exc}\n\n"
+                    f"Rolled back {restored} path(s); the bundle is unchanged.\n")
+        report_path = run_dir / "outputs" / "okf-validation.md"
+        write_report(Fence(wiki), report_path, report, run_dir)
+        sys.stderr.write(f"okf.py: promotion aborted and rolled back: {exc}\n")
+        if isinstance(exc, (OkfError, OSError)):
+            return 1
+        raise
+
+    report = preflight.report_markdown() + "\n" + post.report_markdown(scope=scope)
     report_path = run_dir / "outputs" / "okf-validation.md"
-    write_report(fence, report_path, report, run_dir)
+    write_report(Fence(wiki), report_path, report, run_dir)
     print(json.dumps({
-        "status": "ok" if not validator.violations else "validation-failed",
+        "status": "ok",
         "concepts": len(written),
         "types": sorted({c.type for c in concepts}),
         "validation_report": str(report_path),
-        "violations": len(validator.violations),
+        "evidence": "unverified" if preflight.unverified else "verified",
+        "gate": "on" if preflight.gate else "off",
+        "preflight": {"findings": [f.as_dict() for f in preflight.findings],
+                      **preflight.counts},
+        "violations": 0,
     }, indent=2))
-    if validator.violations:
-        sys.stderr.write(
-            f"OKF validation failed with {len(validator.violations)} violation(s); "
-            f"report kept at {report_path}. Wiki promotion is blocked.\n")
-        return 1
+    if preflight.unverified:
+        sys.stderr.write(f"WARNING: {UNVERIFIED_BANNER}\n")
     return 0
+
+
+def finish_promote_failure(preflight: "Preflight", validator: "Validator | None",
+                           run_dir: Path, fence: Fence, check_only: bool,
+                           scope: str) -> int:
+    """Fail closed for promotion; preserve every run output.
+
+    Nothing has been written into the bundle at this point, and nothing will be. In
+    `--check` mode nothing at all is written — not even the report. Otherwise the
+    diagnostics land in `<run>/outputs/okf-validation.md`, next to the untouched
+    `outputs/report.md` and the rest of the run's artifacts.
+    """
+    report = preflight.report_markdown()
+    if validator is not None:
+        report += "\n" + validator.report_markdown(scope=scope)
+    report_path = run_dir / "outputs" / "okf-validation.md"
+    if not check_only:
+        write_report(Fence(fence.wiki), report_path, report, run_dir)
+    else:
+        sys.stdout.write(report)
+    blocking = preflight.blocking
+    print(json.dumps({
+        "status": "check-failed" if check_only else "validation-failed",
+        "wrote": [],
+        "bundle": "unchanged",
+        "evidence": "unverified" if preflight.unverified else "verified",
+        "gate": "on" if preflight.gate else "off",
+        "preflight": {"findings": [f.as_dict() for f in preflight.findings],
+                      **preflight.counts},
+        "violations": len(validator.violations) if validator is not None else 0,
+        "validation_report": None if check_only else str(report_path),
+    }, indent=2))
+    detail = "; ".join(f"{f.code} {f.artifact}" for f in blocking) or \
+        (f"{len(validator.violations)} V-rule violation(s)" if validator else "")
+    sys.stderr.write(
+        f"OKF promotion BLOCKED: {detail}. Nothing was written into the bundle; "
+        f"run outputs are untouched"
+        + ("." if check_only else f" and diagnostics are at {report_path}.") + "\n")
+    return 1
 
 
 def write_report(fence: Fence, path: Path, text: str, run_dir: Path | None) -> None:
@@ -2318,6 +2977,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="promote without outputs/verification.json (status: provisional)")
     s.add_argument("--force", action="store_true",
                    help="promote despite failing verifier checks (not recommended)")
+    s.add_argument("--check", action="store_true",
+                   help="validation-only preflight: run every integrity and V-rule check "
+                        "and write NOTHING, anywhere")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--gate", dest="gate", action="store_true", default=None,
+                   help="evidence-kernel gate: unresolved artifacts block promotion "
+                        "(default: off, see plan decision D7)")
+    g.add_argument("--no-gate", dest="gate", action="store_false",
+                   help="force the evidence-kernel gate off even if config/result.json "
+                        "asks for it (tamper still blocks unconditionally)")
     s.add_argument("--no-log", action="store_true")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(func=cmd_promote)

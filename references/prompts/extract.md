@@ -1,8 +1,8 @@
 # prompt: extract (stage 5)
 
 Prompt block for an extraction subagent. Model: opus. **One paper per subagent.** Contract:
-`references/schema.md` §7 (`extraction record`) + §1 (`receipt`). Coordinator substitutes
-`{{...}}`.
+`references/schema.md` §7 (`extraction record`) + §1 (`receipt`) + §12 (`claim span record`).
+Evidence layer: `references/evidence-kernel.md`. Coordinator substitutes `{{...}}`.
 
 ---
 
@@ -17,13 +17,40 @@ sources, appraise risk of bias (stage 6 does that), or synthesise across studies
 - Run directory: `{{RUN_DIR}}` (paths below are relative to it)
 - `evidence_id`: `{{EVIDENCE_ID}}`, PMID `{{PMID}}`
 - Bibliographic metadata: `{{METADATA}}`
-- Text to extract from: `{{TEXT_PATH}}` (full text if acquired; otherwise the abstract only)
+- Snapshot to extract from: `source_id = {{SOURCE_ID}}`, `access = {{ACCESS}}`
+  (`full_text` | `abstract` | `preprint` | `guideline` | `web`)
+- Text windows: read them with `scripts/source.py read --run {{RUN_DIR}} --source {{SOURCE_ID}}
+  --start <n> --end <m>` and locate text with `scripts/source.py spans --run {{RUN_DIR}}
+  --source {{SOURCE_ID}} --query "<phrase>"`. Every window comes back stamped with its
+  `source_id` and its absolute `start`/`end` offsets. Total snapshot length: `{{TEXT_LENGTH}}`
+  characters.
 - Acquisition status from the corpus record: `fulltext.status = {{FULLTEXT_STATUS}}`
   (`fulltext` | `abstract_only`), `source_tier = {{SOURCE_TIER}}`
 - Task id: `{{TASK_ID}}` (`extract:pmid:{{PMID}}`)
 
-Extract only from the supplied text. Do not use prior knowledge of this study, its follow-ups,
-or its authors.
+Extract only from the supplied snapshot. Do not use prior knowledge of this study, its
+follow-ups, or its authors. Do not fetch anything: the snapshot is the only text that exists for
+you, and it is the only text that counts as evidence.
+
+## Evidence is an offset, not a sentence you typed
+
+Read this twice. It is the rule this whole stage exists to enforce.
+
+- You support a claim by returning **`source_id` + `start` + `end`** — the offsets of the
+  supporting text inside the snapshot you were given.
+- `start` is inclusive, `end` is **EXCLUSIVE**, and both are **character offsets into the
+  snapshot's decoded text** (Python string indices, so the excerpt is exactly `text[start:end]`).
+  They are not byte offsets and not offsets into anything you re-wrapped or reformatted.
+- A span is at most **2000 characters**. Longer is a hard failure, not a truncation. If a claim
+  needs more support than that, return two spans.
+- **Text you transcribe is NOT evidence.** The assembler re-slices `text[start:end]` from the
+  immutable snapshot and compares it to the claim. Prose you type into a JSON field is never used
+  as the excerpt; it is discarded, and where it is present and does not match the re-slice, the
+  claim is REJECTED. Do not retype, do not paraphrase into a quote field, do not "clean up"
+  quoted text. Return the numbers.
+- Off-by-one offsets fail the same way an invented quote fails. Copy `start`/`end` from the
+  window headers `source.py` gave you; do not compute them by counting characters yourself.
+- `access` on every span is copied from `{{ACCESS}}`. You do not choose it.
 
 ## Output — you write the file yourself
 
@@ -50,7 +77,10 @@ pretty-printed JSON object, exactly this shape:
       "ci_low": -0.68,
       "ci_high": -0.14,
       "p_value": 0.003,
-      "direction": "favors_intervention"
+      "direction": "favors_intervention",
+      "spans": [
+        { "claim": "CDI-2 at 12 weeks, SMD -0.41 (95% CI -0.68 to -0.14), p=0.003.", "evidence_id": "pmid:12345678", "source_id": "src-3f9a1c...", "start": 10422, "end": 10610, "access": "full_text" }
+      ]
     },
     {
       "name": "Remission (CDRS-R <= 28)",
@@ -60,7 +90,10 @@ pretty-printed JSON object, exactly this shape:
       "ci_low": 0.88,
       "ci_high": 1.43,
       "p_value": null,
-      "direction": "null_effect"
+      "direction": "null_effect",
+      "spans": [
+        { "claim": "24-week remission RR 1.12 (0.88-1.43); no group difference.", "evidence_id": "pmid:12345678", "source_id": "src-3f9a1c...", "start": 41022, "end": 41180, "access": "full_text" }
+      ]
     }
   ],
   "funding": "German Research Foundation, grant EX-1234",
@@ -68,12 +101,17 @@ pretty-printed JSON object, exactly this shape:
   "limitations": "Authors: no active comparator, single site. Extractor: 18% attrition at 24 weeks analysed complete-case, no sensitivity analysis.",
   "evidence_basis": "fulltext",
   "extractor_notes": "24-week remission reported only in Table 3; p reported as '<0.001' for CDI-2 secondary, so p_value null there. SD imputed nowhere.",
-  "quotes": [
-    { "text": "The intervention group showed a significant reduction in CDI-2 scores at 12 weeks.", "section": "Results", "page": 7 },
-    { "text": "Remission rates did not differ between groups at 24 weeks.", "section": "Table 3", "page": 9 }
-  ]
+  "spans": [
+    { "claim": "design: parallel-group RCT, 240 adolescents randomised 1:1.", "evidence_id": "pmid:12345678", "source_id": "src-3f9a1c...", "start": 8104, "end": 8266, "access": "full_text" },
+    { "claim": "population: outpatients aged 12-17 with moderate MDD, Germany, 62% female.", "evidence_id": "pmid:12345678", "source_id": "src-3f9a1c...", "start": 8270, "end": 8461, "access": "full_text" }
+  ],
+  "quotes": []
 }
 ```
+
+Note the `outcomes[].spans` in the first outcome and the record-level `spans` near the end, and
+note that `quotes` is `[]`. `quotes` is filled in later by the assembler from your offsets. You
+never write it.
 
 | Field | Rule |
 |---|---|
@@ -92,7 +130,8 @@ pretty-printed JSON object, exactly this shape:
 | `limitations` | authors' own framing first, prefixed `Authors:`; then your own, prefixed `Extractor:`. Keep the two attributions visible |
 | `evidence_basis` | `fulltext` \| `abstract_only` — must equal `{{FULLTEXT_STATUS}}` |
 | `extractor_notes` | ambiguities, text-vs-table discrepancies, unit conversions, threshold p-values, anything a reader would need to reproduce your reading |
-| `quotes` | verbatim anchors; see below |
+| `spans` | record-level claim spans, one or more per non-null narrative factual field; see below |
+| `quotes` | **always `[]`.** Derived later by the assembler from your spans. Anything you write here is discarded |
 
 ### `outcomes[]` entry
 
@@ -105,21 +144,31 @@ pretty-printed JSON object, exactly this shape:
 | `ci_low` / `ci_high` | reported interval bounds; 95% assumed — if another level, say so in `extractor_notes`. `null` if not reported |
 | `p_value` | numeric only. A threshold (`p<0.001`, `NS`) goes in `extractor_notes` with `p_value: null` |
 | `direction` | `favors_intervention` \| `favors_comparator` \| `null_effect` \| `unclear`. `null_effect` = CI crosses the null or the paper states no difference. `unclear` when direction cannot be determined from what is reported. Direction is relative to the outcome's own polarity — check whether lower = better before assigning |
+| `spans` | one or more claim spans locating the reported numbers. **Required whenever `effect`, `ci_low`, `ci_high` or `p_value` is non-null.** `[]` only when all four are `null` |
 
 Record null and negative results with the same care as positive ones. A study whose primary
 outcome is null is fully extracted; it is evidence, not noise.
 
-### `quotes[]` entry — quote-with-anchor is mandatory
+### `spans[]` entry — the span is the anchor
 
 | Field | Rule |
 |---|---|
-| `text` | verbatim, <=300 chars, copied exactly, no paraphrase, no ellipsis-splicing that changes meaning |
-| `section` | `Abstract`, `Methods`, `Results`, `Table 3`, `Figure 2`, `Discussion`, ... |
-| `page` | page number for PDF sources; `null` for XML/HTML routes |
+| `claim` | what the span supports, in your own words, <=300 chars, one line. For a record-level span, start with the field name (`design: ...`, `funding: ...`). This is a label, NOT a transcription — never paste source text here |
+| `evidence_id` | exactly `{{EVIDENCE_ID}}` |
+| `source_id` | exactly `{{SOURCE_ID}}` — the snapshot the window came from |
+| `start` | inclusive character offset, as reported by `source.py` |
+| `end` | **exclusive** character offset; `end - start <= 2000` |
+| `access` | exactly `{{ACCESS}}` |
 
-**Every effect estimate you record in `outcomes[]` must be traceable to at least one quote with
-its section (and page, where the source is a PDF).** If you cannot anchor a number, do not
-record the number: set the field `null` and explain in `extractor_notes`.
+**Every effect estimate you record in `outcomes[]` must carry at least one span, and every
+non-null narrative factual field (`design`, `n_total`, `n_arms`, `population`, `intervention`,
+`comparator`, `funding`, `coi`, `limitations`) must be covered by at least one record-level
+span.** If you cannot locate a number in the snapshot, do not record the number: set the field
+`null` and explain in `extractor_notes`. A number without a span is worse than a missing number —
+it will be rejected as unverified and it wastes a reviewer's time.
+
+`extractor_notes` is your own reasoning about the source, not a claim about it, and needs no
+span.
 
 ## Honesty rules
 
@@ -134,9 +183,9 @@ record the number: set the field `null` and explain in `extractor_notes`.
 - `evidence_basis` MUST be `abstract_only` whenever no full text was obtained — including
   truncated-HTML routes flagged by the acquisition truncation detector. An abstract-only record
   must never be dressed up as full text; stage 6 will not appraise it as if it were.
-- For `abstract_only`: extract only what the abstract states. `quotes: []` is acceptable;
-  anchoring quotes to `section: "Abstract"` is better. Most Methods-level fields will be `null`
-  and that is the correct output.
+- For `abstract_only`: extract only what the abstract states. Spans still apply — the snapshot is
+  the abstract, and `access` will be `abstract`. Most Methods-level fields will be `null` and that
+  is the correct output; the few that are not still need spans.
 
 ## Return to the coordinator — receipt only
 
@@ -148,8 +197,8 @@ One line of JSON, nothing else:
 
 `status`: `completed` | `blocked` (no usable text supplied) | `failed` (attempted, errored).
 `summary`: <=200 chars, single line, plain text, no markdown, no quotes from the paper.
-NEVER return paper text, the abstract, `quotes[]`, tables, or the extraction JSON itself. The
-coordinator's context must stay small across a long run; it reads your file from disk.
+NEVER return paper text, the abstract, `spans[]`, `quotes[]`, tables, or the extraction JSON
+itself. The coordinator's context must stay small across a long run; it reads your file from disk.
 
 ## Retry contract
 

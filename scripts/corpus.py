@@ -19,7 +19,10 @@ Schema extensions (documented deviations from references/schema.md §4)
     seen_in_queries : string[]  every query_id that surfaced this study (first_seen_query
                                 remains the single earliest one, per schema §4)
     merged_from     : string[]  evidence_ids absorbed into this record by dedupe
-  Both default to [] and are dropped by `corpus.py export --strict-schema`.
+    source_ids      : string[]  evidence-kernel snapshot ids backing this record
+                                (schema R14; written by fulltext.py/library.py when text
+                                is registered into the store, unioned on merge)
+  All three default to [] and are dropped by `corpus.py export --strict-schema`.
 
 Dedupe policy (see `dedupe`)
   pass 1  exact PMID
@@ -90,7 +93,7 @@ CORPUS_FIELDS = (
     "retraction_status", "source", "is_preprint", "screening", "fulltext",
     "extraction_path", "appraisal_path", "first_seen_query",
 )
-CORPUS_EXTENSIONS = ("seen_in_queries", "merged_from")
+CORPUS_EXTENSIONS = ("seen_in_queries", "merged_from", "source_ids")
 FULLTEXT_FIELDS = (
     "status", "source_tier", "access_route", "local_path", "sha256",
     "truncation_detected",
@@ -413,6 +416,7 @@ def normalize_record(raw: dict, *, allow_extra: bool = False) -> dict:
         seen = [rec["first_seen_query"]] + list(seen)
     rec["seen_in_queries"] = sorted(set(seen), key=query_sort_key)
     rec["merged_from"] = sorted(set(raw.get("merged_from") or []))
+    rec["source_ids"] = sorted(set(raw.get("source_ids") or []))
     return rec
 
 
@@ -567,6 +571,9 @@ def merge_records(existing: dict, incoming: dict) -> dict:
         if eid != out["evidence_id"]:
             absorbed.add(eid)
     out["merged_from"] = sorted(absorbed)
+    out["source_ids"] = sorted(
+        set(existing.get("source_ids") or []) | set(incoming.get("source_ids") or [])
+    )
     return out
 
 

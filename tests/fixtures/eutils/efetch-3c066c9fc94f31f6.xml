@@ -1,0 +1,114 @@
+<?xml version="1.0" ?>
+<PubmedArticleSet>
+<PubmedArticle>
+  <MedlineCitation Status="MEDLINE" Owner="NLM">
+    <PMID Version="1">34567890</PMID>
+    <Article PubModel="Print-Electronic">
+      <Journal>
+        <ISSN IssnType="Electronic">1234-5678</ISSN>
+        <JournalIssue CitedMedium="Internet">
+          <Volume>12</Volume>
+          <Issue>3</Issue>
+          <PubDate><Year>2024</Year><Month>Jun</Month><Day>15</Day></PubDate>
+        </JournalIssue>
+        <Title>Journal of Example Medicine</Title>
+        <ISOAbbreviation>J Example Med</ISOAbbreviation>
+      </Journal>
+      <ArticleTitle>Cognitive behavioral therapy for adolescent depression: a randomized trial.</ArticleTitle>
+      <Pagination><MedlinePgn>101-115</MedlinePgn></Pagination>
+      <Abstract>
+        <AbstractText Label="BACKGROUND">Adolescent depression is common.</AbstractText>
+        <AbstractText Label="RESULTS">CBT reduced CDI-2 scores at 12 weeks (SMD -0.41).</AbstractText>
+      </Abstract>
+      <AuthorList CompleteYN="Y">
+        <Author ValidYN="Y"><LastName>Smith</LastName><ForeName>Jane A</ForeName><Initials>JA</Initials>
+          <AffiliationInfo><Affiliation>Department of Example Medicine, Example University.</Affiliation></AffiliationInfo></Author>
+        <Author ValidYN="Y"><LastName>Doe</LastName><ForeName>Robert</ForeName><Initials>R</Initials></Author>
+      </AuthorList>
+      <ArticleDate DateType="Electronic"><Year>2024</Year><Month>05</Month><Day>20</Day></ArticleDate>
+      <PublicationTypeList>
+        <PublicationType UI="D016449">Randomized Controlled Trial</PublicationType>
+      </PublicationTypeList>
+      <GrantList CompleteYN="Y">
+        <Grant><GrantID>EX-1234</GrantID><Agency>German Research Foundation</Agency></Grant>
+      </GrantList>
+    </Article>
+    <MeshHeadingList>
+      <MeshHeading><DescriptorName UI="D003863" MajorTopicYN="Y">Depression</DescriptorName></MeshHeading>
+      <MeshHeading><DescriptorName UI="D015928" MajorTopicYN="Y">Cognitive Behavioral Therapy</DescriptorName></MeshHeading>
+      <MeshHeading><DescriptorName UI="D000293" MajorTopicYN="N">Adolescent</DescriptorName></MeshHeading>
+    </MeshHeadingList>
+    <KeywordList Owner="NOTNLM">
+      <Keyword MajorTopicYN="N">adolescents</Keyword>
+      <Keyword MajorTopicYN="N">remission</Keyword>
+    </KeywordList>
+  </MedlineCitation>
+  <PubmedData>
+    <PublicationStatus>ppublish</PublicationStatus>
+    <ArticleIdList>
+      <ArticleId IdType="pubmed">34567890</ArticleId>
+      <ArticleId IdType="doi">10.1000/Example.2024.001</ArticleId>
+      <ArticleId IdType="pmc">PMC1234567</ArticleId>
+    </ArticleIdList>
+  </PubmedData>
+</PubmedArticle>
+<PubmedArticle>
+  <MedlineCitation Status="MEDLINE" Owner="NLM">
+    <PMID Version="1">33445566</PMID>
+    <Article PubModel="Print">
+      <Journal>
+        <JournalIssue CitedMedium="Print">
+          <Volume>7</Volume>
+          <PubDate><Year>2021</Year><Month>Feb</Month></PubDate>
+        </JournalIssue>
+        <Title>Example Review Quarterly</Title>
+        <ISOAbbreviation>Ex Rev Q</ISOAbbreviation>
+      </Journal>
+      <ArticleTitle>Group CBT in adolescents: a paywalled cohort study.</ArticleTitle>
+      <Pagination><StartPage>44</StartPage><EndPage>52</EndPage></Pagination>
+      <AuthorList CompleteYN="Y">
+        <Author ValidYN="Y"><LastName>Muller</LastName><ForeName>Karin</ForeName><Initials>K</Initials></Author>
+      </AuthorList>
+      <PublicationTypeList>
+        <PublicationType UI="D064888">Observational Study</PublicationType>
+      </PublicationTypeList>
+      <ELocationID EIdType="doi" ValidYN="Y">10.1000/Paywalled.2021.044</ELocationID>
+    </Article>
+  </MedlineCitation>
+  <PubmedData>
+    <PublicationStatus>ppublish</PublicationStatus>
+    <ArticleIdList>
+      <ArticleId IdType="pubmed">33445566</ArticleId>
+    </ArticleIdList>
+  </PubmedData>
+</PubmedArticle>
+<PubmedArticle>
+  <MedlineCitation Status="MEDLINE" Owner="NLM">
+    <PMID Version="1">31234567</PMID>
+    <Article PubModel="Print">
+      <Journal>
+        <JournalIssue CitedMedium="Print">
+          <PubDate><Year>2019</Year></PubDate>
+        </JournalIssue>
+        <Title>Journal of Retracted Findings</Title>
+        <ISOAbbreviation>J Retract Find</ISOAbbreviation>
+      </Journal>
+      <ArticleTitle>Cognitive behavioural therapy for adolescent depression: a randomised trial</ArticleTitle>
+      <PublicationTypeList>
+        <PublicationType UI="D016449">Randomized Controlled Trial</PublicationType>
+        <PublicationType UI="D016441">Retracted Publication</PublicationType>
+      </PublicationTypeList>
+    </Article>
+    <CommentsCorrectionsList>
+      <CommentsCorrections RefType="RetractionIn"><RefSource>J Retract Find. 2020;5:1</RefSource></CommentsCorrections>
+    </CommentsCorrectionsList>
+  </MedlineCitation>
+  <PubmedData>
+    <PublicationStatus>ppublish</PublicationStatus>
+    <ArticleIdList>
+      <ArticleId IdType="pubmed">31234567</ArticleId>
+      <ArticleId IdType="doi">10.1000/Retracted.2019.007</ArticleId>
+    </ArticleIdList>
+  </PubmedData>
+</PubmedArticle>
+</PubmedArticleSet>

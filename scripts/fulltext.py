@@ -18,6 +18,15 @@ walking the ladder. The coordinator calls `get_full_text_article`, saves the ret
 the task's `result_path`, and calls `fulltext.py resolve-mcp` (or simply re-runs `acquire`,
 which picks the file up). See references/acquisition.md.
 
+Evidence kernel: whenever a rung yields usable text the ladder **registers** it into the run's
+snapshot store (`scripts/store.py`, references/schema.md §10-§11, VALIDATION_ARCHITECTURE_PLAN.md
+Phase 1). The resulting `source_id` is appended to the corpus record's `source_ids[]` (R14), so a
+claim can trace `evidence_id -> source_id -> start:end`. Registration writes a `register` event,
+which is never fresh (R22); a rung that performed a genuine live round-trip in this run
+additionally writes a `fetch` event with `fresh: true`. Registration is purely additive and
+best-effort: a store failure is logged to `engine.log` and never aborts an acquisition that
+already succeeded, so a run with no `sources/` directory acquires text exactly as before.
+
 Forbidden by policy (PLAN.md §6): no browser automation, no credentials or institutional
 proxies, no sci-hub-class sources, no paywall circumvention of any kind. Fail closed.
 """
@@ -40,6 +49,7 @@ import library  # noqa: E402  (sibling module, stdlib-only)
 from library import (  # noqa: E402
     MIN_TEXT_CHARS,
     Library,
+    entry_is_preprint,
     evidence_id_of,
     normalize_doi,
     pdf_text_with_ocr,
@@ -50,6 +60,11 @@ from library import (  # noqa: E402
     wiki_root_for_run,
     write_corpus,
 )
+
+try:  # the evidence kernel is additive: acquisition must work without it
+    import store  # noqa: E402  (sibling module, stdlib-only)
+except Exception:  # pragma: no cover - store.py is a sibling and always present
+    store = None
 
 try:
     import requests
@@ -326,17 +341,164 @@ def upsert_mcp_task(run_dir: Path, task: dict) -> None:
     tmp.replace(path)
 
 
+# ----------------------------------------------------------- kernel mapping ----
+#
+# Rung -> snapshot (`access`, `origin`), schema.md §10 enums. `access` describes the
+# snapshot, `fulltext.status` describes the corpus record; R21 maps between them
+# (`full_text` -> `fulltext`; `abstract`/`web` -> `abstract_only`).
+#
+#   rung  route            access                       origin
+#   ----  ---------------  ---------------------------  -----------------------------
+#   0     library          full_text (preprint when the  from the library entry's own
+#                          index entry or the corpus     access_route, else
+#                          record says so)               user-supplied-pdf
+#   1     pmc_mcp          full_text                    pmc
+#   2     pmc_pdf          full_text                    pmc
+#   3     epmc_xml         full_text / preprint         europepmc
+#   4     unpaywall        -- no text, nothing registered --
+#   5     unpaywall_pdf    full_text                    unpaywall
+#   5     oa_pdf           full_text                    oa-pdf
+#   5     oa_html          abstract when the truncation detector fired, else full_text
+#                                                       unpaywall / oa-pdf
+#   6     preprint_twin    preprint                     europepmc
+#   7     quarantine       -- no text, nothing registered --
+#
+ROUTE_ORIGIN = {
+    "pmc_mcp": "pmc",
+    "pmc_pdf": "pmc",
+    "epmc_xml": "europepmc",
+    "unpaywall": "unpaywall",
+    "unpaywall_pdf": "unpaywall",
+    "oa_pdf": "oa-pdf",
+    "oa_html": "oa-pdf",
+    "preprint_twin": "europepmc",
+    "inbox_manual": "user-supplied-pdf",
+    "library": "user-supplied-pdf",
+}
+
+
+def snapshot_access(res: dict, truncated: bool) -> str:
+    """`access` for a rung result (schema.md §10 enum, R21).
+
+    A truncation-detected HTML body is `abstract`, never `full_text` — the detector's
+    verdict carries into the snapshot exactly as it carries into `fulltext.status`.
+    """
+    if truncated:
+        return "abstract"
+    if res.get("is_preprint"):
+        return "preprint"
+    return "full_text"
+
+
+def snapshot_origin(res: dict, route: str | None) -> str:
+    """`origin` for a rung result (schema.md §10 enum).
+
+    A rung-0 library hit inherits the origin recorded on the library entry when the PDF
+    was filed; a PDF with no recorded provenance is a local file the user supplied. A rung
+    may state its own `origin` when the route token is ambiguous (an `oa_html` body reached
+    through an Unpaywall location is `unpaywall`, one reached through Europe PMC is not).
+    """
+    stated = res.get("origin")
+    if stated in (store.ORIGIN_VALUES if store else ()):
+        return stated
+    if route == "library":
+        entry = res.get("library_entry") or {}
+        return ROUTE_ORIGIN.get(entry.get("access_route") or "", "user-supplied-pdf")
+    return ROUTE_ORIGIN.get(route or "", "oa-pdf")
+
+
+def canonical_url(rec: dict, state: dict) -> str | None:
+    """Stable identifier URL for a snapshot whose rung recorded no retrieval URL."""
+    pmcid = rec.get("pmcid") or state.get("pmcid")
+    if pmcid:
+        return "https://pmc.ncbi.nlm.nih.gov/articles/%s/" % pmcid
+    if rec.get("pmid"):
+        return "https://pubmed.ncbi.nlm.nih.gov/%s/" % rec["pmid"]
+    doi = normalize_doi(rec.get("doi"))
+    if doi:
+        return "https://doi.org/%s" % doi
+    return None
+
+
+def register_acquisition(rec: dict, ctx: Ctx, state: dict, tier: int, res: dict,
+                         fulltext: dict, asset: dict | None) -> str | None:
+    """Fold acquired text into the run's snapshot store. Returns the `source_id` or None.
+
+    Best-effort by contract (VALIDATION_ARCHITECTURE_PLAN.md Phase 1 is additive): every
+    failure is logged to `engine.log` and swallowed, because the acquisition itself has
+    already succeeded and must not be lost to a kernel problem. `<run>/sources/` is
+    created lazily here, on the first registration of the run.
+
+    Writes a `register` event, never a fresh one (R22). A rung that performed a real
+    network round-trip in *this* invocation (`res["live"]`) additionally gets a `fetch`
+    event with `fresh: true`; nothing else does, so a coordinator-supplied MCP file, a
+    library cache hit and a resumed run never claim freshness they do not have.
+    """
+    if store is None or not getattr(ctx, "register", True):
+        return None
+    text = res.get("text") or ""
+    if not text.strip():
+        return None
+    eid = evidence_id_of(rec)
+    route = fulltext.get("access_route") or TIER_ROUTES.get(tier)
+    access = snapshot_access(res, bool(fulltext.get("truncation_detected")))
+    origin = snapshot_origin(res, route)
+    url = res.get("url")
+    if not url and asset:
+        url = "file:///" + asset["path"]
+    if not url:
+        url = canonical_url(rec, state)
+    if not url:
+        log(ctx.run_dir, "%s rung %d: no URL to register a snapshot against" % (eid, tier))
+        return None
+    paper = {
+        "pmid": rec.get("pmid") or None,
+        "doi": normalize_doi(rec.get("doi")),
+        "pmcid": rec.get("pmcid") or state.get("pmcid") or None,
+    }
+    try:
+        snap = store.register_text(
+            ctx.run_dir, url=url, text=text, title=rec.get("title"), access=access,
+            origin=origin, paper=paper, asset=asset, actor="main",
+            detail="fulltext.py rung %d (%s): %d chars, access=%s, not re-retrieved"
+                   % (tier, route, len(text), access),
+        )
+        source_id = snap["source_id"]
+        if res.get("live"):
+            store.append_event(ctx.run_dir, {
+                "type": "fetch",
+                "source_id": source_id,
+                "url": url,
+                "fresh": True,
+                "sha256": store.sha256_text(text),
+                "actor": "main",
+                "detail": "live retrieval in this run: rung %d (%s), %d chars"
+                          % (tier, route, len(text)),
+            })
+    except Exception as exc:  # a kernel problem must never lose a successful acquisition
+        log(ctx.run_dir, "%s rung %d: snapshot registration failed: %r" % (eid, tier, exc))
+        return None
+    ids = rec.setdefault("source_ids", [])
+    if source_id not in ids:
+        ids.append(source_id)
+    state["source_ids"] = list(ids)
+    log(ctx.run_dir, "%s rung %d registered %s (access=%s, origin=%s%s)"
+        % (eid, tier, source_id, access, origin, ", fresh fetch" if res.get("live") else ""))
+    return source_id
+
+
 # ------------------------------------------------------------------- context ---
 
 
 class Ctx:
     def __init__(self, run_dir: Path, wiki_root: Path, email: str | None, offline: bool,
-                 allow_ocr: bool = True):
+                 allow_ocr: bool = True, register: bool = True):
         self.run_dir = run_dir
         self.wiki_root = wiki_root
         self.email = email
         self.offline = offline
         self.allow_ocr = allow_ocr
+        self.register = register
         self.http = Http(email, offline=offline)
         self.lib = Library(wiki_root)
 
@@ -384,6 +546,11 @@ def rung0_library(rec: dict, ctx: Ctx, state: dict) -> dict:
         "pdf": pdf,
         "access_route": "library",
         "library_entry": entry,
+        # Preprint precedence: an explicit true from *either* source wins, the index
+        # entry first, then the corpus record; anything else (a false, a missing key on
+        # a pre-`is_preprint` entry) is false. `snapshot_access` turns a true into
+        # `access: "preprint"`, so a cached preprint never registers as `full_text`.
+        "is_preprint": entry_is_preprint(entry) or bool(rec.get("is_preprint")),
     }
 
 
@@ -445,7 +612,7 @@ def rung2_pmc_pdf(rec: dict, ctx: Ctx, state: dict) -> dict:
     if len(text.strip()) < MIN_TEXT_CHARS:
         return {"status": "failed", "detail": "PMC PDF text <%d chars (OCR too)" % MIN_TEXT_CHARS}
     return {"status": "success", "detail": "PMC OA PDF%s" % ("; OCR used" if used_ocr else ""),
-            "text": text, "pdf": pdf, "access_route": "pmc_pdf"}
+            "text": text, "pdf": pdf, "access_route": "pmc_pdf", "url": url, "live": True}
 
 
 def _epmc_search(ctx: Ctx, query: str) -> list[dict]:
@@ -515,6 +682,8 @@ def rung3_europepmc(rec: dict, ctx: Ctx, state: dict) -> dict:
                 "text": text,
                 "access_route": "epmc_xml",
                 "is_preprint": is_ppr,
+                "url": "%s/%s/fullTextXML" % (EPMC, ident),
+                "live": True,
             }
     # no XML, but remember any OA link for rung 5
     for link in (hit.get("fullTextUrlList") or {}).get("fullTextUrl") or []:
@@ -594,7 +763,8 @@ def rung5_oa_fetch(rec: dict, ctx: Ctx, state: dict) -> dict:
         return {"status": "success",
                 "detail": "OA PDF %s%s" % (url, "; OCR used" if used_ocr else ""),
                 "text": text, "pdf": pdf, "access_route": "unpaywall_pdf"
-                if loc.get("from") == "unpaywall" else "oa_pdf"}
+                if loc.get("from") == "unpaywall" else "oa_pdf",
+                "url": url, "live": True}
 
     html = body.decode(resp.encoding or "utf-8", "replace")
     text = html_to_text(html)
@@ -608,6 +778,9 @@ def rung5_oa_fetch(rec: dict, ctx: Ctx, state: dict) -> dict:
         "access_route": "oa_html",
         "truncation_detected": truncated,
         "reasons": reasons,
+        "url": url,
+        "live": True,
+        "origin": "unpaywall" if loc.get("from") == "unpaywall" else "oa-pdf",
     }
 
 
@@ -650,6 +823,8 @@ def rung6_preprint_twin(rec: dict, ctx: Ctx, state: dict) -> dict:
                     "is_preprint": True,
                     "preprint_id": ident,
                     "preprint_doi": hit.get("doi"),
+                    "url": "%s/%s/fullTextXML" % (EPMC, ident),
+                    "live": True,
                 }
     return {"status": "failed", "detail": "no preprint twin with full text"}
 
@@ -714,6 +889,7 @@ def finalize(rec: dict, ctx: Ctx, state: dict, tier: int, res: dict) -> dict:
     truncated = bool(res.get("truncation_detected"))
     text = res.get("text") or ""
     local_path, digest = None, None
+    asset = None
 
     if res.get("pdf"):
         pdf = Path(res["pdf"])
@@ -723,9 +899,20 @@ def finalize(rec: dict, ctx: Ctx, state: dict, tier: int, res: dict) -> dict:
             title=rec.get("title"), journal=rec.get("journal"),
             year=(rec.get("publication_date") or "")[:4] or None,
             source_tier=tier, access_route=route, stem=record_stem(rec),
+            # carry the flag into the index so the next run's rung-0 hit is correct
+            is_preprint=bool(res.get("is_preprint") or rec.get("is_preprint")),
             move=str(pdf.parent).endswith("retrieve/tmp"),
         )
         local_path, digest = entry["path"], entry["sha256"]
+        # R13: the PDF stays in the shared library; the snapshot records the
+        # wiki-root-relative path plus its hash. Nothing is copied into the run.
+        try:
+            nbytes = entry.get("bytes")
+            if not isinstance(nbytes, int):
+                nbytes = ctx.lib.entry_path(entry).stat().st_size
+            asset = {"path": Path(local_path).as_posix(), "sha256": digest, "bytes": nbytes}
+        except OSError:
+            asset = None
 
     if text:
         tpath = ctx.text_path(rec)
@@ -755,6 +942,7 @@ def finalize(rec: dict, ctx: Ctx, state: dict, tier: int, res: dict) -> dict:
     if res.get("is_preprint"):
         state["is_preprint"] = True
         rec["is_preprint"] = True
+    register_acquisition(rec, ctx, state, tier, res, fulltext, asset)
     return fulltext
 
 
@@ -798,7 +986,8 @@ def acquire_record(rec: dict, ctx: Ctx, from_tier: int | None = None) -> dict:
             rec["fulltext"] = fulltext
             save_state(ctx.run_dir, rec, state)
             return {"evidence_id": eid, "action": "acquired", "tier": tier,
-                    "fulltext": fulltext, "detail": res.get("detail", "")}
+                    "fulltext": fulltext, "source_ids": list(rec.get("source_ids") or []),
+                    "detail": res.get("detail", "")}
         # needs_mcp: task emitted, keep walking the ladder
     save_state(ctx.run_dir, rec, state)
     rec["fulltext"] = rec.get("fulltext") or {
@@ -837,7 +1026,8 @@ def cmd_acquire(args) -> int:
     if not records:
         print(json.dumps({"error": "no records in %s" % corpus_path}, indent=2))
         return 1
-    ctx = Ctx(run_dir, wiki, email, offline=args.offline, allow_ocr=not args.no_ocr)
+    ctx = Ctx(run_dir, wiki, email, offline=args.offline, allow_ocr=not args.no_ocr,
+              register=not args.no_register)
     results = []
     for rec in records:
         if args.only_pmid and str(rec.get("pmid") or "") != str(args.only_pmid):
@@ -862,6 +1052,8 @@ def cmd_acquire(args) -> int:
                            if (r.get("fulltext") or {}).get("status") == "missing"),
         "unpaywall_email": bool(email),
         "needs_mcp": len(pending),
+        "registered_sources": sum(len(r.get("source_ids") or []) for r in results),
+        "sources_dir": str(run_dir / "sources") if not args.no_register else None,
         "mcp_tasks_path": str(mcp_tasks_path(run_dir)) if pending else None,
         "results": results,
     }
@@ -944,19 +1136,24 @@ def cmd_resolve_mcp(args) -> int:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if src != dest:
         dest.write_text(text, encoding="utf-8")
-    ctx = Ctx(run_dir, wiki, args.email or os.environ.get("DEEP_RESEARCH_EMAIL"), offline=True)
+    ctx = Ctx(run_dir, wiki, args.email or os.environ.get("DEEP_RESEARCH_EMAIL"), offline=True,
+              register=not args.no_register)
     if len(text.strip()) < MIN_TEXT_CHARS:
         mark(state, 1, "failed", "MCP text <%d chars" % MIN_TEXT_CHARS)
         save_state(run_dir, target, state)
         print(json.dumps({"evidence_id": args.evidence_id, "rung1": "failed"}, indent=2))
         return 1
     mark(state, 1, "success", "MCP full text supplied by coordinator")
+    # The coordinator, not this process, called the MCP tool: the text is registered
+    # (`register`, never fresh — R22), and no `fetch` event is claimed for it.
     fulltext = finalize(target, ctx, state, 1,
-                        {"text": text, "access_route": "pmc_mcp", "status": "success"})
+                        {"text": text, "access_route": "pmc_mcp", "status": "success",
+                         "url": canonical_url(target, state)})
     save_state(run_dir, target, state)
     target["fulltext"] = fulltext
     write_corpus(corpus_path, records)
-    print(json.dumps({"evidence_id": args.evidence_id, "fulltext": fulltext}, indent=2))
+    print(json.dumps({"evidence_id": args.evidence_id, "fulltext": fulltext,
+                      "source_ids": list(target.get("source_ids") or [])}, indent=2))
     return 0
 
 
@@ -979,6 +1176,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="local rungs only; network rungs are skipped, not failed")
     s.add_argument("--no-ocr", action="store_true", dest="no_ocr",
                    help="disable the tesseract OCR fallback")
+    s.add_argument("--no-register", action="store_true", dest="no_register",
+                   help="do not register acquired text into <run-dir>/sources/ (kernel off)")
     s.set_defaults(func=cmd_acquire)
 
     s = sub.add_parser("status", help="acquisition state for a run")
@@ -997,6 +1196,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="file holding the text returned by get_full_text_article")
     s.add_argument("--status", choices=["ok", "unavailable"], default="ok")
     s.add_argument("--email")
+    s.add_argument("--no-register", action="store_true", dest="no_register",
+                   help="do not register the supplied text into <run-dir>/sources/")
     s.set_defaults(func=cmd_resolve_mcp)
     return p
 

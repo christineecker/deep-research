@@ -1,0 +1,13 @@
+{
+  "header": { "type": "esearch", "version": "0.3" },
+  "esearchresult": {
+    "count": "3",
+    "retmax": "5",
+    "retstart": "0",
+    "idlist": ["34567890", "33445566", "31234567"],
+    "translationset": [],
+    "querytranslation": "\"cognitive behavioral therapy\"[MeSH Terms] AND \"adolescent\"[MeSH Terms] AND 2015:2026[dp]",
+    "webenv": "MCID_FIXTURE",
+    "querykey": "1"
+  }
+}

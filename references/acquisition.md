@@ -202,8 +202,13 @@ collapsed to a single space, trimmed.
 {"sha256":"…","path":"assets/papers/pmid-12345678.pdf","pmid":"12345678",
  "doi":"10.1000/example","pmcid":"PMC1234567","title":"…","title_norm":"…",
  "journal":"J Example Med","year":"2024","pages":12,"bytes":481203,
- "added_at":"2026-09-08T00:00:00Z","source_tier":2,"access_route":"pmc_pdf"}
+ "added_at":"2026-09-08T00:00:00Z","source_tier":2,"access_route":"pmc_pdf",
+ "is_preprint":false}
 ```
+
+`is_preprint` is additive and defaults to `false`; an entry written before the field
+existed simply lacks the key and reads back as `false`. A rung-0 hit on an entry with
+`is_preprint: true` registers its snapshot as `access: "preprint"`, never `"full_text"`.
 
 The library is shared across runs — a PDF fetched for one review is rung 0 for the next.
 

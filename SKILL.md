@@ -62,6 +62,7 @@ re-prompt for a value already in `config.json` unless the user asks to change it
 ```
 <wiki>/outputs/deep-research/<slug>/
   config.json     engine.log     taskboard.jsonl
+  events.jsonl    sources/                        # evidence kernel
   inputs/         workspace/     outputs/
   missing.md      inbox/
 ```
@@ -127,10 +128,26 @@ Abstract-only records are **not** appraised as if full text.
 conflict *with an explanation of why*, certainty, gaps, and a hard-walled hypotheses section.
 See `references/synthesis.md`.
 
-**Stage 8 — verify.** `scripts/verify.py`: every citation maps to `corpus.jsonl`, every
-included study has screening + extraction + appraisal records, abstract-only claims are
-labelled, missing full texts are listed, hypotheses are not phrased as established evidence,
-OKF validates. Then export (`scripts/render.py`) and promote (`scripts/okf.py`) if requested.
+**Stage 8 — assemble, verify, publish.** Fixed order:
+
+```
+assemble.py run  ->  verify.py run  ->  render.py / html_report.py  ->  okf.py promote --check  ->  okf.py promote
+```
+
+`assemble.py` decides which artifacts are admissible and writes `outputs/result.json`;
+`verify.py` runs the 12 report checks plus the four kernel checks and writes
+`outputs/verification.json`; `okf.py promote --check` re-verifies integrity and writes nothing;
+only then does promotion write concepts.
+
+The **evidence-kernel gate is off by default** until a live end-to-end run has passed. Gate off,
+the kernel checks still run and are still reported — they warn instead of failing. Turn it on
+with `verify.py --gate` / `assemble.py --strict`, or `gates.evidence_kernel: true` in
+`config.json`.
+
+**Tamper is never downgraded.** A snapshot hash mismatch or an excerpt that does not match its
+re-slice is a hard failure and blocks promotion with the gate off. That is not a rollout
+concern. Legacy span-less records are `unverified` — a different thing from tampered, and
+reported as such.
 
 ---
 
@@ -163,7 +180,9 @@ unless `inputs_hash` changes. Failed tasks retry independently. `task_id` gramma
 ## Execution guardrails
 
 - Budgets `max_subagents`, `max_parallel`, `max_wall_time`, `max_articles`,
-  `max_fulltext_failures` live in `config.json` and are enforced, not aspirational.
+  `max_fulltext_failures` live under `config.json`'s `budgets` object and are enforced, not
+  aspirational. `max_wall_time` is **seconds** as a bare number, or a suffixed string
+  (`90m`, `3h`, `1d`). Never write a bare number meaning minutes.
 - Duplicate PubMed / E-utilities / web queries are detected before execution and skipped or
   merged into the existing result.
 - **No-progress guard**: repeated identical tool calls, or repeated task assignment with no
@@ -227,6 +246,10 @@ which studies arrived by manual supply.
 | `scripts/html_report.py` | self-contained HTML deliverable: evidence table, effect-direction chart, per-study cards |
 | `scripts/verify.py` | citation / corpus / OKF consistency checks |
 | `scripts/eval.py` | fixture-based smoke harness; `--live` for real PubMed |
+| `scripts/store.py` | evidence kernel: immutable snapshots, spans, event log, freshness |
+| `scripts/source.py` | `fetch` / `read` / `spans` / `local` over the snapshot store |
+| `scripts/assemble.py` | admissibility gate → `outputs/result.json` |
+| `scripts/watch.py` | read-only TUI: attach to a live or finished run |
 
 All scripts are `python3` (there is no `python` on this machine), stdlib + `requests` +
 `pdfminer` only. **No pip installs.**

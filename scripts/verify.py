@@ -33,6 +33,43 @@ Checks
   C-SECTIONS         the report carries the sections required by references/reporting.md §3
   C-OKF              shells out to `okf.py validate` when --wiki was given
 
+Evidence-kernel checks (schema.md §9 "Evidence-kernel checks", §10-§13, R10-R24)
+--------------------------------------------------------------------------------
+  C-SNAPSHOT         every snapshot the run references exists under `<run>/sources/`, parses,
+                     and its stored `content_hash` / `source_id` recompute from its own
+                     `url` + `text`
+  C-SPAN             every claim span is in range, at most 2000 characters, and any excerpt
+                     carried alongside it equals the re-slice `snapshot.text[start:end]`
+  C-FRESH-FETCH      every source backing a claim has a fresh retrieval logged in this run
+                     (R15), with the `user-supplied-pdf` exception (a `local_pdf` event plus
+                     an asset file that still hashes to `asset.sha256`)
+  C-ASSEMBLER        `outputs/result.json` (written by `scripts/assemble.py`, schema §13)
+                     exists, is schema-shaped, and carries no unresolved artifacts
+
+All four are **implemented by importing `scripts/store.py`** (decision D5): snapshot hashing,
+span slicing and the five-condition freshness rule live in exactly one place, and a single
+`store.Store(run_dir)` is instantiated so each snapshot is hashed once per run.
+
+The gate (R20 / D7)
+-------------------
+The assembler+verifier gate is **off by default** until a live dry run passes. `--gate`
+(or `config.json` `gates.evidence_kernel: true`, or a top-level `gate: true`) turns it on.
+
+  * Gate ON  — every kernel violation is a `fail` and blocks stage 8.
+  * Gate OFF — the kernel checks still run and are still reported; violations are `warn`,
+    and a run with no `sources/` at all (or no `outputs/result.json`) reports `skipped`
+    with the reason. Silence is never an option.
+  * **Never downgraded, gate or no gate:** a `C-SNAPSHOT` missing/unparseable/hash-mismatched
+    snapshot and a `C-SPAN` out-of-range, over-length or excerpt-mismatched span are hard
+    `fail`s. Tampered evidence is not a rollout concern (R20, schema §9).
+
+Legacy records with no spans at all are `unverified` (R16), not tampered: they are `warn` with
+the gate off and `fail` with it on.
+
+`status` is `pass` | `fail` | `warn` as in schema §9, plus `skipped` for the two gate-off
+"nothing to check" states above — consumers (`okf.py`, `html_report.py`) test for `fail` and
+`warn`, so `skipped` is inert for them while staying visible to the operator.
+
 Honest limits of C-HYPOTHESIS-WALL
 ----------------------------------
 This check is **lexical and structural, not semantic**. It cannot read meaning. It does three
@@ -66,6 +103,7 @@ Environment: python3 (3.14), stdlib only, no network. There is no `python` on th
 CLI
 ---
   verify.py run --run-dir <dir> [--wiki <root>] [--report <path>] [--json] [--markdown <path>]
+                [--gate | --no-gate]
 
 Exit codes: 0 = no check failed (warns do not fail), 1 = at least one check failed,
 2 = fatal error (missing run dir, unreadable corpus, missing report).
@@ -85,6 +123,23 @@ SCHEMA_VERSION = 1
 HERE = Path(__file__).resolve().parent
 
 PASS, FAIL, WARN = "pass", "fail", "warn"
+#: Gate-off "nothing to check" status; see the module docstring. Not part of schema §9's
+#: three-value enum, and deliberately inert for `okf.py` / `html_report.py`.
+SKIPPED = "skipped"
+
+#: The evidence-kernel check ids, in execution order (schema §9).
+KERNEL_CHECKS = ("C-SNAPSHOT", "C-SPAN", "C-FRESH-FETCH", "C-ASSEMBLER")
+
+# D5: store.py is the single implementation of snapshot / span / freshness checking.
+try:
+    import store as store_mod
+except ImportError:                                       # pragma: no cover - path fallback
+    if str(HERE) not in sys.path:
+        sys.path.insert(0, str(HERE))
+    try:
+        import store as store_mod
+    except ImportError:
+        store_mod = None
 
 
 class FatalError(Exception):
@@ -536,10 +591,15 @@ PRISMA_LABEL_MAP: list[tuple[re.Pattern, tuple[str, ...]]] = [
 
 
 class Verifier:
-    def __init__(self, run: RunData, report: Report, wiki: Path | None):
+    def __init__(self, run: RunData, report: Report, wiki: Path | None,
+                 gate: bool = False, gate_source: str = "default"):
         self.run = run
         self.report = report
         self.wiki = wiki
+        self.gate = bool(gate)
+        self.gate_source = gate_source
+        self.kernel: dict = {}
+        self.store = None
         self.checks: list[dict] = []
         self.unsupported_claims: list[dict] = []
         self.uncited_citations: list[str] = []
@@ -551,8 +611,10 @@ class Verifier:
 
     # -- plumbing ----------------------------------------------------------
 
-    def add(self, check_id: str, status: str, detail: str) -> None:
-        self.checks.append({"check_id": check_id, "status": status, "detail": short(detail, 400)})
+    def add(self, check_id: str, status: str, detail: str, **extra) -> None:
+        check = {"check_id": check_id, "status": status, "detail": short(detail, 400)}
+        check.update(extra)
+        self.checks.append(check)
 
     def worst(self, *statuses: str) -> str:
         if FAIL in statuses:
@@ -575,6 +637,7 @@ class Verifier:
         self.check_preprint()
         self.check_attribution()
         self.check_sections()
+        self.run_kernel_checks()      # C-SNAPSHOT / C-SPAN / C-FRESH-FETCH / C-ASSEMBLER
         self.check_provisional()      # depends on the checks above
         self.check_okf()
         return {
@@ -585,6 +648,7 @@ class Verifier:
             "missing_fulltext": sorted(set(self.missing_fulltext)),
             "abstract_only_claims": self.abstract_only_claims,
             "okf_validation": self.okf_validation,
+            "evidence_kernel": self.kernel_summary(),
         }
 
     # -- C-CITE-RESOLVE ----------------------------------------------------
@@ -1247,16 +1311,421 @@ class Verifier:
             self.add("C-OKF", PASS,
                      f"bundle validates ({data.get('files_checked', 0)} files checked)")
 
+    # ================================================== evidence kernel (Phase 3) ==
+    #
+    # Every check below delegates the actual cryptography and slicing to `store.py`
+    # (D5). Nothing here recomputes a hash, re-slices a span or re-implements the
+    # five-condition freshness rule.
+
+    #: Extraction fields that make a factual claim about the study and therefore need a
+    #: record-level span when non-null (R19).
+    NARRATIVE_FIELDS = ("design", "n_total", "n_arms", "population", "intervention",
+                        "comparator", "funding", "coi", "limitations")
+    #: Numeric outcome fields; any non-null one makes the outcome entry a claim (R19).
+    OUTCOME_CLAIM_FIELDS = ("effect", "ci_low", "ci_high", "p_value")
+
+    #: Span-level failures that are *never* downgraded by the gate flag (R20).
+    SPAN_TAMPER_CODES = ("SPAN_OUT_OF_RANGE", "SPAN_TOO_LONG", "EXCERPT_MISMATCH")
+    #: Failures owned by C-SNAPSHOT; C-SPAN reports but does not re-fail on them.
+    SNAPSHOT_CODES = ("UNKNOWN_SOURCE", "SNAPSHOT_HASH_MISMATCH")
+
+    # -- plumbing ----------------------------------------------------------
+
+    def gated(self, status_when_bad: str = WARN) -> str:
+        """FAIL with the gate on, `status_when_bad` (default WARN) with it off (R20)."""
+        return FAIL if self.gate else status_when_bad
+
+    def _kernel_record_files(self) -> list[tuple[str, Path]]:
+        """(kind, path) for every extraction / appraisal record on disk, deduplicated."""
+        run_dir = self.run.run_dir
+        out: list[tuple[str, Path]] = []
+        seen: set[Path] = set()
+
+        def put(kind: str, path: Path) -> None:
+            try:
+                key = path.resolve()
+            except OSError:
+                key = path
+            if key in seen or not path.is_file():
+                return
+            seen.add(key)
+            out.append((kind, path))
+
+        for kind, sub in (("extraction", "extractions"), ("appraisal", "appraisals")):
+            d = run_dir / "workspace" / sub
+            if d.is_dir():
+                for f in sorted(d.rglob("*.json")):
+                    if not f.name.startswith("."):
+                        put(kind, f)
+        for rec in self.run.records:
+            for field, kind in (("extraction_path", "extraction"),
+                                ("appraisal_path", "appraisal")):
+                rel = rec.get(field)
+                if rel:
+                    put(kind, run_dir / rel)
+        return out
+
+    @staticmethod
+    def _spans_of(container) -> list[dict]:
+        spans = (container or {}).get("spans")
+        return [s for s in spans if isinstance(s, dict)] if isinstance(spans, list) else []
+
+    def _collect_kernel_inputs(self) -> None:
+        """Gather span records, span gaps (R16) and referenced source_ids from the run."""
+        spans: list[dict] = []          # {artifact, kind, field, span, excerpt, path}
+        gaps: list[dict] = []           # R16 'unverified' records/fields with no spans
+        unreadable: list[str] = []
+        referenced: list[str] = []
+
+        def note_source(sid) -> None:
+            if isinstance(sid, str) and sid and sid not in referenced:
+                referenced.append(sid)
+
+        def take(artifact: str, kind: str, field: str | None, span: dict,
+                 excerpt: str | None, path: Path) -> None:
+            spans.append({"artifact": artifact, "kind": kind, "field": field,
+                          "span": span, "excerpt": excerpt,
+                          "path": self._rel(path)})
+            note_source(span.get("source_id"))
+
+        for kind, path in self._kernel_record_files():
+            try:
+                rec = read_json(path)
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+                unreadable.append(f"{self._rel(path)}: {exc}")
+                continue
+            if not isinstance(rec, dict):
+                unreadable.append(f"{self._rel(path)}: not a JSON object")
+                continue
+            eid = rec.get("evidence_id") or rec.get("pmid") or path.stem
+            artifact = f"{kind}:{eid}"
+
+            record_spans = self._spans_of(rec)
+            for span in record_spans:
+                take(artifact, kind, "spans", span, None, path)
+            for i, q in enumerate(rec.get("quotes") or []):
+                # R17: an agent-written quote is an excerpt claim and is re-sliced, never trusted.
+                if isinstance(q, dict) and isinstance(q.get("text"), str) and q.get("source_id"):
+                    take(artifact, kind, f"quotes[{i}]",
+                         {"source_id": q.get("source_id"), "start": q.get("start"),
+                          "end": q.get("end")}, q["text"], path)
+
+            if kind == "extraction":
+                if not record_spans and any(rec.get(f) not in (None, [], "")
+                                            for f in self.NARRATIVE_FIELDS):
+                    gaps.append({"artifact": artifact, "field": "spans",
+                                 "detail": "narrative factual fields with no record-level "
+                                           "spans (R19)"})
+                for i, oc in enumerate(rec.get("outcomes") or []):
+                    if not isinstance(oc, dict):
+                        continue
+                    oc_spans = self._spans_of(oc)
+                    for span in oc_spans:
+                        take(artifact, kind, f"outcomes[{i}]", span, None, path)
+                    if not oc_spans and any(oc.get(f) is not None
+                                            for f in self.OUTCOME_CLAIM_FIELDS):
+                        gaps.append({"artifact": artifact, "field": f"outcomes[{i}]",
+                                     "detail": "effect estimate with no span (R19)"})
+            else:
+                for i, dom in enumerate(rec.get("domains") or []):
+                    if not isinstance(dom, dict):
+                        continue
+                    dom_spans = self._spans_of(dom)
+                    for span in dom_spans:
+                        take(artifact, kind, f"domains[{i}]", span, None, path)
+                    if not dom_spans and dom.get("judgement") not in (None, "unclear"):
+                        gaps.append({"artifact": artifact, "field": f"domains[{i}]",
+                                     "detail": f"judgement {dom.get('judgement')!r} with no "
+                                               f"span (R19)"})
+
+        for rec in self.run.records:                       # R14 corpus-registered snapshots
+            for sid in rec.get("source_ids") or []:
+                note_source(sid)
+
+        on_disk = self.store.list_snapshots() if self.store is not None else []
+        self.kernel = {
+            "spans": spans,
+            "gaps": gaps,
+            "unreadable_records": unreadable,
+            "referenced": referenced,
+            "on_disk": on_disk,
+            "sources_dir": (self.run.run_dir / "sources").is_dir(),
+        }
+        # A pre-kernel run: no snapshot store and nothing that points at one.
+        self.kernel["pre_kernel"] = (not on_disk and not referenced and not spans)
+
+    def _rel(self, path: Path) -> str:
+        try:
+            return str(path.relative_to(self.run.run_dir))
+        except ValueError:
+            return str(path)
+
+    def run_kernel_checks(self) -> None:
+        """C-SNAPSHOT, C-SPAN, C-FRESH-FETCH, C-ASSEMBLER — always run, always reported."""
+        if store_mod is None:
+            for check_id in KERNEL_CHECKS:
+                self.add(check_id, FAIL if self.gate else SKIPPED,
+                         "skipped: scripts/store.py could not be imported, so the evidence "
+                         "kernel cannot be checked" + self._gate_note(), skipped=not self.gate)
+            self.kernel = {"spans": [], "gaps": [], "unreadable_records": [], "referenced": [],
+                           "on_disk": [], "sources_dir": False, "pre_kernel": True,
+                           "store_unavailable": True}
+            return
+        try:
+            self.store = store_mod.Store(self.run.run_dir, wiki_root=self.wiki)
+            self._collect_kernel_inputs()
+        except Exception as exc:  # noqa: BLE001 - a broken store must not abort the other checks
+            for check_id in KERNEL_CHECKS:
+                self.add(check_id, self.gated(),
+                         f"evidence-kernel inputs could not be gathered: "
+                         f"{type(exc).__name__}: {exc}")
+            self.kernel.setdefault("pre_kernel", False)
+            return
+        self.check_snapshot()
+        self.check_span()
+        self.check_fresh_fetch()
+        self.check_assembler()
+
+    def _gate_note(self) -> str:
+        return "; gate on (--gate)" if self.gate else "; gate off (R20): reported, not blocking"
+
+    # -- C-SNAPSHOT --------------------------------------------------------
+
+    def check_snapshot(self) -> None:
+        """Every referenced snapshot exists and rehashes. Tampering is never a warning."""
+        k = self.kernel
+        if k["pre_kernel"]:
+            self.add("C-SNAPSHOT", FAIL if self.gate else SKIPPED,
+                     "skipped: no snapshot store — this run has no sources/ directory and no "
+                     "record references a source_id (pre-kernel run)" + self._gate_note(),
+                     skipped=not self.gate)
+            return
+
+        ids = list(dict.fromkeys(list(k["referenced"]) + list(k["on_disk"])))
+        bad: list[str] = []
+        intact: set[str] = set()
+        for sid in ids:
+            res = self.store.verify_snapshot(sid)
+            if res["ok"]:
+                intact.add(sid)
+            else:
+                bad.append(f"{sid[:20]}…: {res['reason_code']} — {short(res['detail'], 120)}")
+        k["snapshot_ok"] = intact
+        ok = len(intact)
+
+        parts = [f"{ok}/{len(ids)} snapshots verify (content_hash and source_id recomputed "
+                 f"from url+text)"]
+        if bad:
+            # Never downgraded by the gate flag (R20 / schema §9).
+            parts.append(f"{len(bad)} tampered or missing: " + "; ".join(bad[:4]))
+            parts.append("hard fail regardless of the gate; OKF promotion blocked")
+            self.add("C-SNAPSHOT", FAIL, "; ".join(parts), tamper=True)
+            return
+        if not ids:
+            self.add("C-SNAPSHOT", FAIL if self.gate else SKIPPED,
+                     "skipped: sources/ exists but holds no snapshots and nothing references "
+                     "one" + self._gate_note(), skipped=not self.gate)
+            return
+        self.add("C-SNAPSHOT", PASS, "; ".join(parts))
+
+    # -- C-SPAN ------------------------------------------------------------
+
+    def check_span(self) -> None:
+        """Range, the 2000-character cap, and excerpt equality against the re-slice."""
+        k = self.kernel
+        if k["pre_kernel"]:
+            self.add("C-SPAN", FAIL if self.gate else SKIPPED,
+                     "skipped: no claim spans and no snapshot store (pre-kernel run); legacy "
+                     "records are unverified, not tampered (R16)" + self._gate_note(),
+                     skipped=not self.gate)
+            return
+
+        hard: list[str] = []          # out of range / over-length / excerpt mismatch
+        soft: list[str] = []          # gate-controlled (schema errors, access disagreement)
+        blocked: list[str] = []       # unresolvable because C-SNAPSHOT already failed
+        warns: list[str] = []
+        ok = 0
+        for entry in k["spans"]:
+            res = self.store.verify_span(entry["span"], excerpt=entry["excerpt"])
+            where = f"{entry['artifact']}.{entry['field']}"
+            if res["ok"]:
+                ok += 1
+                for w in res["warnings"]:
+                    warns.append(f"{where}: {short(w, 110)}")
+                continue
+            line = f"{where}: {res['reason_code']} — {short(res['detail'], 130)}"
+            if res["reason_code"] in self.SPAN_TAMPER_CODES:
+                hard.append(line)
+            elif res["reason_code"] in self.SNAPSHOT_CODES:
+                blocked.append(line)
+            else:
+                soft.append(line)
+
+        k["spans_checked"] = len(k["spans"])
+        k["spans_ok"] = ok
+        parts = [f"{ok}/{len(k['spans'])} claim spans re-slice cleanly "
+                 f"(0 <= start < end <= len(text), <= {store_mod.MAX_SPAN_CHARS} chars, "
+                 f"excerpt == snapshot.text[start:end])"]
+        status = PASS
+        if hard:
+            status = FAIL      # never downgraded by the gate (R20)
+            parts.append(f"{len(hard)} span(s) fail hard regardless of the gate: "
+                         + "; ".join(hard[:4]))
+        if blocked:
+            parts.append(f"{len(blocked)} span(s) unresolvable because their snapshot failed "
+                         f"C-SNAPSHOT: " + "; ".join(blocked[:2]))
+            status = self.worst(status, FAIL)
+        if soft or k["unreadable_records"]:
+            issues = soft + [f"unreadable record {u}" for u in k["unreadable_records"]]
+            status = self.worst(status, self.gated())
+            parts.append(f"{len(issues)} malformed span record(s): " + "; ".join(issues[:4]))
+        if k["gaps"]:
+            status = self.worst(status, self.gated())
+            parts.append(f"{len(k['gaps'])} record/field(s) that should carry spans carry none "
+                         f"— unverified, not tampered (R16): "
+                         + "; ".join(f"{g['artifact']}.{g['field']}" for g in k["gaps"][:4]))
+        if warns:
+            status = self.worst(status, WARN)
+            parts.append("; ".join(warns[:3]))
+        if status != PASS:
+            parts.append(self._gate_note().lstrip("; "))
+        self.add("C-SPAN", status, "; ".join(parts))
+
+    # -- C-FRESH-FETCH -----------------------------------------------------
+
+    def check_fresh_fetch(self) -> None:
+        """A 'supported' verdict needs a fresh retrieval for every cited source (R15)."""
+        k = self.kernel
+        if k["pre_kernel"]:
+            self.add("C-FRESH-FETCH", FAIL if self.gate else SKIPPED,
+                     "skipped: no events.jsonl / snapshot store to check freshness against "
+                     "(pre-kernel run)" + self._gate_note(), skipped=not self.gate)
+            return
+
+        cited = [sid for sid in k["referenced"]]
+        if not cited:
+            cited = list(k["on_disk"])
+        stale: list[str] = []
+        fresh_ids: list[str] = []
+        pdf_exception = 0
+        for sid in cited:
+            verdict = self.store.freshness(sid)
+            if verdict["fresh"]:
+                fresh_ids.append(sid)
+                try:
+                    if self.store.read_snapshot(sid)["origin"] == "user-supplied-pdf":
+                        pdf_exception += 1
+                except Exception:  # noqa: BLE001 - already reported by C-SNAPSHOT
+                    pass
+            else:
+                stale.append(f"{sid[:20]}…: {verdict['reason_code']} — "
+                             f"{short(verdict['detail'], 110)}")
+
+        k["fresh_sources"] = len(fresh_ids)
+        k["stale_sources"] = len(stale)
+        parts = [f"{len(fresh_ids)}/{len(cited)} cited sources have a fresh retrieval logged in "
+                 f"this run (R15)"]
+        if pdf_exception:
+            parts.append(f"{pdf_exception} via the user-supplied-pdf exception "
+                         f"(local_pdf event + matching asset hash)")
+        if not stale:
+            self.add("C-FRESH-FETCH", PASS, "; ".join(parts))
+            return
+        if self.store.created_at is None:
+            parts.append("config.json carries no created_at, so freshness fails closed (R15)")
+        parts.append(f"{len(stale)} without one: " + "; ".join(stale[:4]))
+        parts.append("affected claims are downgraded to unverified" if not self.gate
+                     else "supported verdicts blocked")
+        parts.append(self._gate_note().lstrip("; "))
+        self.add("C-FRESH-FETCH", self.gated(), "; ".join(parts))
+
+    # -- C-ASSEMBLER -------------------------------------------------------
+
+    def check_assembler(self) -> None:
+        """Reads outputs/result.json (schema §13); absent is skipped/warn with the gate off."""
+        path = self.run.run_dir / "outputs" / "result.json"
+        if not path.exists():
+            self.add("C-ASSEMBLER", FAIL if self.gate else SKIPPED,
+                     "skipped: outputs/result.json absent — scripts/assemble.py has not run "
+                     "for this run (R20/R24)" + self._gate_note(), skipped=not self.gate)
+            return
+        try:
+            data = read_json(path)
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+            self.add("C-ASSEMBLER", self.gated(),
+                     f"outputs/result.json is unreadable: {exc}{self._gate_note()}")
+            return
+        if not isinstance(data, dict):
+            self.add("C-ASSEMBLER", self.gated(),
+                     "outputs/result.json is not a JSON object (schema §13)" + self._gate_note())
+            return
+
+        missing = [f for f in ("schema_version", "run_slug", "generated_at", "gate", "counts",
+                               "accepted", "diagnostics", "sources") if f not in data]
+        diagnostics = data.get("diagnostics") if isinstance(data.get("diagnostics"), dict) else {}
+        unresolved = diagnostics.get("unresolved") or []
+        accepted = data.get("accepted") or []
+        counts = data.get("counts") if isinstance(data.get("counts"), dict) else {}
+        self.kernel["assembler"] = {
+            "accepted": len(accepted) if isinstance(accepted, list) else None,
+            "unresolved": len(unresolved) if isinstance(unresolved, list) else None,
+            "gate": data.get("gate"),
+        }
+        parts = [f"result.json: {len(accepted) if isinstance(accepted, list) else '?'} accepted, "
+                 f"{len(unresolved) if isinstance(unresolved, list) else '?'} unresolved, "
+                 f"{counts.get('spans_checked', '?')} spans checked by the assembler"]
+        status = PASS
+        if missing:
+            status = self.gated()
+            parts.append("result.json is not schema-§13 shaped, missing: " + ", ".join(missing))
+        if unresolved:
+            status = self.worst(status, self.gated())
+            reasons = diagnostics.get("counts_by_reason") or {}
+            if isinstance(unresolved, list):
+                shown = [f"{u.get('artifact_id')}({u.get('reason_code')})"
+                         for u in unresolved[:4] if isinstance(u, dict)]
+                parts.append(f"{len(unresolved)} artifact(s) unresolved: " + ", ".join(shown))
+            if reasons:
+                parts.append("by reason: " + ", ".join(f"{k}={v}" for k, v in
+                                                       sorted(reasons.items())))
+        if status != PASS:
+            parts.append(self._gate_note().lstrip("; "))
+        self.add("C-ASSEMBLER", status, "; ".join(parts))
+
+    # -- summary -----------------------------------------------------------
+
+    def kernel_summary(self) -> dict:
+        k = self.kernel or {}
+        by_id = {c["check_id"]: c["status"] for c in self.checks}
+        return {
+            "gate": {"enabled": self.gate, "source": self.gate_source, "flag": "--gate"},
+            "pre_kernel": bool(k.get("pre_kernel", True)),
+            "snapshots": len(k.get("on_disk") or []),
+            "sources_referenced": len(k.get("referenced") or []),
+            "spans_checked": k.get("spans_checked", len(k.get("spans") or [])),
+            "spans_ok": k.get("spans_ok", 0),
+            "span_gaps": len(k.get("gaps") or []),
+            "fresh_sources": k.get("fresh_sources"),
+            "stale_sources": k.get("stale_sources"),
+            "assembler": k.get("assembler"),
+            "checks": {cid: by_id.get(cid) for cid in KERNEL_CHECKS},
+        }
+
 
 # --------------------------------------------------------------------------- output
 
 
 def markdown_summary(result: dict, run_dir: Path, report_path: Path) -> str:
+    kernel = result.get("evidence_kernel") or {}
+    gate = kernel.get("gate") or {}
     lines = ["# Verification report", "",
              f"- Run: `{run_dir}`",
              f"- Report: `{report_path}`",
-             f"- OKF validation: **{result['okf_validation']}**",
-             "", "| Check | Status | Detail |", "|---|---|---|"]
+             f"- OKF validation: **{result['okf_validation']}**"]
+    if gate:
+        lines.append(f"- Evidence-kernel gate: **{'on' if gate.get('enabled') else 'off'}** "
+                     f"({gate.get('source', 'default')})")
+    lines += ["", "| Check | Status | Detail |", "|---|---|---|"]
     for c in result["checks"]:
         detail = c["detail"].replace("|", "\\|")
         lines.append(f"| `{c['check_id']}` | {c['status'].upper()} | {detail} |")
@@ -1275,6 +1744,28 @@ def markdown_summary(result: dict, run_dir: Path, report_path: Path) -> str:
         lines += ["", "## Unlabelled abstract-only claims", ""]
         lines += [f"- `{a['location']}` — {a['evidence_id']}" for a in unlabelled]
     return "\n".join(lines) + "\n"
+
+
+def resolve_gate(run_dir: Path, flag: bool | None) -> tuple[bool, str]:
+    """(enabled, source) for the evidence-kernel gate.
+
+    `--gate` / `--no-gate` win; otherwise `config.json` `gates.evidence_kernel`, then a
+    top-level `gate`, then the R20 default: **off**.
+    """
+    if flag is not None:
+        return bool(flag), "--gate" if flag else "--no-gate"
+    path = run_dir / "config.json"
+    try:
+        cfg = read_json(path)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return False, "default"
+    if isinstance(cfg, dict):
+        gates = cfg.get("gates")
+        if isinstance(gates, dict) and isinstance(gates.get("evidence_kernel"), bool):
+            return gates["evidence_kernel"], "config.json gates.evidence_kernel"
+        if isinstance(cfg.get("gate"), bool):
+            return cfg["gate"], "config.json gate"
+    return False, "default"
 
 
 def atomic_write(path: Path, text: str) -> None:
@@ -1299,7 +1790,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     data = RunData(run_dir)
     report = Report(report_path)
     wiki = Path(args.wiki).expanduser() if args.wiki else None
-    verifier = Verifier(data, report, wiki)
+    gate, gate_source = resolve_gate(run_dir, args.gate)
+    verifier = Verifier(data, report, wiki, gate=gate, gate_source=gate_source)
     result = verifier.run_all()
 
     out_path = run_dir / "outputs" / "verification.json"
@@ -1318,8 +1810,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"verification -> {out_path}")
         print(f"{len(failed)} fail, "
               f"{sum(1 for c in result['checks'] if c['status'] == WARN)} warn, "
+              f"{sum(1 for c in result['checks'] if c['status'] == SKIPPED)} skipped, "
               f"{sum(1 for c in result['checks'] if c['status'] == PASS)} pass; "
-              f"okf_validation={result['okf_validation']}")
+              f"okf_validation={result['okf_validation']}; "
+              f"evidence-kernel gate={'on' if gate else 'off'} ({gate_source})")
         if failed:
             print("FAILED — report.md is preserved and marked provisional; "
                   "OKF promotion is blocked.")
@@ -1341,6 +1835,13 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--report", help="report path (default: <run-dir>/outputs/report.md)")
     r.add_argument("--json", action="store_true", help="print the verification JSON to stdout")
     r.add_argument("--markdown", help="also write a human-readable summary here")
+    r.add_argument("--gate", dest="gate", action="store_true", default=None,
+                   help="enforce the evidence-kernel checks (C-SNAPSHOT, C-SPAN, "
+                        "C-FRESH-FETCH, C-ASSEMBLER) as hard failures blocking stage 8. "
+                        "Default off (R20); config.json gates.evidence_kernel also sets it. "
+                        "Snapshot/span tamper failures are hard failures either way.")
+    r.add_argument("--no-gate", dest="gate", action="store_false",
+                   help="force the gate off even if config.json enables it")
     r.set_defaults(func=cmd_run)
     return p
 
