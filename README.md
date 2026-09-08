@@ -148,6 +148,7 @@ All under `scripts/`, all `python3`.
 | `render.py` | `report.md` → `refs.bib` + `report.qmd` → `quarto render` | `bib`, `qmd`, `pdf`, `docx`, `html`, `all` |
 | `html_report.py` | Self-contained HTML deliverable from a run directory | `build` |
 | `verify.py` | Final consistency pass; writes `outputs/verification.json`, never edits `report.md`. Exit 0 = no failures (warnings allowed), 1 = a check failed, 2 = fatal | `run` |
+| `status.py` | Run status overview: current stage progress and corpus table (PMID, title, authors, PDF access status) | `--table`, `--missing`, `--limit` |
 
 `corpus.py task` sub-subcommands: `create`, `claim`, `complete`, `fail`, `block`, `cancel`,
 `reopen`, `list`, `next`, `show`, `stats`.
@@ -155,6 +156,36 @@ All under `scripts/`, all `python3`.
 Verifier checks: `C-CITE-RESOLVE`, `C-CORPUS-COMPLETE`, `C-SEARCH-LOG`, `C-RETRACTION`,
 `C-FULLTEXT`, `C-HYPOTHESIS-WALL`, `C-PRISMA`, `C-PREPRINT`, `C-ATTRIBUTION`, `C-SECTIONS`,
 `C-PROVISIONAL`, `C-OKF` (skipped unless `--wiki` is given).
+
+### Using status.py for run overview
+
+Quick progress check with stage tracking and record table:
+
+```bash
+# Show current stage, corpus summary, and question
+python3 scripts/status.py <run-dir>
+
+# Show full corpus table (PMID, title, authors, PDF status)
+python3 scripts/status.py <run-dir> --table
+
+# Show only records without full text (for quarantine → inbox workflow)
+python3 scripts/status.py <run-dir> --missing
+
+# Limit table to first N records (default 100)
+python3 scripts/status.py <run-dir> --table --limit 50
+
+# Skip summary, table only
+python3 scripts/status.py <run-dir> --table --no-summary
+```
+
+The table columns are:
+- **PMID**: PubMed identifier
+- **Title**: Article title (truncated at 70 chars)
+- **Authors**: First 3 authors, "et al" if more (last name + initial)
+- **PDF Status**: ✓ PDF (fulltext), ~ Abstract (abstract_only), ✗ Missing
+- **Screen**: Include/Exclude/Unclear (screening decision)
+- **Ext**: ✓ if data extracted
+- **Apr**: ✓ if critically appraised
 
 ## 9. Requirements
 
