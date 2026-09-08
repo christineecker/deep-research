@@ -50,6 +50,9 @@ import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _common import now_iso  # noqa: E402  (sibling module, stdlib-only)
+
 SCHEMA_VERSION = 1
 TOOL = "render.py/0.1"
 DEFAULT_BIB_NAME = "refs.bib"
@@ -73,10 +76,6 @@ class RenderError(Exception):
 
 
 # --------------------------------------------------------------------------- io
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
 
 def warn(msg: str) -> None:
     print(f"warning: {msg}", file=sys.stderr)

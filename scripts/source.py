@@ -44,6 +44,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _common import emit_json as _emit  # noqa: E402  (sibling module, stdlib-only)
 import store  # noqa: E402  (sibling module, stdlib-only)
 from store import (  # noqa: E402
     MAX_SPAN_CHARS,
@@ -427,12 +428,6 @@ def acquire(url: str, *, http: Http | None = None) -> dict:
 
 
 # ----------------------------------------------------------------- commands ----
-
-
-def _emit(payload: dict, *, code: int = 0) -> int:
-    print(json.dumps(payload, indent=2, ensure_ascii=False))
-    return code
-
 
 def _paper(args) -> dict | None:
     if getattr(args, "no_paper", False):

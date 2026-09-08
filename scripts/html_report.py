@@ -56,6 +56,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from string import Template
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _common import read_json  # noqa: E402  (sibling module, stdlib-only)
+
 SCHEMA_VERSION = 1
 GENERATOR = "deep-research/html_report.py 0.1"
 NOT_STATED = "not stated"
@@ -251,11 +254,6 @@ def trunc(s: str, n: int) -> str:
 
 
 # --------------------------------------------------------------------- io
-
-def read_json(path: Path):
-    with path.open("r", encoding="utf-8") as fh:
-        return json.load(fh)
-
 
 def read_jsonl(path: Path) -> list[dict]:
     out: list[dict] = []

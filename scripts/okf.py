@@ -33,6 +33,9 @@ import tempfile
 import unicodedata
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _common import read_json, slugify, utcnow  # noqa: E402  (sibling module, stdlib-only)
+
 # `store.py` is the single owner of snapshot hashing, span checking and freshness
 # (VALIDATION_ARCHITECTURE_PLAN.md decision D5). It is never reimplemented here.
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -614,23 +617,8 @@ class Fence:
 
 # --------------------------------------------------------------- helpers -------
 
-
-def utcnow() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def today() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
-
-
-def slugify(text: str, maxlen: int = 80) -> str:
-    text = unicodedata.normalize("NFKD", str(text or ""))
-    text = text.encode("ascii", "ignore").decode("ascii").lower()
-    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
-    if len(text) > maxlen:
-        text = text[:maxlen].rstrip("-")
-    return text or "untitled"
-
 
 def doi_slug(doi: str) -> str:
     return slugify(str(doi).replace("/", "-").replace(":", "-").replace(".", "-"))
@@ -656,12 +644,6 @@ def first_sentence(text: str, limit: int = 220) -> str:
     if len(text) > limit:
         text = text[:limit].rsplit(" ", 1)[0] + "…"
     return text
-
-
-def read_json(path: Path):
-    with open(path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
-
 
 def read_jsonl(path: Path) -> list[dict]:
     out = []

@@ -119,6 +119,9 @@ import sys
 import unicodedata
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _common import read_json, slugify  # noqa: E402  (sibling module, stdlib-only)
+
 SCHEMA_VERSION = 1
 HERE = Path(__file__).resolve().parent
 
@@ -148,11 +151,6 @@ class FatalError(Exception):
 
 # --------------------------------------------------------------------------- utils
 
-
-def read_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 def read_jsonl(path: Path) -> list[dict]:
     if not path.exists():
         return []
@@ -166,16 +164,6 @@ def read_jsonl(path: Path) -> list[dict]:
         except json.JSONDecodeError as exc:
             raise FatalError(f"{path}:{n}: malformed JSON line ({exc})")
     return out
-
-
-def slugify(text: str, maxlen: int = 80) -> str:
-    text = unicodedata.normalize("NFKD", str(text or ""))
-    text = text.encode("ascii", "ignore").decode("ascii").lower()
-    text = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
-    if len(text) > maxlen:
-        text = text[:maxlen].rstrip("-")
-    return text or "untitled"
-
 
 def doi_slug(doi: str) -> str:
     """Same derivation as okf.py, so footnote keys line up with sources[].id."""

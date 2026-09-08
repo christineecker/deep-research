@@ -55,6 +55,9 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _common import now_iso, read_json  # noqa: E402  (sibling module, stdlib-only)
+
 SCHEMA_VERSION = 1
 DEFAULT_TITLE_THRESHOLD = 0.93
 
@@ -116,11 +119,6 @@ class StateError(Exception):
 
 # ----------------------------------------------------------------------- utilities
 
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def canonical_json(obj) -> str:
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -179,12 +177,6 @@ def read_jsonl(path: Path, *, strict: bool = False) -> list[dict]:
                 continue
             out.append(obj)
     return out
-
-
-def read_json(path: Path):
-    with open(path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
-
 
 def warn(msg: str) -> None:
     print(f"warn: {msg}", file=sys.stderr)

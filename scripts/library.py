@@ -43,6 +43,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _common import utcnow  # noqa: E402  (sibling module, stdlib-only)
 try:  # the evidence kernel is additive: the library must work without it
     import store  # noqa: E402  (sibling module, stdlib-only)
 except Exception:  # pragma: no cover - store.py is a sibling and always present
@@ -89,11 +90,6 @@ GITIGNORE_SUPERSEDED = {"assets", "assets/", "assets/*", "/assets", "/assets/", 
 
 
 # ---------------------------------------------------------------- helpers ------
-
-
-def utcnow() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
 
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
