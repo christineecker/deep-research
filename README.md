@@ -182,7 +182,7 @@ The table columns are:
 - **PMID**: PubMed identifier
 - **Title**: Article title (truncated at 70 chars)
 - **Authors**: First 3 authors, "et al" if more (last name + initial)
-- **PDF Status**: ✓ PDF (fulltext), ~ Abstract (abstract_only), ✗ Missing
+- **PDF Status**: ✓ Fulltext (PDF or HTML obtained), ~ Abstract (abstract_only), ✗ Missing
 - **Screen**: Include/Exclude/Unclear (screening decision)
 - **Ext**: ✓ if data extracted
 - **Apr**: ✓ if critically appraised

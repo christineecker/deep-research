@@ -42,7 +42,7 @@ STAGE_LABELS = {
 }
 
 FULLTEXT_ICONS = {
-    "fulltext": "✓ PDF",
+    "fulltext": "✓ Fulltext",
     "abstract_only": "~ Abstract",
     "missing": "✗ Missing",
 }
