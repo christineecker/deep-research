@@ -1,0 +1,71 @@
+@comment{
+  refs.bib — GENERATED FILE. Do not hand-edit.
+
+  scripts/render.py writes this file from corpus.jsonl (one entry per INCLUDED corpus record)
+  alongside outputs/report.qmd. Regenerating overwrites it.
+
+  Citation key = the corpus `evidence_id` with the separator and any punctuation stripped:
+      pmid:12345678        -> pmid12345678
+      doi:10.1000/example  -> doi101000example
+      pmcid:PMC1234567     -> pmcidPMC1234567
+      url:<sha16>          -> url<sha16>
+  Keys are stable across resumes because evidence_id is (schema.md S9). report.qmd cites them
+  as [@pmid12345678]; report.md uses markdown footnotes with the same keys.
+
+  Entry type by corpus `article_types` / `source`:
+      journal article, RCT, review, meta-analysis  -> @article
+      preprint (is_preprint: true)                 -> @misc with note = {Preprint. Not peer reviewed.}
+      guideline / report / web                     -> @misc with howpublished + urldate
+      book chapter                                 -> @incollection
+
+  Field rules (schema.md S3): a value PubMed did not supply is OMITTED, never guessed and never
+  written as "N/A" or "". No entry is emitted for a record that was not retrieved this run.
+  Non-standard fields pmid / pmcid are carried through for traceability; BibTeX styles ignore
+  them, and biblatex/CSL keep doi and url.
+}
+
+@article{pmid12345678,
+  author       = {Smith, Jane A. and Doe, Richard and M{\"u}ller, Katrin},
+  title        = {Cognitive behavioral therapy for adolescent depression: a randomized trial},
+  journal      = {J Example Med},
+  year         = {2024},
+  month        = {6},
+  volume       = {12},
+  number       = {3},
+  pages        = {101--115},
+  doi          = {10.1000/example},
+  pmid         = {12345678},
+  pmcid        = {PMC1234567},
+  issn         = {1234-5678},
+  url          = {https://pubmed.ncbi.nlm.nih.gov/12345678/},
+  keywords     = {adolescents, remission},
+  note         = {Full text obtained via PMC (source tier 1).}
+}
+
+@comment{
+  Preprint pattern — flagged loudly per PLAN.md §6:
+
+  @misc{doi101101202401123456,
+    author       = {Example, Ada},
+    title        = {A preprint title},
+    year         = {2025},
+    doi          = {10.1101/2025.01.12.3456},
+    url          = {https://www.medrxiv.org/content/10.1101/2025.01.12.3456v1},
+    howpublished = {medRxiv},
+    note         = {Preprint. Not peer reviewed.}
+  }
+
+  Abstract-only record — the note is required so the rendered bibliography carries the same
+  caveat the report text does:
+
+  @article{pmid23456789,
+    author  = {Roe, Sam},
+    title   = {An article whose full text could not be obtained},
+    journal = {J Other Med},
+    year    = {2023},
+    doi     = {10.1000/other},
+    pmid    = {23456789},
+    url     = {https://pubmed.ncbi.nlm.nih.gov/23456789/},
+    note    = {Abstract only; full text not obtained.}
+  }
+}
