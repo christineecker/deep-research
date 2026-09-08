@@ -5,8 +5,7 @@ append-only retrieval log, an assembler gate, and a publisher integrity prefligh
 
 Contracts: `references/schema.md` §10 (`snapshot record`), §11 (`event record`), §12
 (`claim span record`), §13 (`assembler result`), §9 (verifier checks `C-SNAPSHOT`, `C-SPAN`,
-`C-FRESH-FETCH`, `C-ASSEMBLER`), resolutions R10–R24. Design source:
-`references/evidence-kernel.md`. Scripts (built later, against those contracts):
+`C-FRESH-FETCH`, `C-ASSEMBLER`), resolutions R10–R24. Scripts implementing them:
 `scripts/source.py`, `scripts/store.py`, `scripts/assemble.py`.
 
 This layer does not replace the PubMed pipeline. `eutils.py`, `fulltext.py` and `library.py` keep
@@ -178,8 +177,7 @@ corrected, because a silent correction hides the fact that an agent asserted som
 `gates.evidence_kernel` / `--gate` absent it does not block Stage 8. `result.json` always records
 `gate.verdict`, and the coordinator always surfaces it. Two things are never downgraded by the
 flag: `C-SNAPSHOT` and `C-SPAN` tamper failures block OKF promotion regardless. The gate flips to
-blocking-by-default only after a live dry run passes (`references/evidence-kernel.md` migration
-step 9).
+blocking-by-default only after a live dry run passes.
 
 **Ordering (R24).** `assemble.py` → `verify.py` (reads `result.json`, emits `C-ASSEMBLER` among
 its checks into `outputs/verification.json`) → render / HTML report → `okf.py promote --check` →

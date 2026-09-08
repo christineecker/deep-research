@@ -109,14 +109,14 @@ chars. DOI slugs replace `/`, `:`, `.` with `-` (`10.1000/example` → `doi-10-1
 | `title` | string | yes | Short human label for the source. |
 
 Timestamps are ISO-8601 UTC with `Z`, matching `references/schema.md` rule S2. Unknown values are
-omitted or `null` consistently — never invented (`references/okf-bundle.md`).
+omitted or `null` consistently — never invented.
 
 ---
 
 ## 3. PubMed bibliographic block (canonical example)
 
 Required on every PubMed-derived concept (`type: Study` and any concept whose `resource` is a
-PubMed record). Reproduced verbatim from `references/okf-bundle.md` as the canonical example:
+PubMed record). The canonical example:
 
 ```yaml
 ---

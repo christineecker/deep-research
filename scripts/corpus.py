@@ -670,7 +670,7 @@ def compute_inputs_hash(args, prev: dict | None) -> str | None:
 
 
 def make_task_record(*, task_id, stage, status, inputs_hash, attempts, worker,
-                     output_path, error, created_at) -> dict:
+                     output_path, error, created_at, summary=None) -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
         "task_id": task_id,
@@ -681,6 +681,7 @@ def make_task_record(*, task_id, stage, status, inputs_hash, attempts, worker,
         "worker": worker,
         "output_path": output_path,
         "error": error,
+        "summary": summary,
         "created_at": created_at,
         "updated_at": now_iso(),
     }
@@ -1412,19 +1413,26 @@ def cmd_guard(args) -> int:
         and not active            # work in flight is not a stall
     )
     pending = [t for t, r in state.items() if r.get("status") in ("pending", "failed")]
+    # A board with nothing queued and nothing in flight is idle, not stalled: the stage
+    # finished and the next one has not been dispatched. Calling it a stall would send a
+    # healthy run to a provisional report.
+    idle = not pending and not active
+    no_progress = bool(stalled or frozen) and not idle
     result = {
         "run_dir": str(run_dir),
         "window": args.window,
         "probes_recorded": len(probes),
         "probe": probe,
-        "no_progress": bool(stalled or frozen),
-        "reason": ("repeated task assignment with no newly completed/blocked work"
+        "no_progress": no_progress,
+        "reason": (None if idle else
+                   "repeated task assignment with no newly completed/blocked work"
                    if stalled else
                    "no taskboard activity at all across the window" if frozen else None),
+        "idle": idle,
         "pending_or_failed": sorted(pending),
         "active": active,
-        "recommendation": ("bail-to-verification-with-provisional-report"
-                           if (stalled or frozen) else "continue"),
+        "recommendation": ("bail-to-verification-with-provisional-report" if no_progress
+                           else "dispatch-next-stage-or-finish" if idle else "continue"),
     }
     print(json.dumps(result, indent=2))
     return 1 if result["no_progress"] else 0
@@ -1434,7 +1442,7 @@ def cmd_guard(args) -> int:
 
 
 def _task_transition(args, new_status: str, *, worker=None, output_path=None,
-                     error=None, bump_attempts=False) -> dict:
+                     error=None, summary=None, bump_attempts=False) -> dict:
     run_dir = Path(args.run_dir)
     task_id = args.task_id
     stage, _kind, _key = validate_task_id(task_id)
@@ -1458,6 +1466,8 @@ def _task_transition(args, new_status: str, *, worker=None, output_path=None,
             output_path=output_path if output_path is not None else (
                 prev.get("output_path") if prev else None),
             error=error,
+            summary=summary if summary is not None else (
+                prev.get("summary") if prev else None),
             created_at=created_at,
         )
         board.write(rec)
@@ -1517,7 +1527,8 @@ def cmd_task_claim(args) -> int:
 
 def cmd_task_complete(args) -> int:
     rec = _task_transition(args, "completed", worker=args.worker,
-                           output_path=args.output_path, error=None)
+                           output_path=args.output_path, error=None,
+                           summary=getattr(args, "summary", None))
     print(json.dumps(rec, indent=2))
     return 0
 
@@ -1574,6 +1585,10 @@ def cmd_task_list(args) -> int:
         for r in rows:
             print(f"{r['task_id']:<44} {r['status']:<10} {r.get('attempts', 0):>3} "
                   f"{str(r.get('worker') or '-'):<14} {r.get('output_path') or '-'}")
+            if r.get("summary"):
+                print(f"{'':<44} └─ {r['summary']}")
+            if r.get("error"):
+                print(f"{'':<44} !! {r['error']}")
     return 0
 
 
@@ -1724,7 +1739,7 @@ def build_parser() -> argparse.ArgumentParser:
     tsub = tp.add_subparsers(dest="task_cmd", required=True)
 
     def task_cmd(name, help_, func, *, worker=False, output=False, error=False,
-                 inputs=True):
+                 summary=False, inputs=True):
         q = tsub.add_parser(name, help=help_)
         add_run_dir(q)
         q.add_argument("--task-id", required=True, help="<stage>:<key-kind>:<key>")
@@ -1734,6 +1749,9 @@ def build_parser() -> argparse.ArgumentParser:
             q.add_argument("--output-path", help="run-relative result file path")
         if error:
             q.add_argument("--error", help="single-line diagnostic")
+        if summary:
+            q.add_argument("--summary",
+                           help="the subagent receipt's one-line summary, stored on the task")
         if inputs:
             add_inputs(q)
         q.set_defaults(func=func)
@@ -1743,7 +1761,7 @@ def build_parser() -> argparse.ArgumentParser:
     task_cmd("claim", "pending|failed|blocked -> active (attempts+1)", cmd_task_claim,
              worker=True, output=True)
     task_cmd("complete", "active -> completed (output becomes immutable)",
-             cmd_task_complete, worker=True, output=True)
+             cmd_task_complete, worker=True, output=True, summary=True)
     task_cmd("fail", "active -> failed with diagnostics", cmd_task_fail,
              worker=True, output=True, error=True)
     task_cmd("block", "active -> blocked (external precondition missing)",

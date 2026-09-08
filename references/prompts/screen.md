@@ -11,7 +11,9 @@ append the contract file to the subagent's inputs; it is 900 lines it does not n
 
 Batching: one invocation carries exactly **one** task, which may cover several PMIDs. Write one
 output file per PMID; return exactly **one** receipt for the one `task_id`. Never return an
-array. For a batch task, `output_path` is the directory holding the per-PMID files.
+array. For a batch task, `output_path` is the directory holding the per-PMID files — which is
+**shared with the other screeners running concurrently**, so the coordinator must say so (the
+prompt body below does) or subagents waste turns investigating their siblings' files.
 
 ---
 
@@ -93,6 +95,16 @@ For each record write `workspace/screening/{{SCREENER_ID}}/pmid-<pmid>.json`
   does not state N, age range, or design, that is `unclear`, not an inference.
 - Quote at most a short phrase from the abstract inside `reason`; no block quotes.
 - Judge only what the record says. Do not use outside knowledge of the study.
+
+## Your output directory is shared
+
+Other screeners write their verdicts into the same directory at the same time. Files for PMIDs
+that are not yours are **expected and none of your business**: do not count the directory, do
+not audit it, do not mention it. Verify only that your own files exist.
+
+If you verify, use `find <dir> -name 'pmid-*.json' | wc -l` or a `python3` one-liner — **never
+`ls`**. On an iCloud-backed directory a shell alias for `ls` can hang forever and wedge your
+shell long after your work is done. Do not end your task with a decorative listing.
 
 ## Return to the coordinator — receipt only
 

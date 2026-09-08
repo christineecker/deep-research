@@ -198,6 +198,13 @@ span.
   the abstract, and `access` will be `abstract`. Most Methods-level fields will be `null` and that
   is the correct output; the few that are not still need spans.
 
+## Shell hygiene
+
+If you verify your written file, use `find` or a `python3` one-liner — **never `ls`**. On an
+iCloud-backed run directory a shell alias for `ls` can hang indefinitely and wedge your shell
+after your work is finished. Your output directory is shared with sibling subagents; files you
+did not write are expected and must be ignored.
+
 ## Return to the coordinator — receipt only
 
 One line of JSON, nothing else:

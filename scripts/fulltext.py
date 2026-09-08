@@ -448,7 +448,7 @@ def register_acquisition(rec: dict, ctx: Ctx, state: dict, tier: int, res: dict,
                          fulltext: dict, asset: dict | None) -> str | None:
     """Fold acquired text into the run's snapshot store. Returns the `source_id` or None.
 
-    Best-effort by contract (`references/evidence-kernel.md` is additive): every
+    Best-effort by contract (the evidence kernel is additive): every
     failure is logged to `engine.log` and swallowed, because the acquisition itself has
     already succeeded and must not be lost to a kernel problem. `<run>/sources/` is
     created lazily here, on the first registration of the run.

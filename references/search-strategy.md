@@ -56,7 +56,7 @@ double quotes is also never mapped. Both facts show up in `translated_query`; al
 
 ---
 
-## 2. Filters → E-utilities field tags (`references/search-strategy.md`)
+## 2. Filters → E-utilities field tags
 
 | Filter | Example value | Tag / syntax |
 |---|---|---|

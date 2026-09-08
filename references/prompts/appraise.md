@@ -201,6 +201,13 @@ If `{{EVIDENCE_BASIS}}` is `abstract_only`, an abstract cannot support a conduct
 - Do not quote the source in a rationale. Point at it with a span; the rationale says what you
   concluded, the span says where you read it.
 
+## Shell hygiene
+
+If you verify your written file, use `find` or a `python3` one-liner — **never `ls`**. On an
+iCloud-backed run directory a shell alias for `ls` can hang indefinitely and wedge your shell
+after your work is finished. Your output directory is shared with sibling subagents; files you
+did not write are expected and must be ignored.
+
 ## Return to the coordinator — receipt only
 
 One line of JSON, nothing else:
