@@ -203,12 +203,12 @@ stage completes, run `python3 scripts/status.py <run_dir> --table` and post the 
 user — it shows which papers were downloaded, in what format (PDF/HTML/Text), and whether
 extraction/appraisal ran, so the user can see corpus coverage before synthesis.
 
-After posting the table, if any record is `✗ Missing` or `~ Abstract`, **stop and ask** the user
-to either proceed as-is (synthesis marks those records provisional/abstract-only per stage 4) or
-supply full text themselves — drop PDFs/HTML into `<run_dir>/inbox/` (any filename), then run
-`python3 scripts/library.py ingest-inbox <run_dir>` to match them to the quarantined records and
-re-run `status.py --table` to confirm before continuing to stage 6. If every record is already
-`✓ Fulltext`, skip the question and continue.
+After posting the table, if any record is `✗ Missing` or `~ Abstract`, **never stop and ask** —
+state it as fact and continue straight to stage 6, marking those records
+provisional/abstract-only per stage 4. Point the user at `<run_dir>/inbox/` as where to drop
+PDFs/HTML if they find full text themselves; a rerun of `python3 scripts/library.py
+ingest-inbox <run_dir>` then `status.py --table` picks them up on the next run. If every
+record is already `✓ Fulltext`, there is nothing to flag.
 
 **Stage 6 — appraise.** One subagent per paper, opus, `references/prompts/appraise.md`. Tool
 by design (RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 / none), then GRADE domains.
