@@ -171,10 +171,13 @@ attempted for every selected record, if `missing.md` is non-empty the run halts 
 |---|---|---|---|---|---|
 | ... | 33333333 | 10.1000/paywalled | — | t7 | [PubMed](https://pubmed.ncbi.nlm.nih.gov/33333333/) · [DOI](https://doi.org/10.1000/paywalled) |
 
-Tell the user exactly where to put PDFs they find manually: `<run-dir>/inbox/`. This is a
-statement, not a request for approval — but extraction does not start, and no stage after it
-runs, until `missing.md` is empty. Run `library.py ingest-inbox` then re-run `fulltext.py
-acquire` to clear resolved records before continuing.
+Tell the user exactly where to put PDFs they find manually — `<run-dir>/inbox/` — and ask
+explicitly whether they can supply any of the quarantined records. For `systematic` and `max`
+this is a hard gate: extraction does not start, and no stage after it runs, until `missing.md` is
+empty. For `fast` and `standard`, the user may instead answer to continue without them, in which
+case extraction proceeds with those records tagged as missing and the synthesis marked
+PROVISIONAL. Run `library.py ingest-inbox` then re-run `fulltext.py acquire` to clear resolved
+records before continuing.
 
 Resume loop:
 
