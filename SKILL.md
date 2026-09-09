@@ -304,7 +304,7 @@ the end.
 |---|---|---|
 | Ladder rung 1 unreachable | `acquire` reports `needs_mcp > 0` and no PubMed MCP tool is in your tool list | Rung 1 cannot run this session; the best source for paywalled records is unavailable. Resolve each task `--status unavailable` rather than leaving it pending, and say the shortfall is partly infrastructure, not only paywalls |
 | Majority without full text | `quarantined + abstract_only > half` of the selected set | Extraction quality is materially limited; say so **before** extracting, and mark the synthesis provisional |
-| Any quarantined record | `missing.md` is non-empty | Name the highest-ranked losses specifically, and point at the `inbox/` + rerun loop |
+| Any quarantined record | `missing.md` is non-empty | Once acquisition has been attempted for every selected record (not per-record, mid-run), present the full quarantine list as one table — Title, PMID, DOI, PMCID, rung reached, links — and state the exact path to drop PDFs into (`<run-dir>/inbox/`). State this as fact, never as a question; do not ask the user whether to continue, wait, or supply the PDFs — the run proceeds regardless. |
 | A connector/tool the profile assumes is unauthorized | Stage 0 connector preflight; `config.json` `connectors` | Name the server, say it is authorized in claude.ai → Settings → Connectors and picked up by a **new** session, and ask: reduced scope now, or stop and resume connected? Never fake the coverage |
 | A script crashes or a check cannot run | non-zero exit, traceback | Quote the actual error. Do not paraphrase a traceback into "some issues" |
 | A budget is hit | `max_articles`, `max_fulltext_failures`, `max_wall_time` | Say which budget, what it cut, and what the run would look like without it |
@@ -332,11 +332,15 @@ Two rules that override any instinct to keep the run looking clean:
 ## Quarantine → inbox → resume loop
 
 Unobtainable full text → `missing.md` with PMID, DOI, PMCID, title, journal and direct
-PubMed/DOI/PMC links, and an alert to the user. The user drops PDFs into the run's `inbox/`.
-On rerun, `scripts/library.py ingest-inbox` matches each PDF to its quarantined record (DOI
-regex `10\.\d{4,}/\S+` against page-1 `pdftotext` output, else fuzzy title), files it into
-`<wiki>/assets/papers/`, and the run extracts, appraises and re-synthesises. The report states
-which studies arrived by manual supply.
+PubMed/DOI/PMC links. Never ask the user for permission or wait mid-run when a record cannot
+be downloaded — quarantine it and keep going. Only after acquisition has been attempted for
+every selected record does the run surface the result: a single table (Title, PMID, DOI,
+PMCID, rung reached, links) covering all quarantined records at once, plus the exact path to
+drop PDFs into — `<run-dir>/inbox/`. The user drops PDFs there. On rerun, `scripts/library.py
+ingest-inbox` matches each PDF to its quarantined record (DOI regex `10\.\d{4,}/\S+` against
+page-1 `pdftotext` output, else fuzzy title), files it into `<wiki>/assets/papers/`, and the
+run extracts, appraises and re-synthesises. The report states which studies arrived by manual
+supply.
 
 ---
 
@@ -362,6 +366,8 @@ which studies arrived by manual supply.
 12. `<wiki>/research/` is deep-research's bundle. **`<wiki>/wiki/` is never written to.**
 13. Standard markdown links are the graph layer; Obsidian wikilinks are additive only.
 14. Unknown values are `null`. Never invent a bibliographic field, a number, or a citation.
+15. Whenever a PDF is handed to the user, its DOI is stated alongside the PMID (when a DOI
+    exists for that record); if no DOI exists, say so rather than omitting the line.
 
 ## Scripts
 

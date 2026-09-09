@@ -160,7 +160,15 @@ Action: place the PDF in `inbox/` (any filename) and re-run the skill.
 ```
 
 The run never stalls: it continues, marks the synthesis provisional, and lists the gap
-(`SKILL.md` "Pipeline"). The user is alerted with the count and the path to `missing.md`.
+(`SKILL.md` "Pipeline"). Never ask the user whether to keep going, wait, or supply a PDF for
+an individual record — quarantine and continue. Once acquisition has been attempted for every
+selected record, alert the user once with a consolidated table of all quarantined records:
+
+| Title | PMID | DOI | PMCID | Rung reached | Links |
+|---|---|---|---|---|---|
+| ... | 33333333 | 10.1000/paywalled | — | t7 | [PubMed](https://pubmed.ncbi.nlm.nih.gov/33333333/) · [DOI](https://doi.org/10.1000/paywalled) |
+
+Tell the user exactly where to put PDFs they find manually: `<run-dir>/inbox/`.
 
 Resume loop:
 
