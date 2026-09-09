@@ -191,24 +191,32 @@ script cannot call — the script appends `needs_mcp` tasks to
 `workspace/retrieve/mcp-tasks.jsonl` and keeps walking the ladder, so the run never blocks.
 **You** call the MCP tool, write the text to the task's `result_path`, then
 `fulltext.py resolve-mcp` (or re-run `acquire`, which picks it up).
-Record `source_tier` + `access_route` on every record. Quarantined papers go to `missing.md`;
-alert the user, keep going, mark the synthesis provisional.
-`acquire` fetches records concurrently (`--workers`, default 4, or `budgets.max_parallel`);
-per-host rate limits hold regardless, and `--offline` runs serially.
+Record `source_tier` + `access_route` on every record. Quarantined papers go to `missing.md`.
+Never ask the user for permission per record — just quarantine and keep walking the ladder for
+every remaining record. `acquire` fetches records concurrently (`--workers`, default 4, or
+`budgets.max_parallel`); per-host rate limits hold regardless, and `--offline` runs serially.
+
+Once acquisition has been attempted for every selected record (stage 4 fully finished), **the
+pipeline halts before stage 5** if `missing.md` is non-empty. State the fact — a single
+consolidated table (Title, PMID, DOI, PMCID, rung reached, links) — and the exact path to drop
+PDFs into: `<run_dir>/inbox/`. This is not a question; there is nothing to confirm. Extraction
+does not start until every quarantined record has been resolved: the user drops PDFs/HTML into
+`inbox/`, `python3 scripts/library.py ingest-inbox <run_dir>` matches them in, and
+`fulltext.py acquire` (or a rerun) clears `missing.md`. Only when `missing.md` is empty does
+stage 5 begin.
 
 **Stage 5 — extract.** One subagent per paper, opus, `references/prompts/extract.md`. Design,
 N, population, I/C, outcomes with effect + CI + direction, funding/COI, limitations, quotes
 with anchors. `evidence_basis` is `abstract_only` whenever no full text was obtained. When the
 stage completes, run `python3 scripts/status.py <run_dir> --table` and post the table to the
 user — it shows which papers were downloaded, in what format (PDF/HTML/Text), and whether
-extraction/appraisal ran, so the user can see corpus coverage before synthesis.
+extraction ran, so the user can see corpus coverage before appraisal.
 
-After posting the table, if any record is `✗ Missing` or `~ Abstract`, **never stop and ask** —
-state it as fact and continue straight to stage 6, marking those records
-provisional/abstract-only per stage 4. Point the user at `<run_dir>/inbox/` as where to drop
-PDFs/HTML if they find full text themselves; a rerun of `python3 scripts/library.py
-ingest-inbox <run_dir>` then `status.py --table` picks them up on the next run. If every
-record is already `✓ Fulltext`, there is nothing to flag.
+Stage 6 does not start until stage 5 has actually finished for every record in the corpus —
+`status.py --table` shows no row still pending extraction. Since stage 4 already guaranteed
+`missing.md` is empty before stage 5 began, no record here should be `✗ Missing`; if one still
+is (e.g. a fresh quarantine surfaced during extraction itself), treat it the same way — halt,
+show the table, point at `inbox/`, and do not proceed until resolved.
 
 **Stage 6 — appraise.** One subagent per paper, opus, `references/prompts/appraise.md`. Tool
 by design (RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 / none), then GRADE domains.
@@ -304,7 +312,7 @@ the end.
 |---|---|---|
 | Ladder rung 1 unreachable | `acquire` reports `needs_mcp > 0` and no PubMed MCP tool is in your tool list | Rung 1 cannot run this session; the best source for paywalled records is unavailable. Resolve each task `--status unavailable` rather than leaving it pending, and say the shortfall is partly infrastructure, not only paywalls |
 | Majority without full text | `quarantined + abstract_only > half` of the selected set | Extraction quality is materially limited; say so **before** extracting, and mark the synthesis provisional |
-| Any quarantined record | `missing.md` is non-empty | Once acquisition has been attempted for every selected record (not per-record, mid-run), present the full quarantine list as one table — Title, PMID, DOI, PMCID, rung reached, links — and state the exact path to drop PDFs into (`<run-dir>/inbox/`). State this as fact, never as a question; do not ask the user whether to continue, wait, or supply the PDFs — the run proceeds regardless. |
+| Any quarantined record | `missing.md` is non-empty | Once acquisition has been attempted for every selected record (not per-record, mid-run), present the full quarantine list as one table — Title, PMID, DOI, PMCID, rung reached, links — and state the exact path to drop PDFs into (`<run-dir>/inbox/`). State this as fact, never as a question. The pipeline then **halts before stage 5** — it does not extract, appraise, or synthesize — until the user supplies the missing PDFs/HTML and `missing.md` is cleared via `ingest-inbox` + rerun. |
 | A connector/tool the profile assumes is unauthorized | Stage 0 connector preflight; `config.json` `connectors` | Name the server, say it is authorized in claude.ai → Settings → Connectors and picked up by a **new** session, and ask: reduced scope now, or stop and resume connected? Never fake the coverage |
 | A script crashes or a check cannot run | non-zero exit, traceback | Quote the actual error. Do not paraphrase a traceback into "some issues" |
 | A budget is hit | `max_articles`, `max_fulltext_failures`, `max_wall_time` | Say which budget, what it cut, and what the run would look like without it |
@@ -332,15 +340,17 @@ Two rules that override any instinct to keep the run looking clean:
 ## Quarantine → inbox → resume loop
 
 Unobtainable full text → `missing.md` with PMID, DOI, PMCID, title, journal and direct
-PubMed/DOI/PMC links. Never ask the user for permission or wait mid-run when a record cannot
-be downloaded — quarantine it and keep going. Only after acquisition has been attempted for
-every selected record does the run surface the result: a single table (Title, PMID, DOI,
-PMCID, rung reached, links) covering all quarantined records at once, plus the exact path to
-drop PDFs into — `<run-dir>/inbox/`. The user drops PDFs there. On rerun, `scripts/library.py
+PubMed/DOI/PMC links. Never ask the user for permission per record — quarantine it and keep
+walking the ladder for every remaining record; that is stage 4 finishing, not the pipeline
+finishing. Only once acquisition has been attempted for every selected record does the run
+surface the result: a single table (Title, PMID, DOI, PMCID, rung reached, links) covering all
+quarantined records at once, plus the exact path to drop PDFs into — `<run-dir>/inbox/`. This
+is a statement, not a question — but it **is** a hard gate: extraction (stage 5) does not
+start while `missing.md` is non-empty. The user drops PDFs there; `scripts/library.py
 ingest-inbox` matches each PDF to its quarantined record (DOI regex `10\.\d{4,}/\S+` against
-page-1 `pdftotext` output, else fuzzy title), files it into `<wiki>/assets/papers/`, and the
-run extracts, appraises and re-synthesises. The report states which studies arrived by manual
-supply.
+page-1 `pdftotext` output, else fuzzy title), files it into `<wiki>/assets/papers/`; a rerun of
+`acquire` clears the resolved records from `missing.md`. Once it is empty, extraction,
+appraisal and synthesis proceed. The report states which studies arrived by manual supply.
 
 ---
 

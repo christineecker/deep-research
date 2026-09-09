@@ -159,16 +159,22 @@ Quarantine (`rung 7`) appends to `<run-dir>/missing.md`:
 Action: place the PDF in `inbox/` (any filename) and re-run the skill.
 ```
 
-The run never stalls: it continues, marks the synthesis provisional, and lists the gap
-(`SKILL.md` "Pipeline"). Never ask the user whether to keep going, wait, or supply a PDF for
-an individual record — quarantine and continue. Once acquisition has been attempted for every
-selected record, alert the user once with a consolidated table of all quarantined records:
+Stage 4 (retrieve) itself never stalls: it continues walking the ladder for every remaining
+record regardless of any single failure. Never ask the user whether to keep going, wait, or
+supply a PDF for an individual record mid-ladder — quarantine and continue to the next record.
+
+What *does* stall, deliberately, is the pipeline as a whole: once acquisition has been
+attempted for every selected record, if `missing.md` is non-empty the run halts before stage 5
+(extraction). Alert the user once with a consolidated table of all quarantined records:
 
 | Title | PMID | DOI | PMCID | Rung reached | Links |
 |---|---|---|---|---|---|
 | ... | 33333333 | 10.1000/paywalled | — | t7 | [PubMed](https://pubmed.ncbi.nlm.nih.gov/33333333/) · [DOI](https://doi.org/10.1000/paywalled) |
 
-Tell the user exactly where to put PDFs they find manually: `<run-dir>/inbox/`.
+Tell the user exactly where to put PDFs they find manually: `<run-dir>/inbox/`. This is a
+statement, not a request for approval — but extraction does not start, and no stage after it
+runs, until `missing.md` is empty. Run `library.py ingest-inbox` then re-run `fulltext.py
+acquire` to clear resolved records before continuing.
 
 Resume loop:
 
