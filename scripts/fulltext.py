@@ -699,10 +699,14 @@ def rung1_pmc_mcp(rec: dict, ctx: Ctx, state: dict) -> dict:
     result_abs = ctx.run_dir / result_rel
     if result_abs.exists():
         text = result_abs.read_text(encoding="utf-8", errors="replace")
-        if len(text.strip()) >= MIN_TEXT_CHARS:
-            return {"status": "success", "detail": "MCP full text supplied by coordinator",
-                    "text": text, "access_route": "pmc_mcp"}
-        return {"status": "failed", "detail": "coordinator MCP file <%d chars" % MIN_TEXT_CHARS}
+        if len(text.strip()) < MIN_TEXT_CHARS:
+            return {"status": "failed", "detail": "coordinator MCP file <%d chars" % MIN_TEXT_CHARS}
+        truncated, reasons = detect_truncation_text(text)
+        detail = "MCP full text supplied by coordinator"
+        if truncated:
+            detail += "; truncated (%s)" % "; ".join(reasons)
+        return {"status": "success", "detail": detail, "text": text,
+                "access_route": "pmc_mcp", "truncation_detected": truncated}
     task = {
         "schema_version": SCHEMA_VERSION,
         "task_id": "retrieve:%s" % evidence_id_of(rec).replace(":", ":", 1),
@@ -985,6 +989,13 @@ def load_institutional_access(run_dir: Path) -> dict | None:
     return inst
 
 
+def institutional_marker_path(browser_text_path: Path) -> Path:
+    """Sidecar marker: `resolve-browser --institutional` touches this next to the text file
+    so a later plain `acquire` pass (which just reads the text file) still records
+    `access_route: browser_fetch_institutional` instead of losing the disclosure."""
+    return browser_text_path.with_name(browser_text_path.name + ".institutional")
+
+
 def rung7_browser_fetch(rec: dict, ctx: Ctx, state: dict) -> dict:
     """Coordinator handoff. A script cannot drive the claude-in-chrome MCP tools.
 
@@ -1010,11 +1021,15 @@ def rung7_browser_fetch(rec: dict, ctx: Ctx, state: dict) -> dict:
             return {"status": "failed", "detail": "coordinator browser file <%d chars"
                     % MIN_TEXT_CHARS}
         truncated, reasons = detect_truncation_text(text)
+        institutional = institutional_marker_path(result_abs).exists()
+        route = "browser_fetch_institutional" if institutional else "browser_fetch"
         detail = "browser full text supplied by coordinator"
+        if institutional:
+            detail += " via opt-in institutional access"
         if truncated:
             detail += "; truncated (%s)" % "; ".join(reasons)
         return {"status": "success", "detail": detail, "text": text,
-                "access_route": "browser_fetch", "truncation_detected": truncated,
+                "access_route": route, "truncation_detected": truncated,
                 "url": canonical_url(rec, state)}
     doi = normalize_doi(rec.get("doi"))
     inst = load_institutional_access(ctx.run_dir)
@@ -1066,24 +1081,36 @@ def rung7_browser_fetch(rec: dict, ctx: Ctx, state: dict) -> dict:
     return {"status": "needs_browser", "detail": "emitted browser task -> %s" % result_rel}
 
 
-def rung8_quarantine(rec: dict, ctx: Ctx, state: dict) -> dict:
+MISSING_MD_HEADER = (
+    "# missing.md — records the OA ladder could not fully resolve\n\n"
+    "Two kinds of block appear here, both needing the same action: drop a PDF into `inbox/` "
+    "and re-run; `library.py ingest-inbox` will match and remove the block.\n\n"
+    "- **Quarantined (no text at all)** — every rung failed outright.\n"
+    "- **Abstract-only (degraded text obtained)** — some rung returned text, but the "
+    "truncation detector flagged it as an abstract/teaser, not the full article; the ladder "
+    "kept walking every remaining rung looking for real full text and found none. The stored "
+    "text is real and is used as-is unless a better PDF arrives.\n\n"
+    "No paywall circumvention is attempted for either kind.\n\n"
+)
+
+
+def append_missing_block(ctx: Ctx, rec: dict, state: dict, *, status_line: str) -> bool:
+    """Append (once) an evidence_id's block to `<run-dir>/missing.md`. Returns False if
+    already present -- the caller's rung result is still reported as `success` either way."""
     eid = evidence_id_of(rec)
     path = ctx.run_dir / "missing.md"
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
     if not existing:
-        existing = ("# missing.md — quarantined full texts\n\n"
-                    "Records whose full text the OA ladder could not obtain. Drop the PDF into "
-                    "`inbox/` and re-run;\n`library.py ingest-inbox` will match and un-quarantine "
-                    "it. No paywall circumvention is attempted.\n\n")
+        existing = MISSING_MD_HEADER
     if "- evidence_id: %s" % eid in existing:
-        return {"status": "success", "detail": "already quarantined", "no_text": True,
-                "access_route": "quarantine"}
+        return False
     pmid, doi, pmcid = rec.get("pmid"), normalize_doi(rec.get("doi")), rec.get("pmcid")
     attempts = "; ".join(
         "t%s=%s" % (t, state["rungs"][t].get("status")) for t in sorted(state["rungs"], key=int)
     )
     block = ["## %s" % (rec.get("title") or eid), ""]
     block += [
+        "- Status: %s" % status_line,
         "- evidence_id: %s" % eid,
         "- PMID: %s" % (pmid or "null"),
         "- DOI: %s" % (doi or "null"),
@@ -1099,6 +1126,11 @@ def rung8_quarantine(rec: dict, ctx: Ctx, state: dict) -> dict:
         block.append("- PMC: https://pmc.ncbi.nlm.nih.gov/articles/%s/" % pmcid)
     block += ["", "Action: place the PDF in `inbox/` (any filename) and re-run the skill.", ""]
     path.write_text(existing.rstrip("\n") + "\n\n" + "\n".join(block), encoding="utf-8")
+    return True
+
+
+def rung8_quarantine(rec: dict, ctx: Ctx, state: dict) -> dict:
+    append_missing_block(ctx, rec, state, status_line="quarantined (no text obtained)")
     return {"status": "success", "detail": "quarantined in missing.md", "no_text": True,
             "access_route": "quarantine"}
 
@@ -1204,6 +1236,11 @@ def acquire_record(rec: dict, ctx: Ctx, from_tier: int | None = None) -> dict:
             if int(t) >= from_tier:
                 state["rungs"].pop(t)
 
+    # A truncated success (abstract-only text) is kept here as a fallback rather than
+    # finalized immediately: the ladder keeps walking every remaining rung looking for real
+    # full text before settling. This is what makes a degraded rung-1/5/7 hit surface at the
+    # missing.md gate instead of silently passing as `fulltext` with only rungs 0-1 tried.
+    fallback: tuple[int, dict] | None = None
     for tier, handler in RUNGS:
         if tier < start:
             continue
@@ -1212,6 +1249,8 @@ def acquire_record(rec: dict, ctx: Ctx, from_tier: int | None = None) -> dict:
             continue  # never redo a completed rung
         if prev and prev.get("status") == "success" and state.get("fulltext"):
             break
+        if tier == 8 and fallback is not None:
+            break  # don't let quarantine's zero-text write clobber a real (degraded) hit
         try:
             res = handler(rec, ctx, state)
         except Exception as exc:  # a rung must never kill the run
@@ -1220,13 +1259,31 @@ def acquire_record(rec: dict, ctx: Ctx, from_tier: int | None = None) -> dict:
         log(ctx.run_dir, "%s rung %d -> %s (%s)" % (eid, tier, res["status"],
                                                     res.get("detail", "")))
         if res["status"] == "success":
+            if res.get("truncation_detected"):
+                if fallback is None:
+                    fallback = (tier, res)
+                save_state(ctx.run_dir, rec, state)
+                continue  # abstract-only text in hand; keep walking for real full text
             fulltext = finalize(rec, ctx, state, tier, res)
             rec["fulltext"] = fulltext
             save_state(ctx.run_dir, rec, state)
             return {"evidence_id": eid, "action": "acquired", "tier": tier,
                     "fulltext": fulltext, "source_ids": list(rec.get("source_ids") or []),
                     "detail": res.get("detail", "")}
-        # needs_mcp: task emitted, keep walking the ladder
+        # needs_mcp / needs_browser: task emitted, keep walking the ladder
+    if fallback is not None:
+        tier, res = fallback
+        fulltext = finalize(rec, ctx, state, tier, res)
+        rec["fulltext"] = fulltext
+        append_missing_block(
+            ctx, rec, state,
+            status_line="abstract-only (tier %d, %s) — the ladder tried every remaining rung "
+                        "and found nothing better; a full PDF would upgrade this record"
+                        % (tier, res.get("access_route") or TIER_ROUTES.get(tier)))
+        save_state(ctx.run_dir, rec, state)
+        return {"evidence_id": eid, "action": "acquired_abstract_only", "tier": tier,
+                "fulltext": fulltext, "source_ids": list(rec.get("source_ids") or []),
+                "detail": res.get("detail", "")}
     save_state(ctx.run_dir, rec, state)
     rec["fulltext"] = rec.get("fulltext") or {
         "status": "missing", "source_tier": 8, "access_route": "quarantine",
@@ -1470,7 +1527,17 @@ def cmd_status(args) -> int:
 
 
 def cmd_resolve_mcp(args) -> int:
-    """Record the outcome of the rung-1 coordinator handoff."""
+    """Record the outcome of the rung-1 coordinator handoff, then let the ladder keep walking.
+
+    Deliberately thin: this used to finalize rung 1 directly and stop, which meant a short or
+    truncated MCP response (a PubMed abstract, not the article) was recorded as terminal
+    `fulltext` and rungs 2-8 were never tried, and the record never surfaced at the missing.md
+    gate for a PDF ask. Now it only persists the coordinator's answer (or marks the rung
+    unavailable) and calls `acquire_record`, the same ladder `acquire` uses: truncated text is
+    kept as a fallback while the ladder keeps trying for real full text, and a genuinely short
+    response fails rung 1 and moves on to rung 2 -- exactly as if `acquire` had picked up the
+    file itself.
+    """
     run_dir, wiki = resolve_paths(args)
     corpus_path = Path(args.corpus) if args.corpus else run_dir / "corpus.jsonl"
     records = read_corpus(corpus_path)
@@ -1484,48 +1551,42 @@ def cmd_resolve_mcp(args) -> int:
     if target is None:
         print(json.dumps({"error": "no corpus record for %s" % args.evidence_id}, indent=2))
         return 1
-    state = load_state(run_dir, target)
+    ctx = Ctx(run_dir, wiki, args.email or os.environ.get("DEEP_RESEARCH_EMAIL"), offline=False,
+              register=not args.no_register)
     if args.status == "unavailable":
+        state = load_state(run_dir, target)
         mark(state, 1, "unavailable", "coordinator: MCP reports no full text")
         save_state(run_dir, target, state)
-        upsert_mcp_task(run_dir, {**{"task_id": "retrieve:%s" % args.evidence_id},
+        upsert_mcp_task(run_dir, {"task_id": "retrieve:%s" % args.evidence_id,
                                   "schema_version": SCHEMA_VERSION,
                                   "evidence_id": args.evidence_id, "status": "unavailable",
                                   "result_path": "workspace/fulltext/%s.mcp.txt"
                                   % record_stem(target), "args": {}, "tool":
                                   "mcp__claude_ai_PubMed__get_full_text_article",
                                   "created_at": utcnow()})
-        print(json.dumps({"evidence_id": args.evidence_id, "rung1": "unavailable"}, indent=2))
-        return 0
-    src = Path(args.text_file).expanduser().resolve()
-    text = src.read_text(encoding="utf-8", errors="replace")
-    dest = run_dir / "workspace" / "fulltext" / ("%s.mcp.txt" % record_stem(target))
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if src != dest:
-        dest.write_text(text, encoding="utf-8")
-    ctx = Ctx(run_dir, wiki, args.email or os.environ.get("DEEP_RESEARCH_EMAIL"), offline=True,
-              register=not args.no_register)
-    if len(text.strip()) < MIN_TEXT_CHARS:
-        mark(state, 1, "failed", "MCP text <%d chars" % MIN_TEXT_CHARS)
-        save_state(run_dir, target, state)
-        print(json.dumps({"evidence_id": args.evidence_id, "rung1": "failed"}, indent=2))
-        return 1
-    mark(state, 1, "success", "MCP full text supplied by coordinator")
-    # The coordinator, not this process, called the MCP tool: the text is registered
-    # (`register`, never fresh — R22), and no `fetch` event is claimed for it.
-    fulltext = finalize(target, ctx, state, 1,
-                        {"text": text, "access_route": "pmc_mcp", "status": "success",
-                         "url": canonical_url(target, state)})
-    save_state(run_dir, target, state)
-    target["fulltext"] = fulltext
+    else:
+        src = Path(args.text_file).expanduser().resolve()
+        text = src.read_text(encoding="utf-8", errors="replace")
+        # The coordinator, not this process, called the MCP tool: whatever text results from
+        # this is registered (`register`, never fresh — R22), never claimed as a live `fetch`.
+        dest = run_dir / "workspace" / "fulltext" / ("%s.mcp.txt" % record_stem(target))
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if src != dest:
+            dest.write_text(text, encoding="utf-8")
+    result = acquire_record(target, ctx)
     write_corpus(corpus_path, records)
-    print(json.dumps({"evidence_id": args.evidence_id, "fulltext": fulltext,
-                      "source_ids": list(target.get("source_ids") or [])}, indent=2))
+    print(json.dumps({"evidence_id": args.evidence_id, **result}, indent=2))
     return 0
 
 
 def cmd_resolve_browser(args) -> int:
-    """Record the outcome of the rung-7 coordinator browser handoff."""
+    """Record the outcome of the rung-7 coordinator browser handoff, then let the ladder keep
+    walking. Same reasoning as `cmd_resolve_mcp`: this only persists the coordinator's answer
+    (or marks the rung unavailable) and calls `acquire_record` -- a truncated browser result no
+    longer finalizes as terminal `fulltext`/`abstract_only` on the spot, and rung 8 (quarantine)
+    is skipped in favour of a fallback finalize plus a missing.md block once the whole ladder is
+    confirmed exhausted.
+    """
     run_dir, wiki = resolve_paths(args)
     corpus_path = Path(args.corpus) if args.corpus else run_dir / "corpus.jsonl"
     records = read_corpus(corpus_path)
@@ -1539,8 +1600,10 @@ def cmd_resolve_browser(args) -> int:
     if target is None:
         print(json.dumps({"error": "no corpus record for %s" % args.evidence_id}, indent=2))
         return 1
-    state = load_state(run_dir, target)
+    ctx = Ctx(run_dir, wiki, args.email or os.environ.get("DEEP_RESEARCH_EMAIL"), offline=False,
+              register=not args.no_register)
     if args.status == "unavailable":
+        state = load_state(run_dir, target)
         mark(state, 7, "unavailable", "coordinator: no OA copy reachable without a login/"
              "paywall/captcha")
         save_state(run_dir, target, state)
@@ -1550,39 +1613,23 @@ def cmd_resolve_browser(args) -> int:
                                       "result_path": "workspace/fulltext/%s.browser.txt"
                                       % record_stem(target), "args": {}, "tool":
                                       "mcp__claude-in-chrome__*", "created_at": utcnow()})
-        print(json.dumps({"evidence_id": args.evidence_id, "rung7": "unavailable"}, indent=2))
-        return 0
-    src = Path(args.text_file).expanduser().resolve()
-    text = src.read_text(encoding="utf-8", errors="replace")
-    dest = run_dir / "workspace" / "fulltext" / ("%s.browser.txt" % record_stem(target))
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if src != dest:
-        dest.write_text(text, encoding="utf-8")
-    ctx = Ctx(run_dir, wiki, args.email or os.environ.get("DEEP_RESEARCH_EMAIL"), offline=True,
-              register=not args.no_register)
-    if len(text.strip()) < MIN_TEXT_CHARS:
-        mark(state, 7, "failed", "browser text <%d chars" % MIN_TEXT_CHARS)
-        save_state(run_dir, target, state)
-        print(json.dumps({"evidence_id": args.evidence_id, "rung7": "failed"}, indent=2))
-        return 1
-    truncated, reasons = detect_truncation_text(text)
-    route = "browser_fetch_institutional" if args.institutional else "browser_fetch"
-    detail = "browser full text supplied by coordinator"
-    if args.institutional:
-        detail += " via opt-in institutional access"
-    if truncated:
-        detail += "; truncated (%s)" % "; ".join(reasons)
-    mark(state, 7, "success", detail)
-    # The coordinator, not this process, drove the browser: registered but never `fresh` (R22).
-    fulltext = finalize(target, ctx, state, 7,
-                        {"text": text, "access_route": route, "status": "success",
-                         "truncation_detected": truncated,
-                         "url": canonical_url(target, state)})
-    save_state(run_dir, target, state)
-    target["fulltext"] = fulltext
+    else:
+        src = Path(args.text_file).expanduser().resolve()
+        text = src.read_text(encoding="utf-8", errors="replace")
+        # The coordinator, not this process, drove the browser: whatever text results from
+        # this is registered (`register`, never fresh — R22), never claimed as a live `fetch`.
+        dest = run_dir / "workspace" / "fulltext" / ("%s.browser.txt" % record_stem(target))
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if src != dest:
+            dest.write_text(text, encoding="utf-8")
+        marker = institutional_marker_path(dest)
+        if args.institutional:
+            marker.touch()
+        elif marker.exists():
+            marker.unlink()
+    result = acquire_record(target, ctx)
     write_corpus(corpus_path, records)
-    print(json.dumps({"evidence_id": args.evidence_id, "fulltext": fulltext,
-                      "source_ids": list(target.get("source_ids") or [])}, indent=2))
+    print(json.dumps({"evidence_id": args.evidence_id, **result}, indent=2))
     return 0
 
 

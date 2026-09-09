@@ -117,6 +117,11 @@ Always ask explicitly — never silently default a profile or filter set because
 "sounds like" a given mode. Present the profile table (with what each one trades off) and wait
 for the user's pick rather than inferring `fast`/`standard`/etc. from phrasing.
 
+**This list applies in full to every profile, `fast` included.** `fast`'s `gates: none` only
+means the built protocol and search strategy are not *shown back* for the user to approve before
+Stage 2 — it does not excuse skipping any of these asks. `fast` has no later checkpoint to catch
+a wrong assumption about scope, wiki, or criteria: Stage 0 is the only place these get confirmed.
+
 1. **Question** — restate it back as a PICO/PECO before proceeding.
 2. **Profile** — show the profile table above and ask the user to pick one (or set
    scope / rigor / gates individually). Say what the chosen profile implies: `max_articles`,
@@ -124,13 +129,21 @@ for the user's pick rather than inferring `fast`/`standard`/etc. from phrasing.
 3. **Target wiki** — needed *early*, because the run directory and PDF library live in it.
    Enumerate the wikis directory at runtime; never hardcode the list. Missing wiki →
    confirm creation and location with the user first.
-4. **Filters** — years, authors, journals, article types, species/age, language, OA-only.
+4. **Study selection criteria** — ask explicitly, before Stage 1 turns the PICO/PECO into
+   *numbered* inclusion/exclusion criteria: eligible study designs (RCT only? observational
+   too? case reports?), population/sample bounds (age, condition, setting), comparator/exposure
+   scope, minimum/required outcomes, and any hard excludes (e.g. non-human, non-English, a
+   specific date cutoff already covered under Filters below). At `standard`/`systematic`/`max`
+   the `protocol+strategy` gate shows the resulting numbered criteria back for approval before
+   Stage 2 runs; at `fast` (`gates: none`) there is no such gate, so getting this right *here*
+   is the only chance — never let the agent's own PICO reading stand in for the user's answer.
+5. **Filters** — years, authors, journals, article types, species/age, language, OA-only.
    **Ask explicitly whether meta-analyses and systematic reviews should be included** in the
    corpus or excluded as an article-type filter — do not assume either way. If included, ask
    whether they should be synthesized alongside primary studies or reported/appraised
    separately (AMSTAR-2 applies to reviews, not RoB2/ROBINS-I). Record the answer in
    `config.json` under `filters.article_types` / `filters.include_reviews`.
-5. **Outputs** — `report.md` always; optionally HTML artifact, Quarto PDF/docx, OKF bundle
+6. **Outputs** — `report.md` always; optionally HTML artifact, Quarto PDF/docx, OKF bundle
    promotion. Also ask whether this run should stop after extraction (`pipeline.stop_after_stage:
    5`, see Profiles above) instead of running the full pipeline. A wiki-wide `refs.bib` covering
    every paper ever pooled (not just this run's included set) is always available on demand via
@@ -201,8 +214,10 @@ incomplete/failed tasks. Do not restart the stage. Do not re-prompt.
 | 8 | Verify / report | main | main | `outputs/verification.json` |
 
 **Stage 1 — protocol.** PICO/PECO, *numbered* inclusion/exclusion criteria (screening cites
-these ids), limits, planned search. Template: `templates/protocol.md`. If gates include
-`protocol+strategy`, show the protocol *and* the search strategy to the user and wait.
+these ids), limits, planned search — built from the Stage 0 "Study selection criteria" answers
+("Ask, if not already known" above), never invented fresh here. Template: `templates/protocol.md`.
+If gates include `protocol+strategy`, show the protocol *and* the search strategy to the user
+and wait.
 
 **Stage 2 — search.** First seed from the wiki-wide paper pool:
 `python3 scripts/pool.py seed --run-dir <run_dir> --wiki <root>`. It scores
@@ -236,21 +251,32 @@ MCP tools (`references/acquisition.md` §4b): the script appends `needs_browser`
 — OA content only, never past a login wall, paywall, or captcha (see invariant 9 below) —
 extract the visible text, write it to the task's `result_path`, then `fulltext.py
 resolve-browser` (or re-run `acquire`).
-Record `source_tier` + `access_route` on every record. Quarantined papers go to `missing.md`.
-Never ask the user for permission per record — just quarantine and keep walking the ladder for
+Record `source_tier` + `access_route` on every record. A rung-1/5/7 result the truncation
+detector flags as abstract-only does **not** stop the ladder — it is kept as a fallback while
+every remaining rung is still tried for real full text (`references/acquisition.md` §2, §7
+"Fallback walk-through"); only a record that ends the whole ladder with nothing better gets its
+fallback finalized *and* an abstract-only block in `missing.md`, right alongside true
+quarantines. Never accept the first abstract-only hit as final while rungs remain — that is the
+exact bug this section exists to rule out. Quarantined papers (zero text at all) go to
+`missing.md` too. Never ask the user for permission per record — just quarantine (or fall back)
+and keep walking the ladder for
 every remaining record. `acquire` fetches records concurrently (`--workers`, default 4, or
 `budgets.max_parallel`); per-host rate limits hold regardless, and `--offline` runs serially.
 
 Once acquisition has been attempted for every selected record (stage 4 fully finished), handle
 `missing.md` the same way in every profile: **halt before stage 5** and ask the user — a single
-consolidated table (Title, PMID, DOI, PMCID, rung reached, links) — render DOI as
-`https://doi.org/<doi>` and PMID as `https://pubmed.ncbi.nlm.nih.gov/<pmid>/` so both are
-clickable, never bare identifiers — plus the exact path to drop PDFs
-into (`<run_dir>/inbox/`), and an explicit question of whether they can supply any of them. This
-is a question, asked once for the whole quarantine list, never per record and never mid-ladder.
-For `systematic` and `max`, this is a hard gate — stage 5 does not start until every quarantined
+consolidated table (Title, PMID, DOI, PMCID, rung reached, status: quarantined or abstract-only,
+links) — render DOI as `https://doi.org/<doi>` and PMID as
+`https://pubmed.ncbi.nlm.nih.gov/<pmid>/` so both are clickable, never bare identifiers — plus
+the exact path to drop PDFs into (`<run_dir>/inbox/`), and an explicit question of whether they
+can supply any of them. This covers every block `missing.md` holds, not just true quarantines —
+an abstract-only record already has degraded text sitting in the corpus, and it is exactly the
+kind of record easy to mistake for "resolved" and skip asking about; don't. This is a question,
+asked once for the whole blocked-record list, never per record and never mid-ladder.
+For `systematic` and `max`, this is a hard gate — stage 5 does not start until every blocked
 record is resolved. For `fast` and `standard`, the user may answer "continue without it"; if they
-do, proceed to stage 5 with the affected records tagged as missing and the synthesis marked
+do, proceed to stage 5 with quarantined records tagged as missing and abstract-only records left
+as-is (their stored degraded text used), and the synthesis marked
 **PROVISIONAL**. The user drops PDFs/HTML into `inbox/`, `python3 scripts/library.py ingest-inbox
 <run_dir>` matches them in, and `fulltext.py acquire` (or a rerun) clears `missing.md`.
 
@@ -402,7 +428,7 @@ the end.
 |---|---|---|
 | Ladder rung 1 unreachable | `acquire` reports `needs_mcp > 0` and no PubMed MCP tool is in your tool list | Rung 1 cannot run this session; the best source for paywalled records is unavailable. Resolve each task `--status unavailable` rather than leaving it pending, and say the shortfall is partly infrastructure, not only paywalls |
 | Majority without full text | `quarantined + abstract_only > half` of the selected set | Extraction quality is materially limited; say so **before** extracting, and mark the synthesis provisional |
-| Any quarantined record | `missing.md` is non-empty | Once acquisition has been attempted for every selected record (not per-record, mid-run), present the full quarantine list as one table — Title, PMID, DOI, PMCID, rung reached, links — the exact path to drop PDFs into (`<run-dir>/inbox/`), and ask whether the user can supply any of them. `systematic` and `max` halt before stage 5 until the user supplies the missing PDFs/HTML and `missing.md` is cleared via `ingest-inbox` + rerun; `fast` and `standard` may proceed with a PROVISIONAL synthesis if the user answers to continue without them. |
+| Any blocked record — quarantined (no text) or abstract-only (fallback exhausted the ladder, `references/acquisition.md` §7) | `missing.md` is non-empty | Once acquisition has been attempted for every selected record (not per-record, mid-run), present the full blocked-record list as one table — Title, PMID, DOI, PMCID, rung reached, status (quarantined / abstract-only), links — the exact path to drop PDFs into (`<run-dir>/inbox/`), and ask whether the user can supply any of them. Ask for **both** kinds, not just true quarantines — an abstract-only record has real text stored, but a full PDF still upgrades it, and the user cannot know that without being asked. `systematic` and `max` halt before stage 5 until the user supplies the missing PDFs/HTML and `missing.md` is cleared via `ingest-inbox` + rerun; `fast` and `standard` may proceed with a PROVISIONAL synthesis if the user answers to continue without them. |
 | A connector/tool the profile assumes is unauthorized | Stage 0 connector preflight; `config.json` `connectors` | Name the server, say it is authorized in claude.ai → Settings → Connectors and picked up by a **new** session, and ask: reduced scope now, or stop and resume connected? Never fake the coverage |
 | A script crashes or a check cannot run | non-zero exit, traceback | Quote the actual error. Do not paraphrase a traceback into "some issues" |
 | A budget is hit | `max_articles`, `max_fulltext_failures`, `max_wall_time` | Say which budget, what it cut, and what the run would look like without it |
@@ -421,7 +447,8 @@ Two rules that override any instinct to keep the run looking clean:
 
 | Failure | Response |
 |---|---|
-| Acquisition failure | Quarantine the source; after the full attempt, halt and ask the user for the PDF in every profile — `systematic`/`max` require it before extraction, `fast`/`standard` may continue provisionally on the user's say-so |
+| Acquisition failure (zero text) | Quarantine the source; after the full attempt, halt and ask the user for the PDF in every profile — `systematic`/`max` require it before extraction, `fast`/`standard` may continue provisionally on the user's say-so |
+| Acquisition degraded (abstract-only after the ladder exhausted every rung, `references/acquisition.md` §7) | Same halt-and-ask, same table, right alongside quarantines — a stored abstract is not a reason to skip the ask |
 | Malformed subagent JSON | Retry once with the schema error, then failed/blocked |
 | Reporter/export failure | Preserve `outputs/report.md`, record in `engine.log` |
 | Authorization / paywall policy | **Fail closed.** Never fall back to circumvention |
@@ -429,20 +456,26 @@ Two rules that override any instinct to keep the run looking clean:
 
 ## Quarantine → inbox → resume loop
 
-Unobtainable full text → `missing.md` with PMID, DOI, PMCID, title, journal and direct
-PubMed/DOI/PMC links. Never ask the user for permission per record — quarantine it and keep
-walking the ladder for every remaining record; that is stage 4 finishing, not the pipeline
-finishing. Only once acquisition has been attempted for every selected record does the run
-surface the result: a single table (Title, PMID, DOI, PMCID, rung reached, links) covering all
-quarantined records at once, the exact path to drop PDFs into — `<run-dir>/inbox/` — and a
-question asking whether the user can supply any of them. In `systematic` and `max`, this is a
-hard gate: extraction (stage 5) does not start while `missing.md` is non-empty, regardless of the
-answer. In `fast` and `standard`, if the user answers to continue without the missing PDFs,
-extraction proceeds and the synthesis is marked PROVISIONAL. The user drops PDFs there; `scripts/library.py
-ingest-inbox` matches each PDF to its quarantined record (DOI regex `10\.\d{4,}/\S+` against
-page-1 `pdftotext` output, else fuzzy title), files it into `<wiki>/assets/papers/`; a rerun of
-`acquire` clears the resolved records from `missing.md`. The report states which studies arrived
-by manual supply.
+Unobtainable full text (zero text, every rung failed) → `missing.md` with PMID, DOI, PMCID,
+title, journal and direct PubMed/DOI/PMC links. A record where the ladder tried every remaining
+rung after a rung-1/5/7 hit but never found better than abstract-only (`references/acquisition.md`
+§2, §7 "Fallback walk-through") gets its own block in the same file — same file, same gate, a
+different `- Status:` line, real (degraded) text stored rather than nothing. Never ask the user
+for permission per record — quarantine it (or accept the fallback) and keep walking the ladder
+for every remaining record; that is stage 4 finishing, not the pipeline finishing. Only once
+acquisition has been attempted for every selected record does the run surface the result: a
+single table (Title, PMID, DOI, PMCID, rung reached, status, links) covering every blocked
+record at once — quarantined and abstract-only together, never just one kind — the exact path to
+drop PDFs into — `<run-dir>/inbox/` — and a question asking whether the user can supply any of
+them. In `systematic` and `max`, this is a hard gate: extraction (stage 5) does not start while
+`missing.md` is non-empty, regardless of the answer. In `fast` and `standard`, if the user
+answers to continue without the missing PDFs, extraction proceeds — quarantined records stay
+tagged missing, abstract-only records keep their stored degraded text — and the synthesis is
+marked PROVISIONAL. The user drops PDFs there; `scripts/library.py ingest-inbox` matches each PDF
+to its blocked record (DOI regex `10\.\d{4,}/\S+` against page-1 `pdftotext` output, else fuzzy
+title), files it into `<wiki>/assets/papers/`; a rerun of `acquire` clears the resolved records
+from `missing.md` (upgrading an abstract-only record to `fulltext` the same way a quarantine
+clears). The report states which studies arrived by manual supply.
 
 ---
 

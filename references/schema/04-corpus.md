@@ -71,7 +71,7 @@ deduped by `scripts/corpus.py`.
 | `access_route` | string \| null | yes | Short machine token for the concrete route, e.g. `library`, `pmc_mcp`, `pmc_pdf`, `epmc_xml`, `unpaywall_pdf`, `oa_html`, `preprint_twin`, `browser_fetch`, `browser_fetch_institutional` (opt-in only, human completed SSO themselves — `references/acquisition.md` §4b), `inbox_manual`, `quarantine`. |
 | `local_path` | string \| null | yes | Wiki-root-relative path of the stored PDF/text, e.g. `assets/papers/pmid-12345678.pdf`. `null` when nothing was stored. |
 | `sha256` | string \| null | yes | Hex sha256 of the stored file; the library dedupe key. |
-| `truncation_detected` | bool | yes | `true` when the HTML/browser-text truncation detector fired (body <1500 words or paywall markers). Forces `status: abstract_only`. |
+| `truncation_detected` | bool | yes | `true` when the truncation detector fired on rung 1 (MCP text), rung 5 (HTML), or rung 7 (browser text) — body <1500 words or a paywall marker. Forces `status: abstract_only`. A truncated result is not necessarily this record's *final* outcome: the ladder tries every remaining rung before settling for it (`references/acquisition.md` §2, §7 "Fallback walk-through"). |
 
 Invariant: `status == "missing"` ⇒ `source_tier == 8` and the record appears in `missing.md`.
 Invariant: `truncation_detected == true` ⇒ `status == "abstract_only"`.

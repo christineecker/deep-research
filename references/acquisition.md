@@ -63,14 +63,18 @@ it rung 4 is `skipped`, never guessed.
 
 ---
 
-## 2. Truncation detector (HTML route only)
+## 2. Truncation detector
 
-Runs on every rung-5 HTML response. Fires if **either** condition holds:
+Runs on rung 5's HTML response, and — same rules, applied directly to already-extracted plain
+text (`detect_truncation_text`) — on whatever rung 1 (PubMed MCP) and rung 7 (browser) hand
+back. Any of the three can return an abstract with a page's worth of teaser text around it, and
+`get_full_text_article` / a browser extraction have no tag structure left to strip, so the same
+two checks apply to raw text as to stripped HTML. Fires if **either** condition holds:
 
 | Rule | Threshold |
 |---|---|
-| Body word count after tag stripping | `< 1500` words |
-| Paywall marker present in body text or raw HTML (case-insensitive substring) | any of the list below |
+| Body word count (after tag stripping, for the HTML route) | `< 1500` words |
+| Paywall marker present in the text (case-insensitive substring) | any of the list below |
 
 Marker list — exactly these five strings:
 
@@ -86,6 +90,14 @@ On fire: `truncation_detected: true`, `status` downgraded to `abstract_only`, ne
 The reasons (`body_words=303<1500`, `paywall_marker=Access options`) are written to the rung
 detail and `engine.log`. The text is still stored — it is a legitimate abstract-plus-teaser —
 but every downstream claim carries the abstract-only label.
+
+**A truncated success no longer stops the ladder.** Rungs 1, 5, and 7 are the only three that
+can fire the detector; when one does, `acquire_record` keeps the first such result as a
+*fallback* and keeps walking every remaining rung looking for genuine full text (§7 "Fallback
+walk-through" below) — it does not settle for the first abstract-only hit while five more rungs
+remain untried. Only if the whole ladder is exhausted without anything better does the fallback
+get finalized, and even then it is written into `missing.md` as an abstract-only block (§5) so
+the halt-before-stage-5 gate surfaces it and asks for a real PDF — not silently accepted.
 
 The detector is deliberately trigger-happy: a false `abstract_only` costs a label, a false
 `fulltext` corrupts the appraisal.
@@ -128,6 +140,14 @@ metadata is *not* trusted — it rarely carries a DOI.
 | 5 | coordinator | `fulltext.py resolve-mcp --run-dir <dir> --evidence-id <id> --text-file <path>` — or simply re-runs `acquire`, which picks the file up on the next pass |
 | 6 | coordinator | if the tool reports no full text: `fulltext.py resolve-mcp --evidence-id <id> --status unavailable` so rung 1 is marked terminal and never retried |
 
+`resolve-mcp` does not finalize rung 1 on its own: it persists the coordinator's text (or the
+`unavailable` mark) and then calls the same `acquire_record` the ladder itself uses. A response
+under 100 chars fails rung 1 and the ladder moves on to rung 2 exactly as it would on a fresh
+`acquire` pass; a truncated (abstract-only) response is kept as a fallback while rungs 2-8 are
+still tried (§2, §7 "Fallback walk-through") rather than accepted as terminal. Calling
+`resolve-mcp` and re-running `acquire` are therefore equivalent, not two different code paths —
+use whichever is convenient.
+
 Task record shape:
 
 ```json
@@ -160,6 +180,13 @@ client-side rendering — but that is still, in principle, free to read.
 | 4 | coordinator | extracts the visible article body text and writes it verbatim (UTF-8) to the task's `result_path` (`workspace/fulltext/<stem>.browser.txt`) |
 | 5 | coordinator | `fulltext.py resolve-browser --run-dir <dir> --evidence-id <id> --text-file <path>` — or simply re-runs `acquire`, which picks the file up on the next pass |
 | 6 | coordinator | if nothing but a login wall, paywall, or captcha turns up: `fulltext.py resolve-browser --evidence-id <id> --status unavailable` so rung 7 is marked terminal and never retried |
+
+Like `resolve-mcp` (§4), `resolve-browser` does not finalize rung 7 by itself — it persists the
+text (or the `unavailable` mark, or the `--institutional` marker, §"Institutional access" below)
+and calls `acquire_record`. A truncated result becomes a fallback, not a terminal `abstract_only`
+(§2); rung 8 is the only rung this can preempt — reaching rung 7 with a fallback already in hand
+from an earlier rung means quarantine's zero-text write is skipped in favour of finalizing that
+fallback (§7 "Fallback walk-through").
 
 **Hard boundary, not a suggestion.** This rung exists solely to reach the *rendering* problem —
 never to reach past an access control. The same invariant §9 states for every other rung applies
@@ -216,11 +243,20 @@ block from `missing.md`.
 
 ## 5. Quarantine and the inbox resume loop
 
-Quarantine (`rung 8`) appends to `<run-dir>/missing.md`:
+`<run-dir>/missing.md` carries two kinds of block, both written by `append_missing_block` and
+both meaning "the user might be able to supply something better":
+
+- **Quarantined** (`rung 8`, zero text at all) — every rung failed outright.
+- **Abstract-only** (`§7 "Fallback walk-through"` below) — some earlier rung *did* return text,
+  but the truncation detector (§2) flagged it as degraded and the ladder tried every remaining
+  rung looking for real full text before giving up. `fulltext.status` stays `abstract_only`
+  with the real (degraded) text stored — this block is never a `status: missing` record, only a
+  flag that a full PDF would upgrade it.
 
 ```markdown
 ## <title>
 
+- Status: quarantined (no text obtained)
 - evidence_id: pmid:33333333
 - PMID: 33333333
 - DOI: 10.1000/paywalled
@@ -234,25 +270,35 @@ Quarantine (`rung 8`) appends to `<run-dir>/missing.md`:
 Action: place the PDF in `inbox/` (any filename) and re-run the skill.
 ```
 
+An abstract-only block is identical except its `- Status:` line reads e.g. `abstract-only (tier
+1, pmc_mcp) — the ladder tried every remaining rung and found nothing better; a full PDF would
+upgrade this record`.
+
 Stage 4 (retrieve) itself never stalls: it continues walking the ladder for every remaining
 record regardless of any single failure. Never ask the user whether to keep going, wait, or
-supply a PDF for an individual record mid-ladder — quarantine and continue to the next record.
+supply a PDF for an individual record mid-ladder — quarantine (or accept the abstract-only
+fallback) and continue to the next record.
 
 What *does* stall, deliberately, is the pipeline as a whole: once acquisition has been
 attempted for every selected record, if `missing.md` is non-empty the run halts before stage 5
-(extraction). Alert the user once with a consolidated table of all quarantined records:
+(extraction) — **regardless of which kind of block it holds**. An abstract-only block is not
+a lesser case that can be waved through; the whole point of writing it is that the user gets
+asked, exactly as for a true quarantine. Alert the user once with a consolidated table of all
+blocked records:
 
-| Title | PMID | DOI | PMCID | Rung reached | Links |
-|---|---|---|---|---|---|
-| ... | 33333333 | 10.1000/paywalled | — | t8 | [PubMed](https://pubmed.ncbi.nlm.nih.gov/33333333/) · [DOI](https://doi.org/10.1000/paywalled) |
+| Title | PMID | DOI | PMCID | Rung reached | Status | Links |
+|---|---|---|---|---|---|---|
+| ... | 33333333 | 10.1000/paywalled | — | t8 | quarantined | [PubMed](https://pubmed.ncbi.nlm.nih.gov/33333333/) · [DOI](https://doi.org/10.1000/paywalled) |
+| ... | 42119772 | — | PMC1234567 | t1 (fallback) | abstract-only | [PubMed](https://pubmed.ncbi.nlm.nih.gov/42119772/) |
 
 Tell the user exactly where to put PDFs they find manually — `<run-dir>/inbox/` — and ask
-explicitly whether they can supply any of the quarantined records. For `systematic` and `max`
-this is a hard gate: extraction does not start, and no stage after it runs, until `missing.md` is
-empty. For `fast` and `standard`, the user may instead answer to continue without them, in which
-case extraction proceeds with those records tagged as missing and the synthesis marked
-PROVISIONAL. Run `library.py ingest-inbox` then re-run `fulltext.py acquire` to clear resolved
-records before continuing.
+explicitly whether they can supply any of the blocked records, quarantined or abstract-only
+alike. For `systematic` and `max` this is a hard gate: extraction does not start, and no stage
+after it runs, until `missing.md` is empty. For `fast` and `standard`, the user may instead
+answer to continue without them; extraction then proceeds with quarantined records tagged
+`missing` and abstract-only records left exactly as they are (their real, degraded text used
+as-is), and the synthesis marked PROVISIONAL either way. Run `library.py ingest-inbox` then
+re-run `fulltext.py acquire` to clear resolved records before continuing.
 
 Resume loop:
 
@@ -323,6 +369,31 @@ shadow it (`assets/`, `assets/*`, `/assets/…`, the four rules themselves) are 
 ---
 
 ## 7. Resumability
+
+### Fallback walk-through
+
+When rung 1, 5, or 7 returns a truncated (abstract-only) success, `acquire_record` does not
+finalize it on the spot. It keeps the **first** such result as `fallback = (tier, res)`, marks
+that rung's state as `success` (so it is never redone), and keeps walking every remaining rung:
+
+- A later rung returning genuine full text wins outright — finalized immediately, the fallback
+  is discarded, and `library.unquarantine` (already unconditional on any non-`missing` finalize)
+  removes any `missing.md` block for the record, abstract-only or quarantined.
+- A later rung also returning truncated text does not replace the fallback — first found, kept.
+- Rung 8 is preempted: if a fallback exists by the time the loop would reach it, quarantine's
+  unconditional zero-text write is skipped entirely (it would otherwise silently overwrite the
+  degraded-but-real text with `status: missing`).
+- If the ladder reaches its end with a fallback in hand and nothing better, *that* fallback is
+  finalized (`status: abstract_only`, its own tier and `access_route`, real text stored) and
+  `append_missing_block` writes the abstract-only block (§5) — the record surfaces at the
+  halt-before-stage-5 gate exactly like a true quarantine, just labeled differently.
+- If the ladder reaches its end with **no** fallback at all, rung 8 runs as before: a genuine
+  zero-text quarantine.
+
+`resolve-mcp` and `resolve-browser` (§4, §4b) do not duplicate any of this — they persist the
+coordinator's input and call the same `acquire_record`, so this walk-through applies identically
+whether text arrives via those commands or via a plain `acquire` re-run picking up a dropped
+file.
 
 | Guarantee | Mechanism |
 |---|---|
