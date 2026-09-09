@@ -661,6 +661,15 @@ def read_jsonl(path: Path) -> list[dict]:
     return out
 
 
+def latest_task(taskboard: list[dict], task_ids: set[str]) -> dict | None:
+    """Return the last taskboard record for any id in `task_ids`."""
+    found = None
+    for rec in taskboard:
+        if rec.get("task_id") in task_ids:
+            found = rec
+    return found
+
+
 def relpath(target: Path, from_file: Path) -> str:
     return os.path.relpath(str(target), str(from_file.parent)).replace(os.sep, "/")
 
@@ -1754,12 +1763,42 @@ def load_run(run_dir: Path) -> dict:
             break
     report_path = run_dir / "outputs" / "report.md"
     run["report_md"] = report_path.read_text(encoding="utf-8") if report_path.exists() else ""
+    digest_path = run_dir / "outputs" / "digest.md"
+    run["digest_md"] = digest_path.read_text(encoding="utf-8") if digest_path.exists() else ""
+    run["digest_path"] = digest_path
+    run["taskboard"] = read_jsonl(run_dir / "taskboard.jsonl")
     ver_path = run_dir / "outputs" / "verification.json"
     run["verification"] = read_json(ver_path) if ver_path.exists() else None
     run["slug"] = run["config"].get("slug") or run_dir.name
     run["question"] = run["config"].get("question") or run["config"].get("title") \
         or run["slug"].replace("-", " ")
     return run
+
+
+def validate_digest_ready(run: dict) -> tuple[bool, str]:
+    """Stage 7b promotion gate: digest file plus completed taskboard receipt."""
+    digest = (run.get("digest_md") or "").strip()
+    digest_path = run.get("digest_path")
+    if not digest:
+        return False, f"Stage 7b digest is missing or empty: {digest_path}"
+
+    task_ids = {"digest:report", "digest:slug:report"}
+    receipt = latest_task(run.get("taskboard") or [], task_ids)
+    if receipt is None:
+        return False, (
+            "Stage 7b digest has no completed taskboard receipt "
+            "(`digest:slug:report`, legacy `digest:report` also accepted)"
+        )
+    if receipt.get("status") != "completed":
+        return False, (
+            f"Stage 7b digest task is {receipt.get('status')!r}, not 'completed'"
+        )
+    if receipt.get("output_path") != "outputs/digest.md":
+        return False, (
+            "Stage 7b digest receipt output_path must be `outputs/digest.md` "
+            f"(got {receipt.get('output_path')!r})"
+        )
+    return True, "digest ready"
 
 
 def report_section(report: str, *names: str) -> list[str]:
@@ -2362,6 +2401,12 @@ def cmd_promote(args) -> int:
         return finish_promote_failure(preflight, None, run_dir, fence, check_only,
                                       f"promote {run['slug']}")
 
+    digest_ok, digest_reason = validate_digest_ready(run)
+    if not digest_ok:
+        raise OkfError(
+            f"{digest_reason} — run the Stage 7b digest subagent before OKF promotion"
+        )
+
     verification = run["verification"]
     if verification is None:
         if not args.allow_unverified:
@@ -2574,7 +2619,7 @@ def build_run_concepts(run: dict, wiki: Path, research: Path, now: str,
     # --- Review ---------------------------------------------------------------
     review_path = research / "reviews" / f"{slug}.md"
     review_sources, review_labels = collect_sources(included, review_path, wiki)
-    report_body = strip_frontmatter_body(run["report_md"])
+    digest_body = strip_frontmatter_body(run["digest_md"])
     body_lines = [f"# Review: {question}", ""]
     body_lines.append(
         f"Evidence review covering {len(included)} included record(s) from run `{slug}`."
@@ -2583,8 +2628,8 @@ def build_run_concepts(run: dict, wiki: Path, research: Path, now: str,
                    f"- [Protocol](../protocols/{slug}.md)",
                    f"- [Search Strategy](../searches/{slug}.md)", "",
                    "## Included studies", "", study_links(included), ""]
-    if report_body:
-        body_lines += ["## Report", "", report_body, ""]
+    if digest_body:
+        body_lines += ["## Digest", "", digest_body, ""]
     body_lines.append(footnote_block(review_sources, review_labels))
     review_extra = {"run_slug": slug,
                     "evidence_ids": [r.get("evidence_id") for r in included

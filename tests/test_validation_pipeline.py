@@ -5,7 +5,16 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from helpers import ROOT, load_script, make_run, minimal_corpus_record, run_py, write_json, write_jsonl
+from helpers import (
+    ROOT,
+    load_script,
+    make_run,
+    minimal_corpus_record,
+    run_py,
+    write_digest_receipt,
+    write_json,
+    write_jsonl,
+)
 
 
 store = load_script("store.py")
@@ -41,6 +50,7 @@ class ValidationPipelineSmokeTest(unittest.TestCase):
                 "12345678. DOI 10.1000/validation. PubMed "
                 "https://pubmed.ncbi.nlm.nih.gov/12345678/\n",
                 encoding="utf-8")
+            write_digest_receipt(run)
 
             assembled = run_py(["scripts/assemble.py", "run", "--run-dir", str(run)], cwd=ROOT)
             self.assertEqual(assembled.returncode, 0, assembled.stderr + assembled.stdout)
@@ -110,6 +120,7 @@ class ValidationPipelineSmokeTest(unittest.TestCase):
             })
             assembled = run_py(["scripts/assemble.py", "run", "--run-dir", str(run)], cwd=ROOT)
             self.assertEqual(assembled.returncode, 0, assembled.stderr + assembled.stdout)
+            write_digest_receipt(run)
             before = sorted(str(p.relative_to(wiki)) for p in (wiki / "research").rglob("*"))
             check = run_py([
                 "scripts/okf.py", "promote", "--run-dir", str(run), "--wiki", str(wiki),

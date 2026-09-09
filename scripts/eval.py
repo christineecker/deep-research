@@ -134,6 +134,21 @@ def write_report(run: Path) -> None:
         encoding="utf-8")
 
 
+def write_digest(run: Path) -> None:
+    (run / "outputs" / "digest.md").write_text(
+        "# Evidence-kernel eval digest\n\n"
+        "The trial enrolled 42 adults.[^pubmed-12345678]\n\n"
+        "## References\n\n"
+        "[^pubmed-12345678]: Smith JA. Journal of Validation. PMID 12345678. "
+        "DOI 10.1000/validation. PubMed "
+        "https://pubmed.ncbi.nlm.nih.gov/12345678/\n",
+        encoding="utf-8")
+    write_jsonl(run / "taskboard.jsonl", [
+        {"task_id": "digest:slug:report", "status": "completed",
+         "output_path": "outputs/digest.md"}
+    ])
+
+
 def run_cli(args: list[str]) -> dict:
     proc = subprocess.run([sys.executable, *args], cwd=ROOT, text=True,
                           capture_output=True, timeout=120)
@@ -149,6 +164,7 @@ def run_case(case: dict, out_root: Path) -> dict:
     _wiki, run = make_run(base, slug)
     write_extraction(run, case["mode"])
     write_report(run)
+    write_digest(run)
 
     result = assemble.Assembler(run).run()
     assemble.write_result(result, run / "outputs" / "result.json")

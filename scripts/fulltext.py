@@ -365,6 +365,28 @@ def upsert_mcp_task(run_dir: Path, task: dict) -> None:
     tmp.replace(path)
 
 
+def pending_mcp_tasks(run_dir: Path, records: list[dict]) -> list[dict]:
+    """Rung-1 tasks still requiring coordinator action.
+
+    A later rung can acquire full text after rung 1 emitted `needs_mcp`; those tasks are
+    stale and must not keep surfacing as blockers.
+    """
+    fulltext_by_eid = {
+        evidence_id_of(rec): (rec.get("fulltext") or {}).get("status")
+        for rec in records
+    }
+    pending = []
+    for task in read_mcp_tasks(run_dir):
+        if task.get("status") != "needs_mcp":
+            continue
+        if (run_dir / task["result_path"]).exists():
+            continue
+        if fulltext_by_eid.get(task.get("evidence_id")) == "fulltext":
+            continue
+        pending.append(task)
+    return pending
+
+
 # ----------------------------------------------------------- kernel mapping ----
 #
 # Rung -> snapshot (`access`, `origin`), schema.md §10 enums. `access` describes the
@@ -516,13 +538,14 @@ def register_acquisition(rec: dict, ctx: Ctx, state: dict, tier: int, res: dict,
 
 class Ctx:
     def __init__(self, run_dir: Path, wiki_root: Path, email: str | None, offline: bool,
-                 allow_ocr: bool = True, register: bool = True):
+                 allow_ocr: bool = True, register: bool = True, max_ocr_pages: int = 30):
         self.run_dir = run_dir
         self.wiki_root = wiki_root
         self.email = email
         self.offline = offline
         self.allow_ocr = allow_ocr
         self.register = register
+        self.max_ocr_pages = max_ocr_pages
         self.http = Http(email, offline=offline)
         self.lib = Library(wiki_root)
 
@@ -559,7 +582,8 @@ def rung0_library(rec: dict, ctx: Ctx, state: dict) -> dict:
     if not pdf.exists():
         return {"status": "failed", "detail": "index entry points at a missing file: %s"
                 % entry.get("path")}
-    text, used_ocr = pdf_text_with_ocr(pdf) if ctx.allow_ocr else (library.pdftotext(pdf), False)
+    text, used_ocr = pdf_text_with_ocr(pdf, ctx.max_ocr_pages) if ctx.allow_ocr \
+        else (library.pdftotext(pdf), False)
     if len(text.strip()) < MIN_TEXT_CHARS:
         return {"status": "failed", "detail": "library PDF yielded <%d chars" % MIN_TEXT_CHARS}
     return {
@@ -632,7 +656,8 @@ def rung2_pmc_pdf(rec: dict, ctx: Ctx, state: dict) -> dict:
     with open(pdf, "wb") as fh:
         for chunk in resp.iter_content(1 << 16):
             fh.write(chunk)
-    text, used_ocr = pdf_text_with_ocr(pdf) if ctx.allow_ocr else (library.pdftotext(pdf), False)
+    text, used_ocr = pdf_text_with_ocr(pdf, ctx.max_ocr_pages) if ctx.allow_ocr \
+        else (library.pdftotext(pdf), False)
     if len(text.strip()) < MIN_TEXT_CHARS:
         return {"status": "failed", "detail": "PMC PDF text <%d chars (OCR too)" % MIN_TEXT_CHARS}
     return {"status": "success", "detail": "PMC OA PDF%s" % ("; OCR used" if used_ocr else ""),
@@ -779,8 +804,8 @@ def rung5_oa_fetch(rec: dict, ctx: Ctx, state: dict) -> dict:
     if "pdf" in ctype or body[:5] == b"%PDF-":
         pdf = ctx.tmp_path(rec, ".pdf")
         pdf.write_bytes(body)
-        text, used_ocr = pdf_text_with_ocr(pdf) if ctx.allow_ocr else (library.pdftotext(pdf),
-                                                                      False)
+        text, used_ocr = pdf_text_with_ocr(pdf, ctx.max_ocr_pages) if ctx.allow_ocr \
+            else (library.pdftotext(pdf), False)
         if len(text.strip()) < MIN_TEXT_CHARS:
             return {"status": "failed",
                     "detail": "OA PDF text <%d chars (OCR too)" % MIN_TEXT_CHARS}
@@ -1071,6 +1096,21 @@ def resolve_workers(args, run_dir: Path) -> int:
     return max(1, min(n, MAX_WORKERS))
 
 
+def resolve_max_ocr_pages(args, run_dir: Path) -> int:
+    n = getattr(args, "max_ocr_pages", None)
+    if n is None:
+        try:
+            cfg = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+            n = (cfg.get("budgets") or {}).get("max_ocr_pages")
+        except (OSError, ValueError):
+            n = None
+    try:
+        n = int(n) if n is not None else 30
+    except (TypeError, ValueError):
+        n = 30
+    return max(1, min(n, 200))
+
+
 def cmd_acquire(args) -> int:
     run_dir, wiki = resolve_paths(args)
     corpus_path = Path(args.corpus).expanduser().resolve()
@@ -1080,7 +1120,7 @@ def cmd_acquire(args) -> int:
         print(json.dumps({"error": "no records in %s" % corpus_path}, indent=2))
         return 1
     ctx = Ctx(run_dir, wiki, email, offline=args.offline, allow_ocr=not args.no_ocr,
-              register=not args.no_register)
+              register=not args.no_register, max_ocr_pages=resolve_max_ocr_pages(args, run_dir))
 
     # Selection happens up front, so `--limit` means "the first N selectable records" with a
     # pool exactly as it did with a serial loop. Breaking out of a pool mid-flight would make
@@ -1111,8 +1151,7 @@ def cmd_acquire(args) -> int:
         results = [acquire_record(rec, ctx, from_tier=args.from_tier) for rec in selected]
 
     write_corpus(corpus_path, records)
-    pending = [t for t in read_mcp_tasks(run_dir) if t.get("status") == "needs_mcp"
-               and not (run_dir / t["result_path"]).exists()]
+    pending = pending_mcp_tasks(run_dir, records)
     summary = {
         "schema_version": SCHEMA_VERSION,
         "run_dir": str(run_dir),
@@ -1202,9 +1241,7 @@ def cmd_status(args) -> int:
             missing.append(evidence_id_of(rec))
         if ft.get("truncation_detected"):
             truncated.append(evidence_id_of(rec))
-    tasks = read_mcp_tasks(run_dir)
-    pending = [t for t in tasks if t.get("status") == "needs_mcp"
-               and not (run_dir / t["result_path"]).exists()]
+    pending = pending_mcp_tasks(run_dir, records)
     out = {
         "schema_version": SCHEMA_VERSION,
         "run_dir": str(run_dir),
@@ -1300,6 +1337,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="local rungs only; network rungs are skipped, not failed")
     s.add_argument("--no-ocr", action="store_true", dest="no_ocr",
                    help="disable the tesseract OCR fallback")
+    s.add_argument("--max-ocr-pages", type=int, dest="max_ocr_pages",
+                   help="max pages to OCR per PDF (default: config.json budgets.max_ocr_pages, "
+                        "else 30)")
     s.add_argument("--no-register", action="store_true", dest="no_register",
                    help="do not register acquired text into <run-dir>/sources/ (kernel off)")
     s.add_argument("--workers", type=int, default=None,

@@ -21,7 +21,7 @@ Read this file, then read only the reference you need for the stage you are in.
 | PRISMA flow, citation format, report skeleton | `references/reporting.md` |
 | Wiki bundle frontmatter, taxonomy, validation rules | `references/okf-bundle.md` |
 | Snapshots, spans, freshness, the assembler gate | `references/evidence-kernel.md` |
-| Subagent prompt blocks | `references/prompts/{screen,adjudicate,extract,appraise}.md` |
+| Subagent prompt blocks | `references/prompts/{screen,adjudicate,extract,appraise,digest}.md` |
 
 ---
 
@@ -141,8 +141,9 @@ Put batch inputs, efetch payloads, rankings and other working files **outside** 
 the directory contract is still the rule.
 
 Write `config.json` first: profile, scope, rigor, gates, filters, wiki target, budgets
-(`max_articles`, `max_subagents`, `max_parallel`, `max_wall_time`, `max_fulltext_failures`),
-the `connectors` block from the preflight above, and the stage pointer. Run `scripts/library.py init --wiki <root>` once per wiki.
+(`max_articles`, `max_subagents`, `max_parallel`, `max_wall_time`, `max_fulltext_failures`,
+`max_ocr_pages`), the `connectors` block from the preflight above, and the stage pointer. Run
+`scripts/library.py init --wiki <root>` once per wiki.
 
 **Stage pointer**: bump `config.json`'s `stage` as each stage completes, in the same turn.
 It is the only thing a resume trusts to know where the run got to — a live coordinator that
@@ -165,6 +166,7 @@ incomplete/failed tasks. Do not restart the stage. Do not re-prompt.
 | 5 | Extract | subagents, 1/paper | opus | `workspace/extractions/pmid-*.json` |
 | 6 | Appraise | subagents, 1/paper | opus | `workspace/appraisals/pmid-*.json` |
 | 7 | Synthesize | main only | main | `outputs/report.md` |
+| 7b | Digest | subagent, 1 | opus | `outputs/digest.md` |
 | 8 | Verify / report | main | main | `outputs/verification.json` |
 
 **Stage 1 — protocol.** PICO/PECO, *numbered* inclusion/exclusion criteria (screening cites
@@ -196,14 +198,14 @@ Never ask the user for permission per record — just quarantine and keep walkin
 every remaining record. `acquire` fetches records concurrently (`--workers`, default 4, or
 `budgets.max_parallel`); per-host rate limits hold regardless, and `--offline` runs serially.
 
-Once acquisition has been attempted for every selected record (stage 4 fully finished), **the
-pipeline halts before stage 5** if `missing.md` is non-empty. State the fact — a single
-consolidated table (Title, PMID, DOI, PMCID, rung reached, links) — and the exact path to drop
-PDFs into: `<run_dir>/inbox/`. This is not a question; there is nothing to confirm. Extraction
-does not start until every quarantined record has been resolved: the user drops PDFs/HTML into
-`inbox/`, `python3 scripts/library.py ingest-inbox <run_dir>` matches them in, and
-`fulltext.py acquire` (or a rerun) clears `missing.md`. Only when `missing.md` is empty does
-stage 5 begin.
+Once acquisition has been attempted for every selected record (stage 4 fully finished), handle
+`missing.md` by profile. For `fast` and `standard`, continue to stage 5, tag the affected records
+as missing, and mark the synthesis **PROVISIONAL**. For `systematic` and `max`, **halt before
+stage 5** until every quarantined record has been resolved. In every profile, state the fact — a
+single consolidated table (Title, PMID, DOI, PMCID, rung reached, links) — and the exact path to
+drop PDFs into: `<run_dir>/inbox/`. This is not a question; there is nothing to confirm. The user
+drops PDFs/HTML into `inbox/`, `python3 scripts/library.py ingest-inbox <run_dir>` matches them
+in, and `fulltext.py acquire` (or a rerun) clears `missing.md`.
 
 **Stage 5 — extract.** One subagent per paper, opus, `references/prompts/extract.md`. Design,
 N, population, I/C, outcomes with effect + CI + direction, funding/COI, limitations, quotes
@@ -212,11 +214,11 @@ stage completes, run `python3 scripts/status.py <run_dir> --table` and post the 
 user — it shows which papers were downloaded, in what format (PDF/HTML/Text), and whether
 extraction ran, so the user can see corpus coverage before appraisal.
 
-Stage 6 does not start until stage 5 has actually finished for every record in the corpus —
-`status.py --table` shows no row still pending extraction. Since stage 4 already guaranteed
-`missing.md` is empty before stage 5 began, no record here should be `✗ Missing`; if one still
-is (e.g. a fresh quarantine surfaced during extraction itself), treat it the same way — halt,
-show the table, point at `inbox/`, and do not proceed until resolved.
+Stage 6 does not start until stage 5 has actually finished for every record eligible under the
+profile's quarantine policy — `status.py --table` shows no row still pending extraction. If a
+fresh quarantine surfaces during extraction itself, apply the same profile rule: `fast` and
+`standard` continue provisionally; `systematic` and `max` halt, show the table, point at
+`inbox/`, and do not proceed until resolved.
 
 **Stage 6 — appraise.** One subagent per paper, opus, `references/prompts/appraise.md`. Tool
 by design (RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 / none), then GRADE domains.
@@ -226,11 +228,24 @@ Abstract-only records are **not** appraised as if full text.
 conflict *with an explanation of why*, certainty, gaps, and a hard-walled hypotheses section.
 See `references/synthesis.md`.
 
+**Stage 7b — digest.** One subagent, opus, `references/prompts/digest.md`. Compresses the
+finished `outputs/report.md` (§1, §8, §9, §10, §11, §12, §15 only) into `outputs/digest.md`:
+answer-first paragraph, a categorical outcomes table (outcome/direction/certainty/studies), and
+a `## Open Questions` section merging gaps and hypotheses — each with what would resolve it. No
+new research, no re-derived judgement, same GRADE wordings and hard-walled hypothesis
+separation as the source report. This is the body content `okf.py promote` writes into
+`research/reviews/<slug>.md`; the full report stays linked from it as the audit trail, it does
+not replace §0-§16 for methods/PRISMA/provenance detail.
+
 **Stage 8 — assemble, verify, publish.** Fixed order:
 
 ```
 assemble.py run  ->  verify.py run  ->  render.py / html_report.py  ->  okf.py promote --check  ->  okf.py promote
 ```
+
+`okf.py promote` uses `outputs/digest.md` as the `reviews/<slug>.md` concept body; promotion
+blocks if Stage 7b has not produced a `completed` receipt, the same way it already blocks on a
+failed verifier pass.
 
 `assemble.py` decides which artifacts are admissible and writes `outputs/result.json`;
 `verify.py` runs the 12 report checks plus the four kernel checks and writes
@@ -266,8 +281,8 @@ reported as such.
   are expected; a subagent must not count, audit, or comment on files it did not write.
 - Launch independent subagents in a single message so they run concurrently, up to `max_parallel`.
 - Malformed subagent JSON → retry once, quoting the schema error → then mark failed/blocked.
-- Models: screening → sonnet; extraction and appraisal → opus; synthesis and verification →
-  main model.
+- Models: screening → sonnet; extraction, appraisal and digest → opus; synthesis and
+  verification → main model.
 
 ## Task board
 
@@ -287,8 +302,8 @@ unless `inputs_hash` changes. Failed tasks retry independently. `task_id` gramma
 ## Execution guardrails
 
 - Budgets `max_subagents`, `max_parallel`, `max_wall_time`, `max_articles`,
-  `max_fulltext_failures` live under `config.json`'s `budgets` object and are enforced, not
-  aspirational. `max_wall_time` is **seconds** as a bare number, or a suffixed string
+  `max_fulltext_failures`, and `max_ocr_pages` live under `config.json`'s `budgets` object and
+  are enforced, not aspirational. `max_wall_time` is **seconds** as a bare number, or a suffixed string
   (`90m`, `3h`, `1d`). Never write a bare number meaning minutes.
 - Duplicate PubMed / E-utilities / web queries are detected before execution and skipped or
   merged into the existing result.
@@ -312,7 +327,7 @@ the end.
 |---|---|---|
 | Ladder rung 1 unreachable | `acquire` reports `needs_mcp > 0` and no PubMed MCP tool is in your tool list | Rung 1 cannot run this session; the best source for paywalled records is unavailable. Resolve each task `--status unavailable` rather than leaving it pending, and say the shortfall is partly infrastructure, not only paywalls |
 | Majority without full text | `quarantined + abstract_only > half` of the selected set | Extraction quality is materially limited; say so **before** extracting, and mark the synthesis provisional |
-| Any quarantined record | `missing.md` is non-empty | Once acquisition has been attempted for every selected record (not per-record, mid-run), present the full quarantine list as one table — Title, PMID, DOI, PMCID, rung reached, links — and state the exact path to drop PDFs into (`<run-dir>/inbox/`). State this as fact, never as a question. The pipeline then **halts before stage 5** — it does not extract, appraise, or synthesize — until the user supplies the missing PDFs/HTML and `missing.md` is cleared via `ingest-inbox` + rerun. |
+| Any quarantined record | `missing.md` is non-empty | Once acquisition has been attempted for every selected record (not per-record, mid-run), present the full quarantine list as one table — Title, PMID, DOI, PMCID, rung reached, links — and state the exact path to drop PDFs into (`<run-dir>/inbox/`). State this as fact, never as a question. `fast` and `standard` continue with a PROVISIONAL synthesis; `systematic` and `max` halt before stage 5 until the user supplies the missing PDFs/HTML and `missing.md` is cleared via `ingest-inbox` + rerun. |
 | A connector/tool the profile assumes is unauthorized | Stage 0 connector preflight; `config.json` `connectors` | Name the server, say it is authorized in claude.ai → Settings → Connectors and picked up by a **new** session, and ask: reduced scope now, or stop and resume connected? Never fake the coverage |
 | A script crashes or a check cannot run | non-zero exit, traceback | Quote the actual error. Do not paraphrase a traceback into "some issues" |
 | A budget is hit | `max_articles`, `max_fulltext_failures`, `max_wall_time` | Say which budget, what it cut, and what the run would look like without it |
@@ -331,7 +346,7 @@ Two rules that override any instinct to keep the run looking clean:
 
 | Failure | Response |
 |---|---|
-| Acquisition failure | Quarantine the source, continue, mark synthesis provisional |
+| Acquisition failure | Quarantine the source; `fast`/`standard` continue provisionally, `systematic`/`max` halt before extraction until resolved |
 | Malformed subagent JSON | Retry once with the schema error, then failed/blocked |
 | Reporter/export failure | Preserve `outputs/report.md`, record in `engine.log` |
 | Authorization / paywall policy | **Fail closed.** Never fall back to circumvention |
@@ -345,12 +360,13 @@ walking the ladder for every remaining record; that is stage 4 finishing, not th
 finishing. Only once acquisition has been attempted for every selected record does the run
 surface the result: a single table (Title, PMID, DOI, PMCID, rung reached, links) covering all
 quarantined records at once, plus the exact path to drop PDFs into — `<run-dir>/inbox/`. This
-is a statement, not a question — but it **is** a hard gate: extraction (stage 5) does not
-start while `missing.md` is non-empty. The user drops PDFs there; `scripts/library.py
+is a statement, not a question. In `fast` and `standard`, extraction continues and the synthesis
+is marked PROVISIONAL. In `systematic` and `max`, this is a hard gate: extraction (stage 5) does
+not start while `missing.md` is non-empty. The user drops PDFs there; `scripts/library.py
 ingest-inbox` matches each PDF to its quarantined record (DOI regex `10\.\d{4,}/\S+` against
 page-1 `pdftotext` output, else fuzzy title), files it into `<wiki>/assets/papers/`; a rerun of
-`acquire` clears the resolved records from `missing.md`. Once it is empty, extraction,
-appraisal and synthesis proceed. The report states which studies arrived by manual supply.
+`acquire` clears the resolved records from `missing.md`. The report states which studies arrived
+by manual supply.
 
 ---
 

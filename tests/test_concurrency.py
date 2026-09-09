@@ -172,11 +172,58 @@ class WorkerResolutionTest(unittest.TestCase):
             self.assertEqual(fulltext.resolve_workers(_Args(workers="nonsense"), run),
                              fulltext.DEFAULT_WORKERS)
 
+    def test_max_ocr_pages_comes_from_flag_then_config_then_default(self):
+        with TemporaryDirectory() as tmp:
+            _, run = make_run(Path(tmp))
+            self.assertEqual(fulltext.resolve_max_ocr_pages(_Args(max_ocr_pages=4), run), 4)
+
+            import json as _json
+            cfg = _json.loads((run / "config.json").read_text())
+            cfg["budgets"] = {"max_ocr_pages": 7}
+            (run / "config.json").write_text(_json.dumps(cfg))
+            self.assertEqual(fulltext.resolve_max_ocr_pages(_Args(), run), 7)
+
+            cfg.pop("budgets")
+            (run / "config.json").write_text(_json.dumps(cfg))
+            self.assertEqual(fulltext.resolve_max_ocr_pages(_Args(), run), 30)
+
+    def test_max_ocr_pages_is_clamped(self):
+        with TemporaryDirectory() as tmp:
+            _, run = make_run(Path(tmp))
+            self.assertEqual(fulltext.resolve_max_ocr_pages(_Args(max_ocr_pages=0), run), 1)
+            self.assertEqual(fulltext.resolve_max_ocr_pages(_Args(max_ocr_pages=999), run), 200)
+            self.assertEqual(fulltext.resolve_max_ocr_pages(_Args(max_ocr_pages="bad"), run), 30)
+
+
+class McpTaskResolutionTest(unittest.TestCase):
+    def test_later_rung_fulltext_suppresses_stale_mcp_task(self):
+        with TemporaryDirectory() as tmp:
+            _, run = make_run(Path(tmp))
+            rec = {
+                "evidence_id": "pmid:12345678",
+                "pmid": "12345678",
+                "title": "A compact validation trial",
+                "fulltext": {"status": "fulltext"},
+            }
+            fulltext.upsert_mcp_task(run, {
+                "schema_version": 1,
+                "task_id": "retrieve:pmid:12345678",
+                "evidence_id": "pmid:12345678",
+                "status": "needs_mcp",
+                "tool": "mcp__claude_ai_PubMed__get_full_text_article",
+                "args": {"pmid": "12345678"},
+                "result_path": "workspace/fulltext/pmid-12345678.mcp.txt",
+                "created_at": "2026-09-09T00:00:00Z",
+            })
+
+            self.assertEqual(fulltext.pending_mcp_tasks(run, [rec]), [])
+
 
 class _Args:
-    def __init__(self, *, offline: bool = False, workers=None):
+    def __init__(self, *, offline: bool = False, workers=None, max_ocr_pages=None):
         self.offline = offline
         self.workers = workers
+        self.max_ocr_pages = max_ocr_pages
 
 
 if __name__ == "__main__":

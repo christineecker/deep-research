@@ -260,12 +260,12 @@ def ocr_pdf(pdf: Path, max_pages: int = 30) -> str:
     return "\n".join(out)
 
 
-def pdf_text_with_ocr(pdf: Path) -> tuple[str, bool]:
+def pdf_text_with_ocr(pdf: Path, max_ocr_pages: int = 30) -> tuple[str, bool]:
     """Return (text, used_ocr). OCR only when pdftotext yields < MIN_TEXT_CHARS."""
     text = pdftotext(pdf)
     if len(text.strip()) >= MIN_TEXT_CHARS:
         return text, False
-    ocr = ocr_pdf(pdf)
+    ocr = ocr_pdf(pdf, max_pages=max_ocr_pages)
     if len(ocr.strip()) > len(text.strip()):
         return ocr, True
     return text, False

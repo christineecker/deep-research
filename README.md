@@ -94,23 +94,25 @@ are not.
 ## 6. Quarantine → inbox → resume
 
 The workflow you will actually use. When a paper's full text is not obtainable through the OA
-ladder, the run does not stall — it quarantines and keeps going.
+ladder, the run quarantines it and then follows the selected profile's policy.
 
-1. **The run alerts you** with a count and the path to `<run-dir>/missing.md`, and marks the
-   synthesis provisional.
+1. **The run alerts you** with a count and the path to `<run-dir>/missing.md`.
 2. **You read `missing.md`.** Each block has the title, evidence_id, PMID, DOI, PMCID, journal,
    which rungs were attempted, and direct PubMed / DOI / PMC links to fetch it yourself.
-3. **You drop the PDFs into `<run-dir>/inbox/`.** Any filenames; no renaming needed.
-4. **You rerun the skill** (or run `library.py ingest-inbox --run-dir <dir>` directly).
-5. Matching: page-1 `pdftotext` output → DOI regex `10\.\d{4,}/\S+` → exact DOI match against
+3. In `fast` and `standard`, the run continues and marks the synthesis **PROVISIONAL**. In
+   `systematic` and `max`, the run halts before extraction until the missing full text is
+   resolved.
+4. **You drop the PDFs into `<run-dir>/inbox/`.** Any filenames; no renaming needed.
+5. **You rerun the skill** (or run `library.py ingest-inbox --run-dir <dir>` directly).
+6. Matching: page-1 `pdftotext` output → DOI regex `10\.\d{4,}/\S+` → exact DOI match against
    the corpus; failing that, fuzzy title match against quarantined records (normalized title
    slid across page-1 text, ratio ≥ 0.85; titles under 25 normalized characters are never
    fuzzy-matched). Unmatched PDFs stay in `inbox/` and are listed with a reason — never guessed
    onto a record.
-6. The PDF is filed into `<wiki>/assets/papers/` (sha256 dedupe), `index.json` and
+7. The PDF is filed into `<wiki>/assets/papers/` (sha256 dedupe), `index.json` and
    `corpus.jsonl` are updated (`source_tier: 0`, `access_route: inbox_manual`), the record's
    block is removed from `missing.md`, and the text is extracted to `workspace/fulltext/`.
-7. The run extracts, appraises and **re-synthesises** the newly available studies.
+8. The run extracts, appraises and **re-synthesises** the newly available studies.
 
 **The report records which studies arrived by manual supply.** Use `--no-apply` on
 `ingest-inbox` to see the proposed matches without rewriting `corpus.jsonl`.
@@ -195,7 +197,8 @@ The table columns are:
   frontmatter with `okf.py`'s own serializer (`okf.py selftest` round-trips it).
 - **Binaries**: `pdftotext`, `pdfinfo` (text extraction and PDF metadata), `tesseract` (OCR
   fallback when a PDF yields under ~100 characters), `quarto` + `pandoc` (PDF/docx export).
-  `ocrmypdf` is not installed and not used.
+  `ocrmypdf` is not installed and not used. OCR scans at most `budgets.max_ocr_pages` pages per
+  PDF when set in `config.json`; otherwise the default cap is 30.
 - **`NCBI_API_KEY`** (optional) — 3 requests/s without it, 10 with.
 - **`DEEP_RESEARCH_EMAIL`** (required by the Unpaywall rung; also sent as `email=` to NCBI per
   their policy). Overridable per call with `--email`.

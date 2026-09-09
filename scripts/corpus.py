@@ -65,7 +65,7 @@ DEFAULT_TITLE_THRESHOLD = 0.93
 
 STAGES = (
     "protocol", "search", "screen", "adjudicate", "retrieve", "extract",
-    "appraise", "synthesize", "verify", "report", "okf",
+    "appraise", "synthesize", "digest", "verify", "report", "okf",
 )
 TASK_STATUSES = ("pending", "active", "completed", "blocked", "failed", "cancelled")
 KEY_KINDS = ("pmid", "doi", "pmcid", "query", "url", "slug", "batch")
@@ -544,7 +544,7 @@ def merge_records(existing: dict, incoming: dict) -> dict:
     out["retraction_status"] = non_none[0] if non_none else "none"
 
     out["source"] = _prefer(existing.get("source"), incoming.get("source"), keep_existing)
-    out["is_preprint"] = bool(existing.get("is_preprint")) and bool(incoming.get("is_preprint"))
+    out["is_preprint"] = bool(existing.get("is_preprint")) or bool(incoming.get("is_preprint"))
 
     out["screening"] = existing.get("screening") or incoming.get("screening")
 

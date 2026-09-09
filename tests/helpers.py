@@ -42,6 +42,14 @@ def make_run(tmp_path: Path, slug: str = "validation-run") -> tuple[Path, Path]:
     return wiki, run
 
 
+def write_digest_receipt(run: Path, body: str = "# Digest\n\nSynthetic digest.\n") -> None:
+    (run / "outputs" / "digest.md").write_text(body, encoding="utf-8")
+    write_jsonl(run / "taskboard.jsonl", [
+        {"task_id": "digest:slug:report", "status": "completed",
+         "output_path": "outputs/digest.md"}
+    ])
+
+
 def write_json(path: Path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
