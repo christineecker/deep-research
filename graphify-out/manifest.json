@@ -1,0 +1,312 @@
+{
+  "/Users/sphache/.claude/skills/deep-research/.claude/settings.json": {
+    "mtime": 1788864312.8631253,
+    "ast_hash": "4f248df20a4c266f173765c9f412494d",
+    "semantic_hash": "4f248df20a4c266f173765c9f412494d"
+  },
+  "/Users/sphache/.claude/skills/deep-research/.vscode/settings.json": {
+    "mtime": 1788864065.2373853,
+    "ast_hash": "99914b932bd37a50b983c5e7c90ae93b",
+    "semantic_hash": "99914b932bd37a50b983c5e7c90ae93b"
+  },
+  "/Users/sphache/.claude/skills/deep-research/eval/cases.json": {
+    "mtime": 1788873859.757603,
+    "ast_hash": "21b2131c6f950c77874f88baa3f5e747",
+    "semantic_hash": "21b2131c6f950c77874f88baa3f5e747"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/_common.py": {
+    "mtime": 1788877705.4780512,
+    "ast_hash": "5a9b643dead407d979192a061400e9ac",
+    "semantic_hash": "5a9b643dead407d979192a061400e9ac"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/assemble.py": {
+    "mtime": 1788877683.1027825,
+    "ast_hash": "84484fd348084c0ac26d9b9ead6cff02",
+    "semantic_hash": "84484fd348084c0ac26d9b9ead6cff02"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/corpus.py": {
+    "mtime": 1788878223.0859993,
+    "ast_hash": "7f7b19345845dd8a4d022b9fe6432347",
+    "semantic_hash": "7f7b19345845dd8a4d022b9fe6432347"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/eutils.py": {
+    "mtime": 1788877818.6099434,
+    "ast_hash": "c39fa364604ceb3a238634010e9a301c",
+    "semantic_hash": "c39fa364604ceb3a238634010e9a301c"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/eval.py": {
+    "mtime": 1788874047.0857477,
+    "ast_hash": "0fc9a05e399ebb80ccc8820003faf47b",
+    "semantic_hash": "0fc9a05e399ebb80ccc8820003faf47b"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/fulltext.py": {
+    "mtime": 1788878196.2409163,
+    "ast_hash": "d4bfb7d251975a60dae527db36b95877",
+    "semantic_hash": "d4bfb7d251975a60dae527db36b95877"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/html_report.py": {
+    "mtime": 1788877683.0961928,
+    "ast_hash": "411586401d52a9b4a2f2f9da96f19211",
+    "semantic_hash": "411586401d52a9b4a2f2f9da96f19211"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/library.py": {
+    "mtime": 1788877683.076049,
+    "ast_hash": "db5c985f78165a05b88aaf5848518fe5",
+    "semantic_hash": "db5c985f78165a05b88aaf5848518fe5"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/okf.py": {
+    "mtime": 1788878196.2399774,
+    "ast_hash": "b0e63d16508230a5ee8722c160465f46",
+    "semantic_hash": "b0e63d16508230a5ee8722c160465f46"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/render.py": {
+    "mtime": 1788877683.0816085,
+    "ast_hash": "4c0168cc18ab53e7b385b7623907a8a3",
+    "semantic_hash": "4c0168cc18ab53e7b385b7623907a8a3"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/source.py": {
+    "mtime": 1788877767.1860425,
+    "ast_hash": "3258ceedb42bcd2629a4e3388e4ed89f",
+    "semantic_hash": "3258ceedb42bcd2629a4e3388e4ed89f"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/store.py": {
+    "mtime": 1788877683.07138,
+    "ast_hash": "6296a45bfe300c2eeac6bf3e5944dcf2",
+    "semantic_hash": "6296a45bfe300c2eeac6bf3e5944dcf2"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/verify.py": {
+    "mtime": 1788877683.146268,
+    "ast_hash": "29284921c540be7f7ced024d001e5b41",
+    "semantic_hash": "29284921c540be7f7ced024d001e5b41"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/watch.py": {
+    "mtime": 1788870869.6982353,
+    "ast_hash": "951c8dec3bb760d750e567d47fc64bb1",
+    "semantic_hash": "951c8dec3bb760d750e567d47fc64bb1"
+  },
+  "/Users/sphache/.claude/skills/deep-research/tests/fixtures/eutils/esearch-79ebc17b9a23fc94.json": {
+    "mtime": 1788869551.3625164,
+    "ast_hash": "15107f6da7d318d4eeb2a3a50c31a425",
+    "semantic_hash": "15107f6da7d318d4eeb2a3a50c31a425"
+  },
+  "/Users/sphache/.claude/skills/deep-research/tests/helpers.py": {
+    "mtime": 1788873920.9994895,
+    "ast_hash": "2c91b452142bea23971df8bab3c3f599",
+    "semantic_hash": "2c91b452142bea23971df8bab3c3f599"
+  },
+  "/Users/sphache/.claude/skills/deep-research/tests/test_assemble.py": {
+    "mtime": 1788873972.6982346,
+    "ast_hash": "fe100cddfbe829e38f69d4eaacff4717",
+    "semantic_hash": "fe100cddfbe829e38f69d4eaacff4717"
+  },
+  "/Users/sphache/.claude/skills/deep-research/tests/test_concurrency.py": {
+    "mtime": 1788877705.4773426,
+    "ast_hash": "f39d4cbd5525222698abc08eaa1ed14c",
+    "semantic_hash": "f39d4cbd5525222698abc08eaa1ed14c"
+  },
+  "/Users/sphache/.claude/skills/deep-research/tests/test_source.py": {
+    "mtime": 1788873972.6002505,
+    "ast_hash": "b91f86d4cf88be4c7387c9b1e8ba6152",
+    "semantic_hash": "b91f86d4cf88be4c7387c9b1e8ba6152"
+  },
+  "/Users/sphache/.claude/skills/deep-research/tests/test_store.py": {
+    "mtime": 1788873972.5123134,
+    "ast_hash": "63a137bf48565edfbd97e98dca35d653",
+    "semantic_hash": "63a137bf48565edfbd97e98dca35d653"
+  },
+  "/Users/sphache/.claude/skills/deep-research/tests/test_validation_pipeline.py": {
+    "mtime": 1788873972.7937896,
+    "ast_hash": "a24d12691b2e22cf0c57f72e4637f228",
+    "semantic_hash": "a24d12691b2e22cf0c57f72e4637f228"
+  },
+  "/Users/sphache/.claude/skills/deep-research/README.md": {
+    "mtime": 1788880588.2896314,
+    "ast_hash": "3252b75d76d7cfb65d51ae6923cc9fba",
+    "semantic_hash": "3252b75d76d7cfb65d51ae6923cc9fba"
+  },
+  "/Users/sphache/.claude/skills/deep-research/SKILL.md": {
+    "mtime": 1788878928.848753,
+    "ast_hash": "8f8f86e76a7eb2d8794111a076eb83e1",
+    "semantic_hash": "8f8f86e76a7eb2d8794111a076eb83e1"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/acquisition.md": {
+    "mtime": 1788877683.0250585,
+    "ast_hash": "76030ca1187faeaf99652e4c0aa4e7a9",
+    "semantic_hash": "76030ca1187faeaf99652e4c0aa4e7a9"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/appraisal.md": {
+    "mtime": 1788877683.0318785,
+    "ast_hash": "d2d421ed35aebaa137bc846cc6d1c570",
+    "semantic_hash": "d2d421ed35aebaa137bc846cc6d1c570"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/evidence-kernel.md": {
+    "mtime": 1788878153.9958155,
+    "ast_hash": "28e59297a18dae63133694e190ad5233",
+    "semantic_hash": "28e59297a18dae63133694e190ad5233"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/okf-bundle.md": {
+    "mtime": 1788878154.0058014,
+    "ast_hash": "15c1ebe216d64f6a33e7762f565163e7",
+    "semantic_hash": "15c1ebe216d64f6a33e7762f565163e7"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/prompts/adjudicate.md": {
+    "mtime": 1788878179.5451014,
+    "ast_hash": "4382b916e0b2fb807d28070219941fcf",
+    "semantic_hash": "4382b916e0b2fb807d28070219941fcf"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/prompts/screen.md": {
+    "mtime": 1788878179.4386752,
+    "ast_hash": "a86b5584866c5ba1ede95ddec567ea3c",
+    "semantic_hash": "a86b5584866c5ba1ede95ddec567ea3c"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/reporting.md": {
+    "mtime": 1788878939.515164,
+    "ast_hash": "b1074bd5346e30639677fb1f82e3a606",
+    "semantic_hash": "b1074bd5346e30639677fb1f82e3a606"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema.md": {
+    "mtime": 1788877683.0224404,
+    "ast_hash": "1035bc6ca6b5e8b0c5b17f1f59c37373",
+    "semantic_hash": "1035bc6ca6b5e8b0c5b17f1f59c37373"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/00-shared.md": {
+    "mtime": 1788877683.038008,
+    "ast_hash": "9c12b123f39a7e81e2f843c0cb5ef44d",
+    "semantic_hash": "9c12b123f39a7e81e2f843c0cb5ef44d"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/01-receipt.md": {
+    "mtime": 1788875070.100051,
+    "ast_hash": "8b58ca906eec275286f1324d39e9f000",
+    "semantic_hash": "8b58ca906eec275286f1324d39e9f000"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/02-taskboard.md": {
+    "mtime": 1788877683.0423963,
+    "ast_hash": "638d2a1d96eba4945775df0b837d1d06",
+    "semantic_hash": "638d2a1d96eba4945775df0b837d1d06"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/03-search.md": {
+    "mtime": 1788877683.0487819,
+    "ast_hash": "4b3a7c11f2fe4b88b16a730e6a889528",
+    "semantic_hash": "4b3a7c11f2fe4b88b16a730e6a889528"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/04-corpus.md": {
+    "mtime": 1788877683.0525088,
+    "ast_hash": "c833a7fe11a90f5ba8ae5639d00a57bc",
+    "semantic_hash": "c833a7fe11a90f5ba8ae5639d00a57bc"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/05-screening.md": {
+    "mtime": 1788875070.1036534,
+    "ast_hash": "5f0eb18bff47eaad15d2f8a97d6a7be7",
+    "semantic_hash": "5f0eb18bff47eaad15d2f8a97d6a7be7"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/06-adjudication.md": {
+    "mtime": 1788877683.049598,
+    "ast_hash": "4c02e65d1fd23722b87476d413dab5e9",
+    "semantic_hash": "4c02e65d1fd23722b87476d413dab5e9"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/07-extraction.md": {
+    "mtime": 1788877683.0438442,
+    "ast_hash": "00cf8d7abb5de3ed3c3fcdb6bba63bfd",
+    "semantic_hash": "00cf8d7abb5de3ed3c3fcdb6bba63bfd"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/08-appraisal.md": {
+    "mtime": 1788875070.1074474,
+    "ast_hash": "ebfc0f3835bc8936c6e3328c212652a9",
+    "semantic_hash": "ebfc0f3835bc8936c6e3328c212652a9"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/09-verifier.md": {
+    "mtime": 1788877683.0413387,
+    "ast_hash": "5467bc334619c5fdbf607587d31f5ba5",
+    "semantic_hash": "5467bc334619c5fdbf607587d31f5ba5"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/11-event.md": {
+    "mtime": 1788877683.045046,
+    "ast_hash": "6b47c45360b62a9da9fe6adcb1609097",
+    "semantic_hash": "6b47c45360b62a9da9fe6adcb1609097"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/12-span.md": {
+    "mtime": 1788875070.110998,
+    "ast_hash": "97e692d2a081ae8900d24d33704d769f",
+    "semantic_hash": "97e692d2a081ae8900d24d33704d769f"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/13-assembler.md": {
+    "mtime": 1788877683.051193,
+    "ast_hash": "6564630ac7e27106a58a86066decce40",
+    "semantic_hash": "6564630ac7e27106a58a86066decce40"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/99-resolutions.md": {
+    "mtime": 1788877683.0470738,
+    "ast_hash": "6c757ba7cdca704dbc6c062da8151963",
+    "semantic_hash": "6c757ba7cdca704dbc6c062da8151963"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/search-strategy.md": {
+    "mtime": 1788878154.0085135,
+    "ast_hash": "5e8cb68b70b8a735daf00b4b4db1d4e6",
+    "semantic_hash": "5e8cb68b70b8a735daf00b4b4db1d4e6"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/synthesis.md": {
+    "mtime": 1788878970.4901257,
+    "ast_hash": "55d2331c0c43e056dca57330d6bb498e",
+    "semantic_hash": "55d2331c0c43e056dca57330d6bb498e"
+  },
+  "/Users/sphache/.claude/skills/deep-research/templates/protocol.md": {
+    "mtime": 1788877683.0360153,
+    "ast_hash": "77543bb9909ec471aa8ee5bc1fb26902",
+    "semantic_hash": "77543bb9909ec471aa8ee5bc1fb26902"
+  },
+  "/Users/sphache/.claude/skills/deep-research/templates/report.html": {
+    "mtime": 1788869145.646659,
+    "ast_hash": "e52fdd7595de1e30b8e4518f0fac5e05",
+    "semantic_hash": "e52fdd7595de1e30b8e4518f0fac5e05"
+  },
+  "/Users/sphache/.claude/skills/deep-research/templates/report.md": {
+    "mtime": 1788877683.0335763,
+    "ast_hash": "56cdc356d3f70464b1d5d95bc6cf46f5",
+    "semantic_hash": "56cdc356d3f70464b1d5d95bc6cf46f5"
+  },
+  "/Users/sphache/.claude/skills/deep-research/templates/report.qmd": {
+    "mtime": 1788867520.9532006,
+    "ast_hash": "71d27a3548540a8461081cd29f6d6d08",
+    "semantic_hash": "71d27a3548540a8461081cd29f6d6d08"
+  },
+  "/Users/sphache/.claude/skills/deep-research/tests/fixtures/html/paywalled.html": {
+    "mtime": 1788869707.7503304,
+    "ast_hash": "27050439cfba6ddff74b5f8b20a93ec4",
+    "semantic_hash": "27050439cfba6ddff74b5f8b20a93ec4"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/prompts/appraise.md": {
+    "mtime": 1788878179.543175,
+    "ast_hash": "317dea995aa2b02c0957cf602b9c2f41",
+    "semantic_hash": "317dea995aa2b02c0957cf602b9c2f41"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/prompts/extract.md": {
+    "mtime": 1788878179.5408084,
+    "ast_hash": "28fb27f4f4e368d812b8520a7954ca89",
+    "semantic_hash": "28fb27f4f4e368d812b8520a7954ca89"
+  },
+  "/Users/sphache/.claude/skills/deep-research/references/schema/10-snapshot.md": {
+    "mtime": 1788875070.1093667,
+    "ast_hash": "ef0367bd204cbecf5ffa66f95d8e5acb",
+    "semantic_hash": "ef0367bd204cbecf5ffa66f95d8e5acb"
+  },
+  "/Users/sphache/.claude/skills/deep-research/templates/evidence-table.md": {
+    "mtime": 1788877683.0346653,
+    "ast_hash": "d79ec69d6af07c5256cb4d3388553eff",
+    "semantic_hash": "d79ec69d6af07c5256cb4d3388553eff"
+  },
+  "/Users/sphache/.claude/skills/deep-research/tests/fixtures/pdf/paywalled-cohort.pdf": {
+    "mtime": 1788869666.3680773,
+    "ast_hash": "778240d73e1993623de5951763940265",
+    "semantic_hash": "778240d73e1993623de5951763940265"
+  },
+  "/Users/sphache/.claude/skills/deep-research/.claude/settings.local.json": {
+    "mtime": 1788880503.9204707,
+    "ast_hash": "07467f0b373ccd6c8ff27b3901822830",
+    "semantic_hash": "07467f0b373ccd6c8ff27b3901822830"
+  },
+  "/Users/sphache/.claude/skills/deep-research/scripts/status.py": {
+    "mtime": 1788880666.4732478,
+    "ast_hash": "d546113bab016daa370633f8ee2fdfc1",
+    "semantic_hash": "d546113bab016daa370633f8ee2fdfc1"
+  }
+}
