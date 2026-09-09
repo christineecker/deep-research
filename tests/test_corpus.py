@@ -32,6 +32,25 @@ class CorpusMergeTest(unittest.TestCase):
 
         self.assertTrue(merged["is_preprint"])
 
+    def test_merge_prefers_external_source_over_pool_seed(self):
+        pooled = corpus.normalize_record({
+            "pmid": "12345678",
+            "title": "A validation trial",
+            "source": "pool",
+            "first_seen_query": "pool-seed",
+        }, allow_extra=True)
+        pubmed = corpus.normalize_record({
+            "pmid": "12345678",
+            "title": "A validation trial",
+            "source": "pubmed",
+            "first_seen_query": "q1",
+        }, allow_extra=True)
+
+        merged = corpus.merge_records(pooled, pubmed)
+
+        self.assertEqual(merged["source"], "pubmed")
+        self.assertEqual(merged["seen_in_queries"], ["pool-seed", "q1"])
+
 
 if __name__ == "__main__":
     unittest.main()

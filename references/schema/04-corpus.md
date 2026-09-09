@@ -54,7 +54,7 @@ deduped by `scripts/corpus.py`.
 | `mesh_terms` | string[] | yes | MeSH descriptors verbatim. `[]` when not yet indexed. |
 | `keywords` | string[] | yes | Author keywords. |
 | `retraction_status` | enum | yes | `none` \| `retracted` \| `expression_of_concern` \| `corrected`. Set at screening (`SKILL.md` "Invariants"). |
-| `source` | enum | yes | `pubmed` \| `europepmc` \| `preprint` \| `guideline` \| `web`. |
+| `source` | enum | yes | `pubmed` \| `europepmc` \| `preprint` \| `guideline` \| `web` \| `pool`. `pool` means the record was seeded from `<wiki>/assets/papers/pool.jsonl` and must still be screened for the current question. |
 | `is_preprint` | bool | yes | `true` for bioRxiv/medRxiv/Research Square and any rung-6 preprint twin. Must be surfaced loudly in the report. |
 | `screening` | object \| null | yes | `{decision, reason}` — the **final** decision (post-adjudication where dual screening ran). `decision` enum: `include` \| `exclude` \| `unclear`. `null` before screening. |
 | `fulltext` | object | yes | See sub-table. |

@@ -175,7 +175,7 @@ incomplete/failed tasks. Do not restart the stage. Do not re-prompt.
 | # | Stage | Runs in | Model | Writes |
 |---|---|---|---|---|
 | 1 | Protocol | main | main | `outputs/protocol.md` |
-| 2 | Search | main, scripts only | — | `workspace/search/<query_id>.json` |
+| 2 | Search | main, scripts only | — | pool-seeded corpus records, then `workspace/search/<query_id>.json` |
 | 3 | Screen | subagents, batched | sonnet | `workspace/screening/<screener>/pmid-*.json` |
 | 4 | Retrieve | main + `fulltext.py` | — | corpus `fulltext` block, `missing.md` |
 | 5 | Extract | subagents, 1/paper | opus | `workspace/extractions/pmid-*.json`, pool synced. **Halts here if `stop_after_stage: 5`** |
@@ -188,9 +188,15 @@ incomplete/failed tasks. Do not restart the stage. Do not re-prompt.
 these ids), limits, planned search. Template: `templates/protocol.md`. If gates include
 `protocol+strategy`, show the protocol *and* the search strategy to the user and wait.
 
-**Stage 2 — search.** Design 4–8 genuinely orthogonal queries per `references/search-strategy.md`
-— not eight near-duplicates. Execute via `scripts/eutils.py esearch`; log every query string,
-the NCBI-translated query, and the hit count. Citation chaining via `eutils.py elink`. At
+**Stage 2 — search.** First seed from the wiki-wide paper pool:
+`python3 scripts/pool.py seed --run-dir <run_dir> --wiki <root>`. It scores
+`<wiki>/assets/papers/pool.jsonl` against the run question/PICO/filters and upserts likely
+papers into `corpus.jsonl` with `source: pool` and `first_seen_query: pool-seed`. These are only
+candidates: Stage 3 still screens them against the current protocol, and Stage 5/6 later use
+`pool.py reuse` to copy prior extraction/appraisal files instead of redoing subagent work.
+Then design 4–8 genuinely orthogonal queries per `references/search-strategy.md` — not eight
+near-duplicates. Execute via `scripts/eutils.py esearch`; log every query string, the
+NCBI-translated query, and the hit count. Citation chaining via `eutils.py elink`. At
 `wide`/`max`, add Europe PMC and web sources. Duplicate queries are detected and skipped by
 `corpus.py`. Then `eutils.py efetch` → `corpus.py add` → dedupe.
 
@@ -450,7 +456,7 @@ by manual supply.
 | `scripts/eutils.py` | esearch / efetch / elink, throttle, retry, hit counts, translated query |
 | `scripts/fulltext.py` | acquisition ladder, resumable, truncation detector |
 | `scripts/library.py` | `<wiki>/assets/papers/` PDF index, matching, inbox ingestion |
-| `scripts/pool.py` | `<wiki>/assets/papers/pool.jsonl` shared extraction/appraisal pool (`reuse` carries spans across runs via the evidence kernel) + wiki-wide BibTeX |
+| `scripts/pool.py` | `<wiki>/assets/papers/pool.jsonl` shared extraction/appraisal pool (`seed` before search; `reuse` carries spans across runs via the evidence kernel) + wiki-wide BibTeX |
 | `scripts/corpus.py` | corpus.jsonl, dedupe, PRISMA counters, `task` CLI, guards |
 | `scripts/okf.py` | bundle concept writer + validator |
 | `scripts/render.py` | report.md → .qmd + refs.bib → quarto render (pdf/docx) |

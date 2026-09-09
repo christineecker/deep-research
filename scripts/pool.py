@@ -17,6 +17,7 @@ sync, mirroring `library.py`'s enrichment-only merge for the PDF index.
 
 Subcommands
   sync     --wiki --run-dir            upsert a run's extracted/appraised records into the pool
+  seed     --wiki --run-dir [--query]  seed a new run's corpus from matching pooled papers
   lookup   --wiki --pmid|--doi|--pmcid|--evidence-id    find a reusable record
   bib      --wiki --out                refs.bib across the whole pool
   list     --wiki                      dump pool entries
@@ -27,7 +28,9 @@ Environment: python3, stdlib only. No pip installs.
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -39,6 +42,15 @@ import render as _render  # noqa: E402  (build_entry, bib_key, atomic_write)
 import store as _store  # noqa: E402  (read_snapshot, register_text — portable spans)
 
 SCHEMA_VERSION = 1
+DEFAULT_SEED_LIMIT = 25
+DEFAULT_MIN_SEED_SCORE = 0.18
+POOL_SEED_QUERY_ID = "pool-seed"
+
+STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "can", "does", "for", "from",
+    "has", "have", "how", "in", "into", "is", "it", "its", "of", "on", "or", "that",
+    "the", "their", "to", "vs", "with", "without", "what", "which", "who", "why",
+}
 
 # Corpus fields worth caching in the pool: everything bibliographic, minus fields that
 # are meaningless outside the run that produced them (screening verdict, the run-local
@@ -51,6 +63,86 @@ POOL_FIELDS = tuple(
 
 def emit(obj: dict) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=False))
+
+
+def _tokens(text: str | None) -> list[str]:
+    if not text:
+        return []
+    norm = _corpus.norm_title(text)
+    return [t for t in re.findall(r"[a-z0-9]+", norm) if len(t) >= 3 and t not in STOPWORDS]
+
+
+def _pool_text(entry: dict) -> str:
+    chunks = []
+    for field in ("title", "abstract", "journal"):
+        val = entry.get(field)
+        if val:
+            chunks.append(str(val))
+    for field in ("mesh_terms", "keywords", "article_types"):
+        val = entry.get(field) or []
+        if isinstance(val, list):
+            chunks.extend(str(v) for v in val)
+    return " ".join(chunks)
+
+
+def score_entry(entry: dict, query: str) -> tuple[float, dict]:
+    """Explainable lexical scorer for Stage 2 pool seeding."""
+    q_tokens = set(_tokens(query))
+    if not q_tokens:
+        return 0.0, {"overlap": [], "title_ratio": 0.0}
+    title = entry.get("title") or ""
+    title_tokens = set(_tokens(title))
+    all_tokens = set(_tokens(_pool_text(entry)))
+    overlap = sorted(q_tokens & all_tokens)
+    ratio = difflib.SequenceMatcher(None, _corpus.norm_title(query),
+                                    _corpus.norm_title(title)).ratio()
+    if not overlap:
+        return round(ratio * 0.25, 4), {"overlap": [], "title_ratio": round(ratio, 4)}
+    weighted = len(overlap) / len(q_tokens)
+    title_hits = len(q_tokens & title_tokens) / len(q_tokens)
+    score = min(1.0, 0.70 * weighted + 0.20 * title_hits + 0.10 * ratio)
+    return round(score, 4), {"overlap": overlap, "title_ratio": round(ratio, 4)}
+
+
+def seed_query_from_run(run_dir: Path, explicit_query: str | None) -> str:
+    if explicit_query:
+        return explicit_query
+    config_path = run_dir / "config.json"
+    if not config_path.exists():
+        return ""
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return ""
+    parts = []
+    for key in ("question", "pico", "peco"):
+        val = config.get(key)
+        if isinstance(val, str):
+            parts.append(val)
+        elif isinstance(val, dict):
+            parts.extend(str(v) for v in val.values() if v)
+    filters = config.get("filters") or {}
+    if isinstance(filters, dict):
+        for key in ("keywords", "mesh_terms", "population", "intervention",
+                    "exposure", "outcomes"):
+            val = filters.get(key)
+            if isinstance(val, list):
+                parts.extend(str(v) for v in val)
+            elif val:
+                parts.append(str(val))
+    return " ".join(parts)
+
+
+def seed_record_from_entry(entry: dict, *, query_id: str) -> dict:
+    raw = {field: entry.get(field) for field in _corpus.CORPUS_FIELDS + _corpus.CORPUS_BIBLIO}
+    raw["source"] = "pool"
+    raw["screening"] = None
+    raw["extraction_path"] = None
+    raw["appraisal_path"] = None
+    raw["first_seen_query"] = query_id
+    raw["seen_in_queries"] = [query_id]
+    raw["merged_from"] = []
+    return _corpus.normalize_record(raw, allow_extra=True)
 
 
 class Pool:
@@ -188,6 +280,63 @@ def cmd_sync(args) -> int:
         "wiki": str(wiki), "run_dir": str(run_dir), "pool": str(pool.path),
         "records_seen": len(records), "records_synced": synced, "records_new": created,
         "pool_size": len(pool.records),
+    })
+    return 0
+
+
+def cmd_seed(args) -> int:
+    run_dir = Path(args.run_dir).expanduser().resolve()
+    wiki = (Path(args.wiki).expanduser().resolve() if args.wiki
+            else _library.wiki_root_for_run(run_dir))
+    query = seed_query_from_run(run_dir, args.query)
+    if not query and not args.all:
+        emit({
+            "schema_version": SCHEMA_VERSION, "status": "error", "command": "seed",
+            "error": "no query text found; pass --query or --all",
+        })
+        return 2
+
+    pool = Pool(wiki)
+    scored = []
+    for entry in pool.records.values():
+        has_reusable_work = bool(pool.resolve_source(entry, "extraction")
+                                 or pool.resolve_source(entry, "appraisal"))
+        if not has_reusable_work and not args.include_metadata_only:
+            continue
+        if args.all:
+            score, detail = 1.0, {"overlap": ["--all"], "title_ratio": 0.0}
+        else:
+            score, detail = score_entry(entry, query)
+        if score < args.min_score:
+            continue
+        scored.append((score, entry.get("updated_at") or "", entry, detail))
+    scored.sort(key=lambda item: (-item[0], item[2].get("publication_date") or "",
+                                  item[2].get("evidence_id") or ""))
+    picked = scored[: args.limit]
+
+    results = []
+    corpus_path = Path(args.corpus) if args.corpus else None
+    with _corpus.advisory_lock(run_dir, "corpus"):
+        corpus = _corpus.Corpus(run_dir, corpus_path).load()
+        for score, _, entry, detail in picked:
+            rec = seed_record_from_entry(entry, query_id=args.query_id)
+            action, eid = corpus.upsert(rec)
+            results.append({
+                "action": action, "evidence_id": eid, "score": score,
+                "matched_terms": detail["overlap"], "title": rec["title"],
+            })
+        if not args.dry_run:
+            corpus.save()
+
+    emit({
+        "schema_version": SCHEMA_VERSION, "status": "ok", "command": "seed",
+        "dry_run": args.dry_run, "wiki": str(wiki), "run_dir": str(run_dir),
+        "pool_size": len(pool.records), "query": None if args.all else query,
+        "query_id": args.query_id, "min_score": args.min_score,
+        "candidates": len(scored), "seeded": len(results),
+        "added": sum(1 for r in results if r["action"] == "added"),
+        "merged": sum(1 for r in results if r["action"] == "merged"),
+        "records": results,
     })
     return 0
 
@@ -353,6 +502,21 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--wiki", help="wiki root (default: inferred from --run-dir)")
     s.add_argument("--corpus", help="corpus.jsonl (default: <run-dir>/corpus.jsonl)")
     s.set_defaults(func=cmd_sync)
+
+    s = sub.add_parser("seed", help="seed a run corpus from matching pooled papers")
+    s.add_argument("--run-dir", required=True, dest="run_dir")
+    s.add_argument("--wiki", help="wiki root (default: inferred from --run-dir)")
+    s.add_argument("--corpus", help="corpus.jsonl (default: <run-dir>/corpus.jsonl)")
+    s.add_argument("--query", help="query text (default: config question/PICO/filters)")
+    s.add_argument("--query-id", default=POOL_SEED_QUERY_ID)
+    s.add_argument("--limit", type=int, default=DEFAULT_SEED_LIMIT)
+    s.add_argument("--min-score", type=float, default=DEFAULT_MIN_SEED_SCORE)
+    s.add_argument("--all", action="store_true",
+                   help="seed every pooled paper with reusable work, ignoring lexical score")
+    s.add_argument("--include-metadata-only", action="store_true",
+                   help="also seed pool records without extraction/appraisal pointers")
+    s.add_argument("--dry-run", action="store_true")
+    s.set_defaults(func=cmd_seed)
 
     s = sub.add_parser("lookup", help="find a paper already extracted/appraised in another run")
     s.add_argument("--wiki", required=True)

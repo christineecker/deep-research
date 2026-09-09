@@ -53,7 +53,7 @@ Every run walks the same nine stages; the profile only changes scope and where i
 ```
 0 Configure   → question, profile, wiki, filters, outputs; check connector authorization
 1 Protocol    → PICO/PECO, numbered inclusion/exclusion criteria
-2 Search      → 4–8 orthogonal PubMed queries, logged
+2 Search      → seed candidates from the wiki pool, then 4–8 orthogonal PubMed queries, logged
 3 Screen      → dedupe, then title/abstract triage against the numbered criteria
 4 Retrieve    → walk the open-access ladder for full text; quarantine what it can't get
 5 Extract     → one subagent per paper: design, N, I/C, outcomes, funding/COI, quotes
@@ -155,6 +155,10 @@ only the pointer and the biblio are shared.
 
 - **Automatic.** Every run calls `pool.py sync` when Stage 5 (and again Stage 6) finishes — no
   separate step to remember.
+- **Seed before external search.** At the start of Stage 2, run
+  `python3 scripts/pool.py seed --run-dir <dir> --wiki <root>` to add matching pooled papers to
+  the new run's `corpus.jsonl` with `source: pool` and `first_seen_query: pool-seed`. They are
+  candidates only: Stage 3 still screens them against the new question before retrieval or reuse.
 - **Reuse.** Before dispatching an extraction or appraisal subagent, the run calls
   `pool.py reuse --run-dir <dir> --wiki <root> --pmid <pmid>`; a hit copies the other run's
   result in *and* re-registers the snapshot(s) its spans cite into this run's own
@@ -199,7 +203,7 @@ All under `scripts/`, all `python3`.
 | `eutils.py` | NCBI E-utilities client: hit counts, query translation, PMIDs, citation chaining |
 | `fulltext.py` | The acquisition ladder (rungs 0–7), quarantine, `acquire` / `status` / `resolve-mcp` |
 | `library.py` | Shared PDF library at `<wiki>/assets/papers/`: `init`, `lookup`, `add`, `ingest-inbox`, `list` |
-| `pool.py` | Shared extraction/appraisal pool at `<wiki>/assets/papers/pool.jsonl`: `sync`, `lookup`, `reuse` (carries spans across runs), `bib`, `list` |
+| `pool.py` | Shared extraction/appraisal pool at `<wiki>/assets/papers/pool.jsonl`: `seed`, `sync`, `lookup`, `reuse` (carries spans across runs), `bib`, `list` |
 | `corpus.py` | `corpus.jsonl` store, dedupe, PRISMA counters, screening ingestion, taskboard CLI |
 | `okf.py` | OKF bundle writer/validator for `<wiki>/research/`: `init`, `write`, `promote`, `validate` |
 | `render.py` | `report.md` → `refs.bib` + `report.qmd` → `quarto render` (`pdf`, `docx`, `html`, `all`) |

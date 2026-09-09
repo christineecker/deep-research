@@ -71,7 +71,7 @@ TASK_STATUSES = ("pending", "active", "completed", "blocked", "failed", "cancell
 KEY_KINDS = ("pmid", "doi", "pmcid", "query", "url", "slug", "batch")
 DECISIONS = ("include", "exclude", "unclear")
 RETRACTION = ("none", "retracted", "expression_of_concern", "corrected")
-CORPUS_SOURCES = ("pubmed", "europepmc", "preprint", "guideline", "web")
+CORPUS_SOURCES = ("pubmed", "europepmc", "preprint", "guideline", "web", "pool")
 FULLTEXT_STATUS = ("fulltext", "abstract_only", "missing")
 
 # schema.md §2 status transition graph
@@ -288,6 +288,8 @@ def query_sort_key(query_id: str | None):
     """Earliest-query ordering: q1 < q2 < q10 < everything else, then lexicographic."""
     if not query_id:
         return (2, "", 0)
+    if query_id == "pool-seed":
+        return (-1, "", 0)
     m = re.match(r"^q(\d+)$", query_id.strip(), re.I)
     if m:
         return (0, "", int(m.group(1)))
@@ -515,6 +517,15 @@ def _prefer(a, b, a_wins: bool):
     return a if a_wins else b
 
 
+def _prefer_source(existing_source: str | None, incoming_source: str | None,
+                   keep_existing: bool):
+    if existing_source == "pool" and incoming_source not in (None, "", "pool"):
+        return incoming_source
+    if incoming_source == "pool" and existing_source not in (None, "", "pool"):
+        return existing_source
+    return _prefer(existing_source, incoming_source, keep_existing)
+
+
 def union_list(a, b) -> list:
     out = list(a or [])
     for item in (b or []):
@@ -543,7 +554,8 @@ def merge_records(existing: dict, incoming: dict) -> dict:
     non_none = [f for f in flags if f and f != "none"]
     out["retraction_status"] = non_none[0] if non_none else "none"
 
-    out["source"] = _prefer(existing.get("source"), incoming.get("source"), keep_existing)
+    out["source"] = _prefer_source(existing.get("source"), incoming.get("source"),
+                                   keep_existing)
     out["is_preprint"] = bool(existing.get("is_preprint")) or bool(incoming.get("is_preprint"))
 
     out["screening"] = existing.get("screening") or incoming.get("screening")
@@ -1725,7 +1737,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_run_dir(p)
     p.add_argument("--query", required=True)
     p.add_argument("--query-id", required=True)
-    p.add_argument("--source", choices=("pubmed", "europepmc", "web"), default="pubmed")
+    p.add_argument("--source", choices=("pubmed", "europepmc", "web", "pool"),
+                   default="pubmed")
     p.set_defaults(func=cmd_query_register)
 
     p = sub.add_parser("guard", help="no-progress guard; exit 1 when stalled")
