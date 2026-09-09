@@ -780,6 +780,80 @@ def cmd_add(args) -> int:
     return 0
 
 
+# Fields `patch` may set on an *existing* record. Identity fields (pmid/doi/pmcid/
+# evidence_id/schema_version) are excluded on purpose: changing those can move a record
+# to a different evidence_id, which is `add`'s merge-on-id job, not a blind field-set.
+PATCHABLE_FIELDS = (set(CORPUS_FIELDS) | set(CORPUS_EXTENSIONS) | set(CORPUS_BIBLIO)) - {
+    "schema_version", "evidence_id", "pmid", "doi", "pmcid",
+}
+
+
+def _find_patch_target(corpus: "Corpus", key: dict) -> str | None:
+    """Resolve a patch entry to an existing evidence_id by evidence_id/pmid/doi/pmcid.
+    Never creates a record -- returns None when nothing matches."""
+    eid = key.get("evidence_id")
+    if eid and eid in corpus.records:
+        return eid
+    for field, normalize in (("pmid", norm_pmid), ("doi", norm_doi), ("pmcid", norm_pmcid)):
+        raw_val = key.get(field)
+        if not raw_val:
+            continue
+        val = normalize(raw_val)
+        if not val:
+            continue
+        for existing_eid, rec in corpus.records.items():
+            if rec.get(field) == val:
+                return existing_eid
+    return None
+
+
+def cmd_patch(args) -> int:
+    """Update a subset of fields on an *existing* corpus record without resupplying the
+    whole schema-complete record `add` requires. Typical use: stamp `extraction_path` /
+    `appraisal_path` after Stage 5/6 completes, or correct one `fulltext` sub-field --
+    without needing 'title' or every other required field just to touch one key
+    (schema.md §4; the gap this closes is documented in SKILL.md's Stage 5 pool-sync
+    step, which depends on `extraction_path` being set on the corpus record)."""
+    run_dir = Path(args.run_dir)
+    incoming = _load_input_records(args)
+    results = []
+    with advisory_lock(run_dir, "corpus"):
+        corpus = Corpus(run_dir, Path(args.corpus) if args.corpus else None).load()
+        for raw in incoming:
+            if not isinstance(raw, dict):
+                raise UserError("patch entries must be JSON objects")
+            target = _find_patch_target(corpus, raw)
+            if target is None:
+                key = raw.get("evidence_id") or raw.get("pmid") or raw.get("doi") or raw.get("pmcid")
+                raise UserError(
+                    f"patch target not found in corpus: {key!r} "
+                    "(patch never creates records -- use `add` for a new record)"
+                )
+            fields = {k: v for k, v in raw.items()
+                      if k not in ("evidence_id", "pmid", "doi", "pmcid", "schema_version")}
+            unknown = set(fields) - PATCHABLE_FIELDS
+            if unknown and not args.allow_extra:
+                raise UserError(
+                    f"{target}: unknown patchable field(s): {sorted(unknown)} "
+                    "(schema.md §4; pass --allow-extra to ignore; "
+                    "pmid/doi/pmcid/evidence_id are not patchable here -- use `add` to merge those)"
+                )
+            merged = dict(corpus.records[target])
+            for field, value in fields.items():
+                if field == "fulltext" and isinstance(value, dict):
+                    ft = dict(merged.get("fulltext") or {})
+                    ft.update(value)          # shallow merge: touch only the given sub-fields
+                    merged["fulltext"] = ft
+                else:
+                    merged[field] = value      # screening and everything else: full replace
+            corpus.records[target] = normalize_record(merged, allow_extra=True)
+            results.append({"action": "patched", "evidence_id": target,
+                             "fields": sorted(fields)})
+        corpus.save()
+    print(json.dumps({"patched": len(results), "records": results}, indent=2))
+    return 0
+
+
 def cmd_list(args) -> int:
     corpus = Corpus(Path(args.run_dir), Path(args.corpus) if args.corpus else None).load()
     recs = corpus.list()
@@ -1389,6 +1463,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--allow-extra", action="store_true",
                    help="tolerate unknown fields instead of erroring")
     p.set_defaults(func=cmd_add)
+
+    p = sub.add_parser("patch",
+                        help="set a subset of fields on an existing record (no full schema needed)")
+    add_run_dir(p)
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--json", help="inline JSON object or array of "
+                                   "{evidence_id|pmid|doi|pmcid, <fields to set>}")
+    g.add_argument("--file", help="path to a JSON / JSONL file of the same shape")
+    p.add_argument("--corpus", help="override corpus.jsonl path")
+    p.add_argument("--allow-extra", action="store_true",
+                   help="tolerate unknown fields instead of erroring")
+    p.set_defaults(func=cmd_patch)
 
     p = sub.add_parser("list", help="list corpus records")
     add_run_dir(p)
