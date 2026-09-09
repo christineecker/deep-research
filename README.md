@@ -134,15 +134,14 @@ surfaces the result once acquisition has been attempted for **all** selected rec
    In `fast`/`standard` you may answer to continue without them; the run proceeds and marks the
    synthesis **PROVISIONAL**.
 3. **Drop PDFs into `<run-dir>/inbox/`** (any filenames) and rerun the skill, or run
-   `library.py ingest-inbox --run-dir <dir>` directly.
-4. Matching: DOI regex on page-1 text → exact DOI match; failing that, fuzzy title match
-   (ratio ≥ 0.85, never for titles under 25 characters). Unmatched PDFs stay in `inbox/`,
-   listed with a reason — never guessed onto a record.
-5. Matched PDFs are filed into `<wiki>/assets/papers/` (sha256 dedupe); the run then extracts,
+   `library.py ingest-inbox --run-dir <dir>` directly (`--no-apply` previews matches without
+   rewriting `corpus.jsonl`).
+4. Matched PDFs are filed into `<wiki>/assets/papers/` (sha256 dedupe); the run then extracts,
    appraises and re-synthesizes the newly available studies, and the report notes which studies
-   arrived by manual supply.
+   arrived by manual supply. Unmatched PDFs stay in `inbox/`, listed with a reason.
 
-Use `--no-apply` on `ingest-inbox` to preview matches without rewriting `corpus.jsonl`.
+Full policy — block format, abstract-only vs. true quarantine, matching thresholds, the
+step-by-step resume loop — is in `references/acquisition.md` §5–6.
 
 ## Shared paper pool — never extract the same paper twice
 

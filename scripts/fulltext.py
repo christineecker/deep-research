@@ -349,106 +349,104 @@ def log(run_dir: Path, msg: str) -> None:
 # ----------------------------------------------------------------- mcp tasks ---
 
 
+class HandoffQueue:
+    """Coordinator-handoff task queue: a JSONL file of task records under `run_dir`.
+
+    Shared mechanics for the rung-1 (MCP) and rung-7 (browser) handoff queues, which were
+    previously two copy-pasted implementations differing only in `relpath` and
+    `pending_status`.
+    """
+
+    def __init__(self, relpath: str, pending_status: str) -> None:
+        self.relpath = relpath
+        self.pending_status = pending_status
+
+    def path(self, run_dir: Path) -> Path:
+        return run_dir / self.relpath
+
+    def read(self, run_dir: Path) -> list[dict]:
+        path = self.path(run_dir)
+        if not path.exists():
+            return []
+        tasks = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    tasks.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return tasks
+
+    def upsert(self, run_dir: Path, task: dict) -> None:
+        tasks = [t for t in self.read(run_dir) if t.get("task_id") != task["task_id"]]
+        tasks.append(task)
+        path = self.path(run_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".jsonl.tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            for t in tasks:
+                fh.write(json.dumps(t, ensure_ascii=False, separators=(",", ":")) + "\n")
+        tmp.replace(path)
+
+    def pending(self, run_dir: Path, records: list[dict]) -> list[dict]:
+        """Tasks of this queue's status still requiring coordinator action.
+
+        A later rung can acquire full text after this queue's rung emitted its task; those
+        tasks are stale and must not keep surfacing as blockers.
+        """
+        fulltext_by_eid = {
+            evidence_id_of(rec): (rec.get("fulltext") or {}).get("status")
+            for rec in records
+        }
+        pending = []
+        for task in self.read(run_dir):
+            if task.get("status") != self.pending_status:
+                continue
+            if (run_dir / task["result_path"]).exists():
+                continue
+            if fulltext_by_eid.get(task.get("evidence_id")) == "fulltext":
+                continue
+            pending.append(task)
+        return pending
+
+
+MCP_TASK_QUEUE = HandoffQueue("workspace/retrieve/mcp-tasks.jsonl", "needs_mcp")
+BROWSER_TASK_QUEUE = HandoffQueue("workspace/retrieve/browser-tasks.jsonl", "needs_browser")
+
+
 def mcp_tasks_path(run_dir: Path) -> Path:
-    return run_dir / "workspace" / "retrieve" / "mcp-tasks.jsonl"
+    return MCP_TASK_QUEUE.path(run_dir)
 
 
 def read_mcp_tasks(run_dir: Path) -> list[dict]:
-    path = mcp_tasks_path(run_dir)
-    if not path.exists():
-        return []
-    tasks = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
-            try:
-                tasks.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return tasks
+    return MCP_TASK_QUEUE.read(run_dir)
 
 
 def upsert_mcp_task(run_dir: Path, task: dict) -> None:
-    tasks = [t for t in read_mcp_tasks(run_dir) if t.get("task_id") != task["task_id"]]
-    tasks.append(task)
-    path = mcp_tasks_path(run_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".jsonl.tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        for t in tasks:
-            fh.write(json.dumps(t, ensure_ascii=False, separators=(",", ":")) + "\n")
-    tmp.replace(path)
+    MCP_TASK_QUEUE.upsert(run_dir, task)
 
 
 def pending_mcp_tasks(run_dir: Path, records: list[dict]) -> list[dict]:
-    """Rung-1 tasks still requiring coordinator action.
-
-    A later rung can acquire full text after rung 1 emitted `needs_mcp`; those tasks are
-    stale and must not keep surfacing as blockers.
-    """
-    fulltext_by_eid = {
-        evidence_id_of(rec): (rec.get("fulltext") or {}).get("status")
-        for rec in records
-    }
-    pending = []
-    for task in read_mcp_tasks(run_dir):
-        if task.get("status") != "needs_mcp":
-            continue
-        if (run_dir / task["result_path"]).exists():
-            continue
-        if fulltext_by_eid.get(task.get("evidence_id")) == "fulltext":
-            continue
-        pending.append(task)
-    return pending
+    """Rung-1 tasks still requiring coordinator action. See `HandoffQueue.pending`."""
+    return MCP_TASK_QUEUE.pending(run_dir, records)
 
 
 def browser_tasks_path(run_dir: Path) -> Path:
-    return run_dir / "workspace" / "retrieve" / "browser-tasks.jsonl"
+    return BROWSER_TASK_QUEUE.path(run_dir)
 
 
 def read_browser_tasks(run_dir: Path) -> list[dict]:
-    path = browser_tasks_path(run_dir)
-    if not path.exists():
-        return []
-    tasks = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
-            try:
-                tasks.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return tasks
+    return BROWSER_TASK_QUEUE.read(run_dir)
 
 
 def upsert_browser_task(run_dir: Path, task: dict) -> None:
-    tasks = [t for t in read_browser_tasks(run_dir) if t.get("task_id") != task["task_id"]]
-    tasks.append(task)
-    path = browser_tasks_path(run_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".jsonl.tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        for t in tasks:
-            fh.write(json.dumps(t, ensure_ascii=False, separators=(",", ":")) + "\n")
-    tmp.replace(path)
+    BROWSER_TASK_QUEUE.upsert(run_dir, task)
 
 
 def pending_browser_tasks(run_dir: Path, records: list[dict]) -> list[dict]:
     """Rung-7 tasks still requiring coordinator browser action (mirrors `pending_mcp_tasks`)."""
-    fulltext_by_eid = {
-        evidence_id_of(rec): (rec.get("fulltext") or {}).get("status")
-        for rec in records
-    }
-    pending = []
-    for task in read_browser_tasks(run_dir):
-        if task.get("status") != "needs_browser":
-            continue
-        if (run_dir / task["result_path"]).exists():
-            continue
-        if fulltext_by_eid.get(task.get("evidence_id")) == "fulltext":
-            continue
-        pending.append(task)
-    return pending
+    return BROWSER_TASK_QUEUE.pending(run_dir, records)
 
 
 TRUNCATION_MIN_WORDS_TEXT = TRUNCATION_MIN_WORDS

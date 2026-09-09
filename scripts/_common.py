@@ -67,7 +67,7 @@ import re
 import unicodedata
 from pathlib import Path
 
-__all__ = ["utcnow", "now_iso", "read_json", "slugify", "emit_json"]
+__all__ = ["utcnow", "now_iso", "read_json", "slugify", "emit_json", "wiki_root_for_run"]
 
 
 def utcnow() -> str:
@@ -78,6 +78,18 @@ def utcnow() -> str:
 #: `corpus.py` and `render.py` spell it this way; identical function, kept as an alias so
 #: their call sites do not have to change.
 now_iso = utcnow
+
+
+def wiki_root_for_run(run_dir) -> Path:
+    """`<wiki>/outputs/deep-research/<slug>/` -> `<wiki>` (`SKILL.md` "Run directory").
+
+    Provably identical in `library.py` and `store.py`; consolidated here.
+    """
+    run_dir = Path(run_dir).expanduser().resolve()
+    parents = run_dir.parents
+    if len(parents) >= 3 and parents[0].name == "deep-research" and parents[1].name == "outputs":
+        return parents[2]
+    return run_dir
 
 
 def read_json(path: Path):

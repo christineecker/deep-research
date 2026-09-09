@@ -239,46 +239,18 @@ adjudicator on disagreement (`references/prompts/adjudicate.md`); log the agreem
 the PRISMA log. Cap the included set at `max_articles`, choosing by protocol relevance, and
 say in the report how the cap was applied.
 
-**Stage 4 — retrieve.** `scripts/fulltext.py acquire` walks the ladder (see
-`references/acquisition.md`). Rung 1 is the PubMed MCP `get_full_text_article` tool, which a
-script cannot call — the script appends `needs_mcp` tasks to
-`workspace/retrieve/mcp-tasks.jsonl` and keeps walking the ladder, so the run never blocks.
-**You** call the MCP tool, write the text to the task's `result_path`, then
-`fulltext.py resolve-mcp` (or re-run `acquire`, which picks it up).
-Rung 7, the last rung before quarantine, is the same handoff shape for the claude-in-chrome
-MCP tools (`references/acquisition.md` §4b): the script appends `needs_browser` tasks to
-`workspace/retrieve/browser-tasks.jsonl`. **You** search for and open a freely-accessible copy
-— OA content only, never past a login wall, paywall, or captcha (see invariant 9 below) —
-extract the visible text, write it to the task's `result_path`, then `fulltext.py
-resolve-browser` (or re-run `acquire`).
-Record `source_tier` + `access_route` on every record. A rung-1/5/7 result the truncation
-detector flags as abstract-only does **not** stop the ladder — it is kept as a fallback while
-every remaining rung is still tried for real full text (`references/acquisition.md` §2, §7
-"Fallback walk-through"); only a record that ends the whole ladder with nothing better gets its
-fallback finalized *and* an abstract-only block in `missing.md`, right alongside true
-quarantines. Never accept the first abstract-only hit as final while rungs remain — that is the
-exact bug this section exists to rule out. Quarantined papers (zero text at all) go to
-`missing.md` too. Never ask the user for permission per record — just quarantine (or fall back)
-and keep walking the ladder for
-every remaining record. `acquire` fetches records concurrently (`--workers`, default 4, or
-`budgets.max_parallel`); per-host rate limits hold regardless, and `--offline` runs serially.
+**Stage 4 — retrieve.** `scripts/fulltext.py acquire` walks the ladder — full mechanics,
+truncation detector, fallback rules, and the quarantine/inbox gate are in
+`references/acquisition.md`, not repeated here. Two rungs need you specifically, because a
+script cannot call an MCP tool: rung 1 (PubMed MCP `get_full_text_article`, §4) and rung 7
+(claude-in-chrome browser search/fetch, §4b, OA content only — see invariant 9). Both append a
+handoff task and let the ladder keep moving; you fetch the text, write it to the task's
+`result_path`, then `fulltext.py resolve-mcp` / `resolve-browser` (or just re-run `acquire`,
+which picks the file up). `acquire` fetches records concurrently (`--workers`, default 4, or
+`budgets.max_parallel`); `--offline` runs serially.
 
-Once acquisition has been attempted for every selected record (stage 4 fully finished), handle
-`missing.md` the same way in every profile: **halt before stage 5** and ask the user — a single
-consolidated table (Title, PMID, DOI, PMCID, rung reached, status: quarantined or abstract-only,
-links) — render DOI as `https://doi.org/<doi>` and PMID as
-`https://pubmed.ncbi.nlm.nih.gov/<pmid>/` so both are clickable, never bare identifiers — plus
-the exact path to drop PDFs into (`<run_dir>/inbox/`), and an explicit question of whether they
-can supply any of them. This covers every block `missing.md` holds, not just true quarantines —
-an abstract-only record already has degraded text sitting in the corpus, and it is exactly the
-kind of record easy to mistake for "resolved" and skip asking about; don't. This is a question,
-asked once for the whole blocked-record list, never per record and never mid-ladder.
-For `systematic` and `max`, this is a hard gate — stage 5 does not start until every blocked
-record is resolved. For `fast` and `standard`, the user may answer "continue without it"; if they
-do, proceed to stage 5 with quarantined records tagged as missing and abstract-only records left
-as-is (their stored degraded text used), and the synthesis marked
-**PROVISIONAL**. The user drops PDFs/HTML into `inbox/`, `python3 scripts/library.py ingest-inbox
-<run_dir>` matches them in, and `fulltext.py acquire` (or a rerun) clears `missing.md`.
+Once acquisition has been attempted for every selected record, handle `missing.md` per the
+"Quarantine → inbox → resume loop" section below — same gate, every profile.
 
 **Stage 5 — extract.** Before dispatching a subagent for a paper, try the shared pool:
 `python3 scripts/pool.py reuse --run-dir <run_dir> --wiki <root> --pmid <pmid>` (fall back to
@@ -428,7 +400,7 @@ the end.
 |---|---|---|
 | Ladder rung 1 unreachable | `acquire` reports `needs_mcp > 0` and no PubMed MCP tool is in your tool list | Rung 1 cannot run this session; the best source for paywalled records is unavailable. Resolve each task `--status unavailable` rather than leaving it pending, and say the shortfall is partly infrastructure, not only paywalls |
 | Majority without full text | `quarantined + abstract_only > half` of the selected set | Extraction quality is materially limited; say so **before** extracting, and mark the synthesis provisional |
-| Any blocked record — quarantined (no text) or abstract-only (fallback exhausted the ladder, `references/acquisition.md` §7) | `missing.md` is non-empty | Once acquisition has been attempted for every selected record (not per-record, mid-run), present the full blocked-record list as one table — Title, PMID, DOI, PMCID, rung reached, status (quarantined / abstract-only), links — the exact path to drop PDFs into (`<run-dir>/inbox/`), and ask whether the user can supply any of them. Ask for **both** kinds, not just true quarantines — an abstract-only record has real text stored, but a full PDF still upgrades it, and the user cannot know that without being asked. `systematic` and `max` halt before stage 5 until the user supplies the missing PDFs/HTML and `missing.md` is cleared via `ingest-inbox` + rerun; `fast` and `standard` may proceed with a PROVISIONAL synthesis if the user answers to continue without them. |
+| Any blocked record — quarantined (no text) or abstract-only (fallback exhausted the ladder, `references/acquisition.md` §7) | `missing.md` is non-empty | See "Quarantine → inbox → resume loop" below — halt before stage 5, one consolidated table, both kinds of block, ask once |
 | A connector/tool the profile assumes is unauthorized | Stage 0 connector preflight; `config.json` `connectors` | Name the server, say it is authorized in claude.ai → Settings → Connectors and picked up by a **new** session, and ask: reduced scope now, or stop and resume connected? Never fake the coverage |
 | A script crashes or a check cannot run | non-zero exit, traceback | Quote the actual error. Do not paraphrase a traceback into "some issues" |
 | A budget is hit | `max_articles`, `max_fulltext_failures`, `max_wall_time` | Say which budget, what it cut, and what the run would look like without it |
@@ -456,26 +428,13 @@ Two rules that override any instinct to keep the run looking clean:
 
 ## Quarantine → inbox → resume loop
 
-Unobtainable full text (zero text, every rung failed) → `missing.md` with PMID, DOI, PMCID,
-title, journal and direct PubMed/DOI/PMC links. A record where the ladder tried every remaining
-rung after a rung-1/5/7 hit but never found better than abstract-only (`references/acquisition.md`
-§2, §7 "Fallback walk-through") gets its own block in the same file — same file, same gate, a
-different `- Status:` line, real (degraded) text stored rather than nothing. Never ask the user
-for permission per record — quarantine it (or accept the fallback) and keep walking the ladder
-for every remaining record; that is stage 4 finishing, not the pipeline finishing. Only once
-acquisition has been attempted for every selected record does the run surface the result: a
-single table (Title, PMID, DOI, PMCID, rung reached, status, links) covering every blocked
-record at once — quarantined and abstract-only together, never just one kind — the exact path to
-drop PDFs into — `<run-dir>/inbox/` — and a question asking whether the user can supply any of
-them. In `systematic` and `max`, this is a hard gate: extraction (stage 5) does not start while
-`missing.md` is non-empty, regardless of the answer. In `fast` and `standard`, if the user
-answers to continue without the missing PDFs, extraction proceeds — quarantined records stay
-tagged missing, abstract-only records keep their stored degraded text — and the synthesis is
-marked PROVISIONAL. The user drops PDFs there; `scripts/library.py ingest-inbox` matches each PDF
-to its blocked record (DOI regex `10\.\d{4,}/\S+` against page-1 `pdftotext` output, else fuzzy
-title), files it into `<wiki>/assets/papers/`; a rerun of `acquire` clears the resolved records
-from `missing.md` (upgrading an abstract-only record to `fulltext` the same way a quarantine
-clears). The report states which studies arrived by manual supply.
+Full policy, block format, the halt-before-stage-5 gate, and the inbox matching/resume steps are
+in `references/acquisition.md` §5 (and §7 "Fallback walk-through" for how abstract-only fallbacks
+get there). Summary: once acquisition has been attempted for every selected record, any
+`missing.md` block — quarantined or abstract-only — halts before stage 5 with one consolidated
+table and a question; `systematic`/`max` gate hard on it, `fast`/`standard` may proceed
+PROVISIONAL on the user's say-so. `library.py ingest-inbox` + a rerun of `acquire` clears
+resolved blocks.
 
 ---
 

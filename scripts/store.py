@@ -73,7 +73,7 @@ import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _common import emit_json as _emit, utcnow  # noqa: E402  (sibling module, stdlib-only)
+from _common import emit_json as _emit, utcnow, wiki_root_for_run  # noqa: E402  (sibling module, stdlib-only)
 
 SCHEMA_VERSION = 1
 VERSION = "deep-research/0.1"
@@ -219,15 +219,6 @@ def snapshot_path(run_dir, source_id: str) -> Path:
         raise SchemaError("malformed source_id: %r (want src-<64 lowercase hex>)" % (source_id,),
                           reason_code="UNKNOWN_SOURCE")
     return sources_dir(run_dir) / (source_id + ".json")
-
-
-def wiki_root_for_run(run_dir) -> Path:
-    """`<wiki>/outputs/deep-research/<slug>/` -> `<wiki>` (`SKILL.md` "Run directory")."""
-    run_dir = Path(run_dir).expanduser().resolve()
-    parents = run_dir.parents
-    if len(parents) >= 3 and parents[0].name == "deep-research" and parents[1].name == "outputs":
-        return parents[2]
-    return run_dir
 
 
 def run_created_at(run_dir) -> str | None:

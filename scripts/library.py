@@ -43,7 +43,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _common import utcnow  # noqa: E402  (sibling module, stdlib-only)
+from _common import utcnow, wiki_root_for_run  # noqa: E402  (sibling module, stdlib-only)
 try:  # the evidence kernel is additive: the library must work without it
     import store  # noqa: E402  (sibling module, stdlib-only)
 except Exception:  # pragma: no cover - store.py is a sibling and always present
@@ -519,15 +519,6 @@ def write_corpus(path: Path, records: list[dict]) -> None:
         for rec in records:
             fh.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
     tmp.replace(path)
-
-
-def wiki_root_for_run(run_dir: Path) -> Path:
-    """<wiki>/outputs/deep-research/<slug>/ -> <wiki> (`SKILL.md` "Run directory")."""
-    run_dir = Path(run_dir).expanduser().resolve()
-    parents = run_dir.parents
-    if len(parents) >= 3 and parents[0].name == "deep-research" and parents[1].name == "outputs":
-        return parents[2]
-    return run_dir
 
 
 def missing_md_titles(run_dir: Path) -> list[dict]:
