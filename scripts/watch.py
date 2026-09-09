@@ -80,7 +80,8 @@ TIER_LABEL = {
     4: "Unpaywall location",
     5: "OA PDF/HTML",
     6: "preprint twin",
-    7: "quarantined",
+    7: "browser fetch",
+    8: "quarantined",
 }
 
 DEFAULT_STALL = 300.0          # seconds; amber at 1x, red at 2x
@@ -673,8 +674,8 @@ def funnel_of(corpus: list[dict]) -> dict:
 
 
 def ladder_of(corpus: list[dict]) -> dict:
-    """Histogram over fulltext.source_tier, keeping R8 visually distinct from tier 7."""
-    tiers = {t: 0 for t in range(8)}
+    """Histogram over fulltext.source_tier, keeping R8 visually distinct from tier 8."""
+    tiers = {t: 0 for t in range(9)}
     not_attempted = 0
     unknown = 0
     for r in corpus:
@@ -687,7 +688,7 @@ def ladder_of(corpus: list[dict]) -> dict:
             else:
                 not_attempted += 1
             continue
-        if isinstance(tier, int) and 0 <= tier <= 7:
+        if isinstance(tier, int) and 0 <= tier <= 8:
             tiers[tier] += 1
         else:
             unknown += 1
@@ -962,7 +963,7 @@ def render_text(reader: RunReader, width: int = 100) -> str:
     lad = snap["ladder"]
     peak = max(list(lad["tiers"].values()) + [lad["not_attempted"], 1])
     out.append("ACQUISITION LADDER")
-    for tier in range(8):
+    for tier in range(9):
         n = lad["tiers"][tier]
         out.append("  t%d %-18s %-24s %d"
                    % (tier, TIER_LABEL[tier], bar(n / peak, 24, "#", " "), n))
@@ -1117,13 +1118,13 @@ class Tui:
         peak = max(list(lad["tiers"].values()) + [lad["not_attempted"], 1])
         bw = max(4, min(30, width - 34))
         out = []
-        for tier in range(8):
+        for tier in range(9):
             n = lad["tiers"][tier]
-            key = "err" if tier == 7 and n else ("ok" if n and tier <= 3 else
+            key = "err" if tier == 8 and n else ("ok" if n and tier <= 3 else
                                                  "norm" if n else "dim")
             out.append(("t%d %-17s %4d %s"
                         % (tier, TIER_LABEL[tier], n, bar(n / peak, bw, "█", " ")), key))
-        # R8: retrieval not yet attempted is NOT tier 7 — a different glyph, dim.
+        # R8: retrieval not yet attempted is NOT tier 8 — a different glyph, dim.
         out.append(("-- %-17s %4d %s"
                     % ("not yet attempted", lad["not_attempted"],
                        bar(lad["not_attempted"] / peak, bw, "░", " ")), "dim"))
@@ -1240,7 +1241,7 @@ class Tui:
                                  "null" if tier is None else tier,
                                  ft.get("access_route") or "null", rung_txt,
                                  clip(r.get("title") or "", 60)),
-                              "err" if tier == 7 else
+                              "err" if tier == 8 else
                               "dim" if tier is None else "norm"))
         elif name == "pipeline":
             lines.append(("tasks by stage", "head"))

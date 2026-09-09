@@ -71,6 +71,7 @@ Check your own tool list, once, at Stage 0:
 | PubMed MCP | `mcp__claude_ai_PubMed__*` (`search_articles`, `get_article_metadata`, `get_full_text_article`, `find_related_articles`) | **every** scope; also ladder rung 1 |
 | Scholar Gateway | its `mcp__*` tools | `max` only |
 | Consensus | its `mcp__*` tools | `max` only |
+| claude-in-chrome | `mcp__claude-in-chrome__*` (`navigate`, `read_page`, `get_page_text`, `tabs_create_mcp`) | optional, every scope — ladder rung 7 only (`references/acquisition.md` §4b). If missing, resolve every pending `needs_browser` task with `fulltext.py resolve-browser --status unavailable` so rung 7 doesn't sit pending forever; no gate, no ask. |
 
 `scripts/eutils.py` and Europe PMC are plain HTTPS and need no connector; `narrow` through
 `wide` therefore run on PubMed MCP alone.
@@ -94,6 +95,21 @@ profile assumes must say which source and what it means for coverage.
 
 On resume, re-check rather than trusting the recorded value — a resumed run is usually a new
 session, which is exactly when availability changes.
+
+### Institutional access (optional, ladder rung 7 only)
+
+Off by default. Ask once per run, alongside the other Stage 0 questions: does the user want a
+personal institutional library search (e.g. their university's discovery portal) tried as a
+last-resort candidate before quarantine? If yes, ask for its name and discovery search URL and
+record `config.json` `institutional_access: {"enabled": true, "name": "<name>", "search_url":
+"<url>"}`. If no, or the question isn't asked, `institutional_access` stays absent and rung 7
+is OA-only, exactly as documented in `references/acquisition.md` §4b.
+
+This does **not** mean the agent signs in. When rung 7 opens that search and hits an SSO wall,
+the coordinator stops and hands the open tab to the human to authenticate themselves — the
+agent never types, stores, requests, or transmits the credential. Say this plainly when asking,
+so the user knows what "enabled" actually does: their institutional licence, used at their own
+discretion, in their own browser session — never automated credential entry.
 
 ### Ask, if not already known
 
@@ -214,6 +230,12 @@ script cannot call — the script appends `needs_mcp` tasks to
 `workspace/retrieve/mcp-tasks.jsonl` and keeps walking the ladder, so the run never blocks.
 **You** call the MCP tool, write the text to the task's `result_path`, then
 `fulltext.py resolve-mcp` (or re-run `acquire`, which picks it up).
+Rung 7, the last rung before quarantine, is the same handoff shape for the claude-in-chrome
+MCP tools (`references/acquisition.md` §4b): the script appends `needs_browser` tasks to
+`workspace/retrieve/browser-tasks.jsonl`. **You** search for and open a freely-accessible copy
+— OA content only, never past a login wall, paywall, or captcha (see invariant 9 below) —
+extract the visible text, write it to the task's `result_path`, then `fulltext.py
+resolve-browser` (or re-run `acquire`).
 Record `source_tier` + `access_route` on every record. Quarantined papers go to `missing.md`.
 Never ask the user for permission per record — just quarantine and keep walking the ladder for
 every remaining record. `acquire` fetches records concurrently (`--workers`, default 4, or
@@ -437,8 +459,15 @@ by manual supply.
 6. "New insights / hypotheses" is hard-walled from "what the evidence shows".
 7. Retracted / Expression-of-Concern papers are flagged at screening.
 8. PubMed MCP attribution is honored: cite PubMed and DOIs.
-9. **No paywall circumvention of any kind** — no credentials, no browser automation for
-   access, no pirate mirrors. The OA ladder is the whole ladder. Fail closed.
+9. **No paywall circumvention of any kind** — no credentials, no saved session/cookie jar, no
+   institutional/VPN/EZproxy/Shibboleth proxy, no captcha solving, no pirate mirrors, no
+   retrying a 401/402/403 by another route. Rung 7's browser handoff (`references/acquisition.md`
+   §4b) may render a JS-gated page, but only to reach content with no access control at all —
+   a login wall, paywall, or captcha there means `unavailable`, never a workaround. The one
+   exception is the opt-in `institutional_access` setting (Stage 0, off by default): even then
+   the agent never handles the credential — it stops at any SSO wall and the human authenticates
+   themselves in their own browser tab, on their own licence. The OA ladder is the whole ladder,
+   plus that one human-gated exception the user explicitly switched on. Fail closed.
 10. Bundle concepts follow `references/okf-bundle.md`; PubMed-derived concepts preserve full
     PubMed bibliographic metadata in frontmatter.
 11. Per-claim attribution uses markdown footnotes keyed to `sources[].id`. A body-only

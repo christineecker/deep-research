@@ -6,7 +6,9 @@ rungs in order until text is in hand; the rung that succeeded is recorded as
 
 Implemented by `scripts/fulltext.py` (ladder, resumable) and `scripts/library.py` (rung 0 +
 inbox resume loop). Third-party deps: `requests`, `pdfminer` only. Binaries: `pdftotext`,
-`pdfinfo`, `pdftoppm`, `tesseract`. Zero pip installs, ever.
+`pdfinfo`, `pdftoppm`, `tesseract`. Zero pip installs, ever. Rung 7 (browser search/fetch) is
+the one exception to "no third-party deps": it is driven entirely through the claude-in-chrome
+MCP tools, called by the coordinator, never by `fulltext.py` itself — see §4b.
 
 ---
 
@@ -21,24 +23,26 @@ inbox resume loop). Third-party deps: `requests`, `pdfminer` only. Binaries: `pd
 | 4 | Unpaywall | DOI | `GET https://api.unpaywall.org/v2/<doi>?email=<addr>` → `best_oa_location` | an OA location URL (no text yet — feeds rung 5) | `unpaywall` |
 | 5 | OA PDF/HTML | location from rung 3/4 | fetch; PDF → `pdftotext -layout` (+OCR fallback §3); HTML → stdlib parse + **truncation detector** §2 | PDF ≥100 chars, or HTML with any body text | `unpaywall_pdf` / `oa_pdf` / `oa_html` |
 | 6 | Preprint twin | DOI / title | Europe PMC `… AND SRC:PPR`, title similarity ≥0.90 unless matched by DOI → `fullTextXML` | ≥100 chars | `preprint_twin` (sets `is_preprint: true`) |
-| 7 | Quarantine | anything | append a block to `<run-dir>/missing.md`, alert the user | always succeeds | `quarantine` |
+| 7 | Browser search/fetch | DOI / PMID / PMCID / title | claude-in-chrome MCP — **coordinator handoff**, OA content only, see §4b | text file ≥100 chars at `result_path` | `browser_fetch` |
+| 8 | Quarantine | anything | append a block to `<run-dir>/missing.md`, alert the user | always succeeds | `quarantine` |
 
 Rung-state vocabulary in `workspace/retrieve/<stem>.json`: `success`, `failed` (attempted, no
 text), `skipped` (precondition absent — no PMCID, no DOI, no email, offline), `needs_mcp`
-(rung 1 handed off), `unavailable` (coordinator reports the MCP has no full text).
+(rung 1 handed off), `needs_browser` (rung 7 handed off), `unavailable` (coordinator reports the
+MCP/browser search found no full text).
 
 ### What each rung writes
 
 | Field | Value |
 |---|---|
-| `fulltext.status` | `fulltext` \| `abstract_only` (truncation detected, or no text stored) \| `missing` (rung 7) |
-| `fulltext.source_tier` | `0`–`7`, the rung that produced the text |
+| `fulltext.status` | `fulltext` \| `abstract_only` (truncation detected, or no text stored) \| `missing` (rung 8) |
+| `fulltext.source_tier` | `0`–`8`, the rung that produced the text |
 | `fulltext.access_route` | token from the table above |
-| `fulltext.local_path` | wiki-root-relative: `assets/papers/<stem>.pdf` for PDF routes, `outputs/deep-research/<slug>/workspace/fulltext/<stem>.txt` for XML/HTML/MCP routes |
+| `fulltext.local_path` | wiki-root-relative: `assets/papers/<stem>.pdf` for PDF routes, `outputs/deep-research/<slug>/workspace/fulltext/<stem>.txt` for XML/HTML/MCP/browser routes |
 | `fulltext.sha256` | hex sha256 of the stored file (library dedupe key) |
-| `fulltext.truncation_detected` | `true` only from the HTML route |
+| `fulltext.truncation_detected` | `true` from the HTML route (§2) or the browser route (§4b, same rules applied to plain text) |
 
-Invariants (enforced, `references/schema.md` §4): `status == "missing"` ⇒ `source_tier == 7`
+Invariants (enforced, `references/schema.md` §4): `status == "missing"` ⇒ `source_tier == 8`
 and a `missing.md` block exists; `truncation_detected == true` ⇒ `status == "abstract_only"`.
 Extraction of an `abstract_only` record sets `evidence_basis: "abstract_only"` and it is never
 appraised as if full (`SKILL.md` "Invariants").
@@ -133,15 +137,86 @@ Task record shape:
  "result_path":"workspace/fulltext/pmid-33333333.mcp.txt","created_at":"2026-09-08T00:00:00Z"}
 ```
 
-A record that reached rung 7 while its rung-1 task was still pending is quarantined *and* still
+A record that reached rung 8 while its rung-1 task was still pending is quarantined *and* still
 resolvable: delivering the MCP text later upgrades it to `source_tier: 1` and removes its block
 from `missing.md`.
 
 ---
 
+## 4b. Rung 7: the browser search/fetch handoff
+
+Same shape as §4, a different MCP surface, and the last rung before quarantine. By the time a
+record reaches rung 7, every scripted OA route has already failed: no local copy, no PMC MCP
+text, no PMC PDF, no Europe PMC JATS, no Unpaywall location, no direct OA fetch, no preprint
+twin. What's left is content a plain `requests.get` cannot reach — a JS-rendered OA landing
+page, a host that blocks scripted clients, a repository whose download link only appears after
+client-side rendering — but that is still, in principle, free to read.
+
+| Step | Actor | Action |
+|---|---|---|
+| 1 | `fulltext.py` | on reaching rung 7 appends a `needs_browser` task to `workspace/retrieve/browser-tasks.jsonl` (candidate URLs built from DOI/PMID) and **continues down the ladder** — the run never blocks on rung 7 |
+| 2 | coordinator | reads pending tasks (`fulltext.py status --run-dir <dir>` lists them under `browser_tasks_pending`) |
+| 3 | coordinator | drives the claude-in-chrome MCP tools (`navigate`, `read_page` / `get_page_text`, `tabs_create_mcp`) to search for and open a freely-accessible copy |
+| 4 | coordinator | extracts the visible article body text and writes it verbatim (UTF-8) to the task's `result_path` (`workspace/fulltext/<stem>.browser.txt`) |
+| 5 | coordinator | `fulltext.py resolve-browser --run-dir <dir> --evidence-id <id> --text-file <path>` — or simply re-runs `acquire`, which picks the file up on the next pass |
+| 6 | coordinator | if nothing but a login wall, paywall, or captcha turns up: `fulltext.py resolve-browser --evidence-id <id> --status unavailable` so rung 7 is marked terminal and never retried |
+
+**Hard boundary, not a suggestion.** This rung exists solely to reach the *rendering* problem —
+never to reach past an access control. The same invariant §9 states for every other rung applies
+here with zero exception:
+
+- No sign-in, no saved session, no cookie jar reuse, no institutional/VPN/EZproxy/Shibboleth
+  proxy, no captcha solving, no payment.
+- A 401/402/403, a login redirect, or any of the five paywall markers (§2) means: stop, do not
+  try another route for this candidate, report `unavailable`.
+- Sci-Hub, LibGen, Anna's Archive, ResearchGate scraping, mirror sites — never a candidate URL,
+  regardless of what a search turns up.
+- The text handed to `resolve-browser` runs through the same truncation detector as the HTML
+  route (§2, word count + paywall-marker substrings) — a thin teaser page still gets tagged
+  `abstract_only`, never `fulltext`.
+
+### Institutional access (opt-in exception to the boundary above)
+
+The one deliberate carve-out: if `config.json` `institutional_access.enabled` is set (Stage 0
+asks once per run, off by default — `SKILL.md` "Institutional access"), the task also names that
+library's discovery search (e.g. King's College London: `https://librarysearch.kcl.ac.uk/discovery/search?vid=44KCL_INST:44KCL_INST`)
+as a candidate. This is still not a bypass:
+
+- The coordinator opens the discovery search and searches by title/DOI — it never constructs or
+  guesses a query-string API for a site whose search syntax was not verified.
+- If the record needs SSO, the coordinator **stops and hands the tab to the human**. It never
+  types, stores, requests, or transmits the credential itself — only the human authenticates,
+  in their own already-open browser tab, at their own discretion.
+- Once the human confirms the tab shows the authenticated article, extraction resumes normally.
+- The result is recorded with `fulltext.py resolve-browser --institutional --text-file <path>`,
+  never picked up silently by a plain `acquire` re-run — this sets `access_route:
+  browser_fetch_institutional` (vs. plain `browser_fetch` for OA) so the report's Methods
+  section can disclose, per record, which full texts came through the user's own institutional
+  licence rather than open access. `references/schema/04-corpus.md` §4 documents both tokens.
+
+Everything else in this rung's boundary — no automated credential entry, no institutional
+access without this explicit per-run opt-in, no retrying a block by another route — is
+unchanged.
+
+Task record shape:
+
+```json
+{"schema_version":1,"task_id":"retrieve:pmid:33333333","evidence_id":"pmid:33333333",
+ "status":"needs_browser","tool":"mcp__claude-in-chrome__* (navigate / read_page / get_page_text)",
+ "args":{"pmid":"33333333","doi":null,"pmcid":null,"title":"…","journal":"…",
+         "candidate_urls":["https://pubmed.ncbi.nlm.nih.gov/33333333/"]},
+ "result_path":"workspace/fulltext/pmid-33333333.browser.txt","created_at":"2026-09-08T00:00:00Z"}
+```
+
+A record that reached rung 8 while its rung-7 task was still pending is quarantined *and* still
+resolvable: delivering the browser text later upgrades it to `source_tier: 7` and removes its
+block from `missing.md`.
+
+---
+
 ## 5. Quarantine and the inbox resume loop
 
-Quarantine (`rung 7`) appends to `<run-dir>/missing.md`:
+Quarantine (`rung 8`) appends to `<run-dir>/missing.md`:
 
 ```markdown
 ## <title>
@@ -169,7 +244,7 @@ attempted for every selected record, if `missing.md` is non-empty the run halts 
 
 | Title | PMID | DOI | PMCID | Rung reached | Links |
 |---|---|---|---|---|---|
-| ... | 33333333 | 10.1000/paywalled | — | t7 | [PubMed](https://pubmed.ncbi.nlm.nih.gov/33333333/) · [DOI](https://doi.org/10.1000/paywalled) |
+| ... | 33333333 | 10.1000/paywalled | — | t8 | [PubMed](https://pubmed.ncbi.nlm.nih.gov/33333333/) · [DOI](https://doi.org/10.1000/paywalled) |
 
 Tell the user exactly where to put PDFs they find manually — `<run-dir>/inbox/` — and ask
 explicitly whether they can supply any of the quarantined records. For `systematic` and `max`
@@ -255,7 +330,7 @@ shadow it (`assets/`, `assets/*`, `/assets/…`, the four rules themselves) are 
 | Never redo a satisfied record | `fulltext.status == "fulltext"` ⇒ the record is skipped entirely |
 | Retry deliberately | `--from-tier N` discards rung state ≥ N and walks again from rung N |
 | Retry one record | `--only-pmid <pmid>` / `--only-evidence-id <id>` |
-| Pending MCP work is visible | `needs_mcp` rung state is re-checked on every pass; the file's presence flips it to `success` |
+| Pending MCP/browser work is visible | `needs_mcp` and `needs_browser` rung state is re-checked on every pass; the result file's presence flips it to `success` |
 | Corpus is rewritten atomically | temp file + `replace()`; `index.json` likewise |
 | Crash-safe | state, corpus, `missing.md`, `index.json` are all on disk after each record |
 
@@ -274,6 +349,8 @@ fulltext.py acquire --corpus <corpus.jsonl> --run-dir <dir>
 fulltext.py status  --run-dir <dir> [--corpus <path>]
 fulltext.py resolve-mcp --run-dir <dir> --evidence-id <id>
                     (--text-file <path> | --status unavailable)
+fulltext.py resolve-browser --run-dir <dir> --evidence-id <id>
+                    (--text-file <path> [--institutional] | --status unavailable)
 
 library.py init         --wiki <root>
 library.py lookup       --wiki <root> [--doi|--pmid|--pmcid|--title|--sha256]
@@ -294,17 +371,29 @@ Records whose `screening.decision == "exclude"` are never acquired. The wiki roo
 Hard policy (`SKILL.md` "Invariants"). These are not "not yet implemented" — they are never
 implemented, and no rung may be added that does any of them. Fail closed.
 
+Rung 7 (§4b) is a controlled, narrow exception to the old blanket "no browser automation" rule:
+it may use the claude-in-chrome MCP tools, but *only* to reach content that requires JS
+rendering and carries no access control at all. Every row below still applies to rung 7 exactly
+as it applies to every other rung — a browser is not a loophole around any of them.
+
+The institutional-access opt-in (§4b "Institutional access") is a second, narrower exception,
+scoped even tighter: off by default, on only when the user explicitly opts in for that run, and
+even then the agent never handles the credential — the human completes SSO themselves. It does
+not relax "Any user account, cookie jar, session token" below for anyone but that human, acting
+on their own licence, in their own browser session.
+
 | Forbidden | Why |
 |---|---|
-| Browser automation (chrome-devtools MCP, Playwright, headless Chrome) to reach an article | Dropped at design review; a browser rung exists only to defeat access controls |
+| Browser automation to defeat, bypass, or route around any access control (login, paywall, metering, captcha) | A browser rung exists to render JS pages, never to reach past a control a script was correctly refused by |
 | Institutional / VPN / EZproxy / Shibboleth / library credentials | Credentialed access is the user's, not the agent's, and licences are per-person |
-| Any user account, cookie jar, session token, or captcha solving | Same |
-| Sci-Hub, LibGen, Anna's Archive, Nexus, ResearchGate scraping, `#icanhazpdf`, mirror sites | Infringing sources |
+| Any user account, cookie jar, session token, or captcha solving | Same — applies to the browser rung's own cookie/session state too, not just scripted requests |
+| Sci-Hub, LibGen, Anna's Archive, Nexus, ResearchGate scraping, `#icanhazpdf`, mirror sites | Infringing sources — never a candidate URL for the browser rung either |
 | Requesting a PDF from an author by automated email | Not authorized; the human may do this themselves |
 | Bypassing rate limits, rotating User-Agents, cloaking the client identity | Breaks the terms we operate under |
-| Retrying a 401/402/403 by any alternate route | A refusal is a refusal |
+| Retrying a 401/402/403 by any alternate route, browser included | A refusal is a refusal |
 | Guessing an Unpaywall email, or omitting `email=` | The parameter is required and identifies the caller honestly |
 
-When the OA ladder is exhausted the answer is rung 7: quarantine, alert the user, mark the
-synthesis provisional, and let the human decide whether to supply the PDF via `inbox/`.
-A missing paper is an honest gap in the report; a circumvented paywall is a policy breach.
+When the OA ladder — including rung 7's browser search — is exhausted the answer is rung 8:
+quarantine, alert the user, mark the synthesis provisional, and let the human decide whether to
+supply the PDF via `inbox/`. A missing paper is an honest gap in the report; a circumvented
+paywall is a policy breach.

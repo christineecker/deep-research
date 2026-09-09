@@ -67,13 +67,13 @@ deduped by `scripts/corpus.py`.
 | Field | Type | Req | Meaning |
 |---|---|---|---|
 | `status` | enum | yes | `fulltext` \| `abstract_only` \| `missing`. A truncation-detected HTML route is `abstract_only`, never `fulltext` (`references/acquisition.md` rung 5). |
-| `source_tier` | int \| null | yes | `0`–`7`, the acquisition-ladder rung that produced the text: 0 local library, 1 PMC MCP full text, 2 PMC PDF, 3 Europe PMC fullTextXML, 4 Unpaywall location, 5 OA PDF/HTML fetch, 6 preprint twin, 7 quarantined. `null` before stage 4. |
-| `access_route` | string \| null | yes | Short machine token for the concrete route, e.g. `library`, `pmc_mcp`, `pmc_pdf`, `epmc_xml`, `unpaywall_pdf`, `oa_html`, `preprint_twin`, `inbox_manual`, `quarantine`. |
+| `source_tier` | int \| null | yes | `0`–`8`, the acquisition-ladder rung that produced the text: 0 local library, 1 PMC MCP full text, 2 PMC PDF, 3 Europe PMC fullTextXML, 4 Unpaywall location, 5 OA PDF/HTML fetch, 6 preprint twin, 7 browser search/fetch (claude-in-chrome, OA content only), 8 quarantined. `null` before stage 4. |
+| `access_route` | string \| null | yes | Short machine token for the concrete route, e.g. `library`, `pmc_mcp`, `pmc_pdf`, `epmc_xml`, `unpaywall_pdf`, `oa_html`, `preprint_twin`, `browser_fetch`, `browser_fetch_institutional` (opt-in only, human completed SSO themselves — `references/acquisition.md` §4b), `inbox_manual`, `quarantine`. |
 | `local_path` | string \| null | yes | Wiki-root-relative path of the stored PDF/text, e.g. `assets/papers/pmid-12345678.pdf`. `null` when nothing was stored. |
 | `sha256` | string \| null | yes | Hex sha256 of the stored file; the library dedupe key. |
-| `truncation_detected` | bool | yes | `true` when the HTML truncation detector fired (body <1500 words or paywall markers). Forces `status: abstract_only`. |
+| `truncation_detected` | bool | yes | `true` when the HTML/browser-text truncation detector fired (body <1500 words or paywall markers). Forces `status: abstract_only`. |
 
-Invariant: `status == "missing"` ⇒ `source_tier == 7` and the record appears in `missing.md`.
+Invariant: `status == "missing"` ⇒ `source_tier == 8` and the record appears in `missing.md`.
 Invariant: `truncation_detected == true` ⇒ `status == "abstract_only"`.
 
 ---

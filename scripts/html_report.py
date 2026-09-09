@@ -113,7 +113,8 @@ TIER_LABEL = {
     4: "4 — Unpaywall location",
     5: "5 — OA PDF/HTML fetch",
     6: "6 — preprint twin",
-    7: "7 — quarantined",
+    7: "7 — browser search/fetch",
+    8: "8 — quarantined",
 }
 RATIO_MEASURES = {
     "rr", "or", "hr", "irr", "rrr", "pr", "sir", "smr", "risk ratio", "odds ratio",
@@ -975,7 +976,7 @@ def h_prisma_section(prisma: dict | None, note: str | None, counts: dict) -> str
         r("Records excluded at screening", p["excluded"]),
         r("Records unclear at screening", p["unclear"], True),
         r("Reports sought for retrieval", p["sought"]),
-        r("Reports not retrieved &mdash; quarantined (rung 7)", p["unobtainable"]),
+        r("Reports not retrieved &mdash; quarantined (rung 8)", p["unobtainable"]),
         r("Retrieval not yet attempted (schema R8: not counted as unobtainable)",
           p["not_attempted"], True),
         r("Reports assessed (full text or abstract)", p["obtained"]),
@@ -2134,7 +2135,7 @@ def compute_provisional(all_studies: list[Study], included: list[Study],
     q = [s for s in all_studies if s.decision == "include" and s.quarantined]
     if q:
         triggers.append(f"{len(q)} included record(s) could not be obtained in full text and "
-                        "are quarantined at rung 7.")
+                        "are quarantined at rung 8.")
     na = [s for s in all_studies if s.decision == "include" and s.not_yet_attempted]
     if na:
         triggers.append(f"{len(na)} included record(s) have had no retrieval attempt yet "

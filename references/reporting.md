@@ -190,7 +190,7 @@ BAD  "One trial reports a 24-week remission benefit.[^pubmed-23456789]"
 
 ```text
 GOOD "Three records could not be obtained through the open-access ladder (PMID 11111111,
-      22222222, 33333333; all reached rung 7). They are listed in section 14 with direct
+      22222222, 33333333; all reached rung 8). They are listed in section 14 with direct
       links. The synthesis is PROVISIONAL pending their retrieval; PDFs dropped into the
       run's inbox/ are ingested on rerun."
 BAD  "A small number of papers were unavailable."

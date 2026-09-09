@@ -10,13 +10,24 @@ Rungs (recorded as `fulltext.source_tier` + `fulltext.access_route`, references/
     4  Unpaywall            DOI -> best_oa_location (email= is a required API param)
     5  OA PDF/HTML          fetch the rung 3-4 location; pdftotext -layout / HTML detector
     6  preprint twin        Europe PMC SRC:PPR match, tagged is_preprint, flagged loudly
-    7  quarantine           append to <run-dir>/missing.md and alert the user
+    7  browser search/fetch claude-in-chrome MCP -- COORDINATOR HANDOFF, OA content only
+    8  quarantine           append to <run-dir>/missing.md and alert the user
 
 Rung 1 handoff: a script cannot call an MCP tool. When a record reaches rung 1 the script
 writes a `needs_mcp` task record to <run-dir>/workspace/retrieve/mcp-tasks.jsonl and keeps
 walking the ladder. The coordinator calls `get_full_text_article`, saves the returned text to
 the task's `result_path`, and calls `fulltext.py resolve-mcp` (or simply re-runs `acquire`,
 which picks the file up). See references/acquisition.md.
+
+Rung 7 handoff: same shape, a different MCP surface. When a record still has no text after
+rung 6 the script writes a `needs_browser` task to
+<run-dir>/workspace/retrieve/browser-tasks.jsonl and keeps walking. The coordinator drives the
+claude-in-chrome MCP tools to search for and open a freely-accessible copy (publisher OA page,
+institutional repository, preprint mirror not already covered by rung 6), extracts the visible
+article text, saves it to the task's `result_path`, and calls `fulltext.py resolve-browser` (or
+re-runs `acquire`). This rung exists to reach content a plain HTTP fetch cannot render (JS-gated
+OA pages, bot-blocked hosts) -- it is not a paywall bypass. See references/acquisition.md §4b
+and the "Forbidden" table below for the hard line between the two.
 
 Evidence kernel: whenever a rung yields usable text the ladder **registers** it into the run's
 snapshot store (`scripts/store.py`, references/schema.md §10-§11, `references/evidence-kernel.md`). The resulting `source_id` is appended to the corpus record's `source_ids[]` (R14), so a
@@ -26,8 +37,11 @@ additionally writes a `fetch` event with `fresh: true`. Registration is purely a
 best-effort: a store failure is logged to `engine.log` and never aborts an acquisition that
 already succeeded, so a run with no `sources/` directory acquires text exactly as before.
 
-Forbidden by policy (`SKILL.md` "Invariants"): no browser automation, no credentials or institutional
-proxies, no sci-hub-class sources, no paywall circumvention of any kind. Fail closed.
+Forbidden by policy (`SKILL.md` "Invariants"), rung 7 included: no credentials, no logged-in
+session, no institutional/VPN/EZproxy/Shibboleth proxy, no cookie jar reuse, no captcha
+solving, no sci-hub-class sources, no retrying a 401/402/403 by an alternate route. A browser
+rung that hits a login wall, a paywall, or a captcha reports `unavailable` and moves on to
+quarantine -- it never signs in, never pays, never guesses past the block. Fail closed.
 """
 
 from __future__ import annotations
@@ -97,7 +111,8 @@ TIER_ROUTES = {
     4: "unpaywall",
     5: "oa_pdf",
     6: "preprint_twin",
-    7: "quarantine",
+    7: "browser_fetch",
+    8: "quarantine",
 }
 
 # polite defaults; NCBI hosts get the 3 req/s E-utilities budget (no API key in env)
@@ -387,6 +402,75 @@ def pending_mcp_tasks(run_dir: Path, records: list[dict]) -> list[dict]:
     return pending
 
 
+def browser_tasks_path(run_dir: Path) -> Path:
+    return run_dir / "workspace" / "retrieve" / "browser-tasks.jsonl"
+
+
+def read_browser_tasks(run_dir: Path) -> list[dict]:
+    path = browser_tasks_path(run_dir)
+    if not path.exists():
+        return []
+    tasks = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            try:
+                tasks.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return tasks
+
+
+def upsert_browser_task(run_dir: Path, task: dict) -> None:
+    tasks = [t for t in read_browser_tasks(run_dir) if t.get("task_id") != task["task_id"]]
+    tasks.append(task)
+    path = browser_tasks_path(run_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".jsonl.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        for t in tasks:
+            fh.write(json.dumps(t, ensure_ascii=False, separators=(",", ":")) + "\n")
+    tmp.replace(path)
+
+
+def pending_browser_tasks(run_dir: Path, records: list[dict]) -> list[dict]:
+    """Rung-7 tasks still requiring coordinator browser action (mirrors `pending_mcp_tasks`)."""
+    fulltext_by_eid = {
+        evidence_id_of(rec): (rec.get("fulltext") or {}).get("status")
+        for rec in records
+    }
+    pending = []
+    for task in read_browser_tasks(run_dir):
+        if task.get("status") != "needs_browser":
+            continue
+        if (run_dir / task["result_path"]).exists():
+            continue
+        if fulltext_by_eid.get(task.get("evidence_id")) == "fulltext":
+            continue
+        pending.append(task)
+    return pending
+
+
+TRUNCATION_MIN_WORDS_TEXT = TRUNCATION_MIN_WORDS
+
+
+def detect_truncation_text(text: str) -> tuple[bool, list[str]]:
+    """Same detector as rung 5 (`detect_truncation`), applied to already-plain text.
+
+    The browser rung hands back extracted body text, not raw HTML, so there is nothing to
+    tag-strip -- the two checks (word count, paywall marker substring) apply directly.
+    """
+    reasons = []
+    words = len(text.split())
+    if words < TRUNCATION_MIN_WORDS_TEXT:
+        reasons.append("body_words=%d<%d" % (words, TRUNCATION_MIN_WORDS_TEXT))
+    lowered = text.lower()
+    for marker in PAYWALL_MARKERS:
+        if marker.lower() in lowered:
+            reasons.append("paywall_marker=%s" % marker)
+    return bool(reasons), reasons
+
+
 # ----------------------------------------------------------- kernel mapping ----
 #
 # Rung -> snapshot (`access`, `origin`), schema.md §10 enums. `access` describes the
@@ -407,7 +491,9 @@ def pending_mcp_tasks(run_dir: Path, records: list[dict]) -> list[dict]:
 #   5     oa_html          abstract when the truncation detector fired, else full_text
 #                                                       unpaywall / oa-pdf
 #   6     preprint_twin    preprint                     europepmc
-#   7     quarantine       -- no text, nothing registered --
+#   7     browser_fetch    abstract when the truncation  web
+#                          detector fires, else full_text
+#   8     quarantine       -- no text, nothing registered --
 #
 ROUTE_ORIGIN = {
     "pmc_mcp": "pmc",
@@ -418,6 +504,8 @@ ROUTE_ORIGIN = {
     "oa_pdf": "oa-pdf",
     "oa_html": "oa-pdf",
     "preprint_twin": "europepmc",
+    "browser_fetch": "web",
+    "browser_fetch_institutional": "web",
     "inbox_manual": "user-supplied-pdf",
     "library": "user-supplied-pdf",
 }
@@ -878,7 +966,107 @@ def rung6_preprint_twin(rec: dict, ctx: Ctx, state: dict) -> dict:
     return {"status": "failed", "detail": "no preprint twin with full text"}
 
 
-def rung7_quarantine(rec: dict, ctx: Ctx, state: dict) -> dict:
+def load_institutional_access(run_dir: Path) -> dict | None:
+    """`config.json` `institutional_access` object, or None if absent/disabled/unreadable.
+
+    Opt-in only (Stage 0 asks once per run, `SKILL.md` "Institutional access"). Shape:
+    ``{"enabled": true, "name": "King's College London",
+       "search_url": "https://librarysearch.kcl.ac.uk/discovery/search?vid=44KCL_INST:44KCL_INST"}``.
+    Absent or ``enabled: false`` means rung 7 stays OA-only, exactly as it was before this
+    setting existed.
+    """
+    try:
+        cfg = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    inst = cfg.get("institutional_access") or {}
+    if not inst.get("enabled") or not inst.get("search_url"):
+        return None
+    return inst
+
+
+def rung7_browser_fetch(rec: dict, ctx: Ctx, state: dict) -> dict:
+    """Coordinator handoff. A script cannot drive the claude-in-chrome MCP tools.
+
+    OA-only by default, last resort before quarantine: for content a plain HTTP GET cannot
+    render (JS-gated open-access pages, bot-blocked hosts) but that carries no login wall,
+    paywall, or captcha. A record that reaches here already failed rungs 0-6, so every scripted
+    OA route (library, PMC, Europe PMC, Unpaywall, direct OA fetch, preprint twin) is exhausted.
+
+    If `config.json` `institutional_access.enabled` is set (opt-in, Stage 0 asks once per run —
+    see `SKILL.md` "Institutional access" and `references/acquisition.md` §4b), the task also
+    names that library's discovery search as a candidate. The coordinator may open it and search
+    by title/DOI, but if it reaches a login/SSO wall it must **stop and hand the tab to the
+    human** to authenticate themselves -- never type, store, or transmit the credential itself.
+    """
+    if ctx.offline:
+        return {"status": "skipped", "detail": "offline: browser rung needs a live browser"}
+    stem = record_stem(rec)
+    result_rel = "workspace/fulltext/%s.browser.txt" % stem
+    result_abs = ctx.run_dir / result_rel
+    if result_abs.exists():
+        text = result_abs.read_text(encoding="utf-8", errors="replace")
+        if len(text.strip()) < MIN_TEXT_CHARS:
+            return {"status": "failed", "detail": "coordinator browser file <%d chars"
+                    % MIN_TEXT_CHARS}
+        truncated, reasons = detect_truncation_text(text)
+        detail = "browser full text supplied by coordinator"
+        if truncated:
+            detail += "; truncated (%s)" % "; ".join(reasons)
+        return {"status": "success", "detail": detail, "text": text,
+                "access_route": "browser_fetch", "truncation_detected": truncated,
+                "url": canonical_url(rec, state)}
+    doi = normalize_doi(rec.get("doi"))
+    inst = load_institutional_access(ctx.run_dir)
+    instructions = (
+        "Search for and open a freely-accessible copy of this article (publisher OA page, "
+        "institutional/author repository, or a preprint mirror rung 6 did not already find) "
+        "using the claude-in-chrome MCP tools. OA content only by default: never sign in, "
+        "never use a saved session or institutional/VPN/EZproxy/Shibboleth access, never solve "
+        "a captcha, never pay, never retry a 401/402/403 by another route. If every candidate "
+        "is a login wall, paywall, or captcha, stop -- do not proceed -- and run `fulltext.py "
+        "resolve-browser --status unavailable` instead. Otherwise extract the visible article "
+        "body text (read_page / get_page_text) and write it verbatim (UTF-8) to result_path, "
+        "then re-run `fulltext.py acquire` or `fulltext.py resolve-browser`."
+    )
+    if inst:
+        instructions += (
+            " INSTITUTIONAL ACCESS (opt-in, this run only): also try %s -- use its on-page "
+            "search box with the title or DOI above, do not construct or guess a query-string "
+            "API for it. If it reaches an SSO/login page, STOP: tell the human this record "
+            "needs their %s login, hand them the open tab, and wait -- you must never type, "
+            "store, or transmit the credential yourself. Only resume extraction once the human "
+            "confirms the tab shows the authenticated article. If the text came from this "
+            "institutional path, you MUST record it with `fulltext.py resolve-browser "
+            "--institutional --text-file <path>` -- do not just drop the file and re-run "
+            "`acquire`, which would silently record it as plain OA browser_fetch and lose the "
+            "institutional-access disclosure the report methods section needs."
+            % (inst["search_url"], inst.get("name") or "institutional")
+        )
+    task = {
+        "schema_version": SCHEMA_VERSION,
+        "task_id": "retrieve:%s" % evidence_id_of(rec),
+        "evidence_id": evidence_id_of(rec),
+        "status": "needs_browser",
+        "tool": "mcp__claude-in-chrome__* (navigate / read_page / get_page_text)",
+        "args": {
+            "pmid": rec.get("pmid"), "doi": doi, "pmcid": rec.get("pmcid"),
+            "title": rec.get("title"), "journal": rec.get("journal"),
+            "candidate_urls": [u for u in [
+                ("https://doi.org/%s" % doi) if doi else None,
+                ("https://pubmed.ncbi.nlm.nih.gov/%s/" % rec["pmid"]) if rec.get("pmid") else None,
+            ] if u],
+            "institutional_search_url": inst["search_url"] if inst else None,
+        },
+        "result_path": result_rel,
+        "instructions": instructions,
+        "created_at": utcnow(),
+    }
+    upsert_browser_task(ctx.run_dir, task)
+    return {"status": "needs_browser", "detail": "emitted browser task -> %s" % result_rel}
+
+
+def rung8_quarantine(rec: dict, ctx: Ctx, state: dict) -> dict:
     eid = evidence_id_of(rec)
     path = ctx.run_dir / "missing.md"
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
@@ -923,7 +1111,8 @@ RUNGS = [
     (4, rung4_unpaywall),
     (5, rung5_oa_fetch),
     (6, rung6_preprint_twin),
-    (7, rung7_quarantine),
+    (7, rung7_browser_fetch),
+    (8, rung8_quarantine),
 ]
 
 TERMINAL_RUNG_STATES = {"success", "failed", "skipped", "unavailable"}
@@ -970,8 +1159,8 @@ def finalize(rec: dict, ctx: Ctx, state: dict, tier: int, res: dict) -> dict:
             local_path = ctx.wiki_rel(tpath)
             digest = sha256_file(tpath)
 
-    if tier == 7 or (not text and res.get("no_text")):
-        status = "missing" if tier == 7 else "abstract_only"
+    if tier == 8 or (not text and res.get("no_text")):
+        status = "missing" if tier == 8 else "abstract_only"
     elif truncated:
         status = "abstract_only"
     else:
@@ -986,7 +1175,7 @@ def finalize(rec: dict, ctx: Ctx, state: dict, tier: int, res: dict) -> dict:
         "truncation_detected": truncated,
     }
     state["fulltext"] = fulltext
-    if tier != 7 and status != "missing":
+    if tier != 8 and status != "missing":
         library.unquarantine(ctx.run_dir, evidence_id_of(rec))
     if res.get("is_preprint"):
         state["is_preprint"] = True
@@ -1040,10 +1229,10 @@ def acquire_record(rec: dict, ctx: Ctx, from_tier: int | None = None) -> dict:
         # needs_mcp: task emitted, keep walking the ladder
     save_state(ctx.run_dir, rec, state)
     rec["fulltext"] = rec.get("fulltext") or {
-        "status": "missing", "source_tier": 7, "access_route": "quarantine",
+        "status": "missing", "source_tier": 8, "access_route": "quarantine",
         "local_path": None, "sha256": None, "truncation_detected": False,
     }
-    quarantined = (state["rungs"].get("7") or {}).get("status") == "success"
+    quarantined = (state["rungs"].get("8") or {}).get("status") == "success"
     return {"evidence_id": eid,
             "action": "quarantined" if quarantined else "exhausted",
             "fulltext": rec["fulltext"]}
@@ -1152,6 +1341,7 @@ def cmd_acquire(args) -> int:
 
     write_corpus(corpus_path, records)
     pending = pending_mcp_tasks(run_dir, records)
+    pending_browser = pending_browser_tasks(run_dir, records)
     summary = {
         "schema_version": SCHEMA_VERSION,
         "run_dir": str(run_dir),
@@ -1162,9 +1352,11 @@ def cmd_acquire(args) -> int:
                            if (r.get("fulltext") or {}).get("status") == "missing"),
         "unpaywall_email": bool(email),
         "needs_mcp": len(pending),
+        "needs_browser": len(pending_browser),
         "registered_sources": sum(len(r.get("source_ids") or []) for r in results),
         "sources_dir": str(run_dir / "sources") if not args.no_register else None,
         "mcp_tasks_path": str(mcp_tasks_path(run_dir)) if pending else None,
+        "browser_tasks_path": str(browser_tasks_path(run_dir)) if pending_browser else None,
         "results": results,
     }
     print(json.dumps(summary, indent=2, ensure_ascii=False))
@@ -1187,6 +1379,7 @@ def alert_acquisition_health(summary: dict, *, email: str | None) -> None:
     abstract_only = sum(1 for s in statuses if s == "abstract_only")
     quarantined = summary.get("quarantined") or 0
     pending_mcp = summary.get("needs_mcp") or 0
+    pending_browser = summary.get("needs_browser") or 0
     no_text = quarantined + abstract_only
 
     alerts: list[str] = []
@@ -1198,6 +1391,14 @@ def alert_acquisition_health(summary: dict, *, email: str | None) -> None:
             f"own: call the tool yourself, or run `fulltext.py resolve-mcp "
             f"--status unavailable` per record so the ladder stops waiting. "
             f"Tasks: {summary.get('mcp_tasks_path')}")
+    if pending_browser:
+        alerts.append(
+            f"{pending_browser}/{processed} record(s) are waiting on ladder rung 7 "
+            f"(browser search/fetch via claude-in-chrome), which a script cannot drive. "
+            f"If no claude-in-chrome MCP server is connected, these will NEVER resolve on "
+            f"their own: drive the browser yourself (OA content only -- see task "
+            f"instructions), or run `fulltext.py resolve-browser --status unavailable` per "
+            f"record so the ladder stops waiting. Tasks: {summary.get('browser_tasks_path')}")
     if quarantined:
         alerts.append(
             f"{quarantined}/{processed} record(s) quarantined with no text at all. "
@@ -1242,6 +1443,7 @@ def cmd_status(args) -> int:
         if ft.get("truncation_detected"):
             truncated.append(evidence_id_of(rec))
     pending = pending_mcp_tasks(run_dir, records)
+    pending_browser = pending_browser_tasks(run_dir, records)
     out = {
         "schema_version": SCHEMA_VERSION,
         "run_dir": str(run_dir),
@@ -1257,6 +1459,10 @@ def cmd_status(args) -> int:
         "mcp_tasks_pending": [
             {"evidence_id": t["evidence_id"], "args": t["args"], "result_path": t["result_path"]}
             for t in pending
+        ],
+        "browser_tasks_pending": [
+            {"evidence_id": t["evidence_id"], "args": t["args"], "result_path": t["result_path"]}
+            for t in pending_browser
         ],
     }
     print(json.dumps(out, indent=2, ensure_ascii=False))
@@ -1318,6 +1524,68 @@ def cmd_resolve_mcp(args) -> int:
     return 0
 
 
+def cmd_resolve_browser(args) -> int:
+    """Record the outcome of the rung-7 coordinator browser handoff."""
+    run_dir, wiki = resolve_paths(args)
+    corpus_path = Path(args.corpus) if args.corpus else run_dir / "corpus.jsonl"
+    records = read_corpus(corpus_path)
+    target = None
+    for rec in records:
+        if evidence_id_of(rec) == args.evidence_id or (
+            args.evidence_id.isdigit() and str(rec.get("pmid")) == args.evidence_id
+        ):
+            target = rec
+            break
+    if target is None:
+        print(json.dumps({"error": "no corpus record for %s" % args.evidence_id}, indent=2))
+        return 1
+    state = load_state(run_dir, target)
+    if args.status == "unavailable":
+        mark(state, 7, "unavailable", "coordinator: no OA copy reachable without a login/"
+             "paywall/captcha")
+        save_state(run_dir, target, state)
+        upsert_browser_task(run_dir, {"task_id": "retrieve:%s" % args.evidence_id,
+                                      "schema_version": SCHEMA_VERSION,
+                                      "evidence_id": args.evidence_id, "status": "unavailable",
+                                      "result_path": "workspace/fulltext/%s.browser.txt"
+                                      % record_stem(target), "args": {}, "tool":
+                                      "mcp__claude-in-chrome__*", "created_at": utcnow()})
+        print(json.dumps({"evidence_id": args.evidence_id, "rung7": "unavailable"}, indent=2))
+        return 0
+    src = Path(args.text_file).expanduser().resolve()
+    text = src.read_text(encoding="utf-8", errors="replace")
+    dest = run_dir / "workspace" / "fulltext" / ("%s.browser.txt" % record_stem(target))
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if src != dest:
+        dest.write_text(text, encoding="utf-8")
+    ctx = Ctx(run_dir, wiki, args.email or os.environ.get("DEEP_RESEARCH_EMAIL"), offline=True,
+              register=not args.no_register)
+    if len(text.strip()) < MIN_TEXT_CHARS:
+        mark(state, 7, "failed", "browser text <%d chars" % MIN_TEXT_CHARS)
+        save_state(run_dir, target, state)
+        print(json.dumps({"evidence_id": args.evidence_id, "rung7": "failed"}, indent=2))
+        return 1
+    truncated, reasons = detect_truncation_text(text)
+    route = "browser_fetch_institutional" if args.institutional else "browser_fetch"
+    detail = "browser full text supplied by coordinator"
+    if args.institutional:
+        detail += " via opt-in institutional access"
+    if truncated:
+        detail += "; truncated (%s)" % "; ".join(reasons)
+    mark(state, 7, "success", detail)
+    # The coordinator, not this process, drove the browser: registered but never `fresh` (R22).
+    fulltext = finalize(target, ctx, state, 7,
+                        {"text": text, "access_route": route, "status": "success",
+                         "truncation_detected": truncated,
+                         "url": canonical_url(target, state)})
+    save_state(run_dir, target, state)
+    target["fulltext"] = fulltext
+    write_corpus(corpus_path, records)
+    print(json.dumps({"evidence_id": args.evidence_id, "fulltext": fulltext,
+                      "source_ids": list(target.get("source_ids") or [])}, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="fulltext.py", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1329,7 +1597,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--wiki", help="wiki root (default: inferred from --run-dir)")
     s.add_argument("--only-pmid", dest="only_pmid", help="restrict to one PMID")
     s.add_argument("--only-evidence-id", dest="only_evidence_id", help="restrict to one record")
-    s.add_argument("--from-tier", type=int, dest="from_tier", choices=range(0, 8),
+    s.add_argument("--from-tier", type=int, dest="from_tier", choices=range(0, 9),
                    help="re-run the ladder starting at this rung (discards later rung state)")
     s.add_argument("--email", help="Unpaywall contact email (else $DEEP_RESEARCH_EMAIL)")
     s.add_argument("--limit", type=int, help="stop after N records")
@@ -1367,6 +1635,25 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-register", action="store_true", dest="no_register",
                    help="do not register the supplied text into <run-dir>/sources/")
     s.set_defaults(func=cmd_resolve_mcp)
+
+    s = sub.add_parser("resolve-browser",
+                       help="record a rung-7 browser search/fetch result (coordinator)")
+    s.add_argument("--run-dir", required=True, dest="run_dir")
+    s.add_argument("--wiki")
+    s.add_argument("--corpus")
+    s.add_argument("--evidence-id", required=True, dest="evidence_id",
+                   help="evidence_id or bare PMID")
+    s.add_argument("--text-file", dest="text_file",
+                   help="file holding the extracted article body text")
+    s.add_argument("--status", choices=["ok", "unavailable"], default="ok")
+    s.add_argument("--institutional", action="store_true",
+                   help="text was retrieved via config.json institutional_access (opt-in) "
+                        "after the human completed SSO themselves; recorded as "
+                        "access_route=browser_fetch_institutional for report transparency")
+    s.add_argument("--email")
+    s.add_argument("--no-register", action="store_true", dest="no_register",
+                   help="do not register the supplied text into <run-dir>/sources/")
+    s.set_defaults(func=cmd_resolve_browser)
     return p
 
 
@@ -1374,6 +1661,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.cmd == "resolve-mcp" and args.status == "ok" and not args.text_file:
         print("resolve-mcp --status ok requires --text-file", file=sys.stderr)
+        return 2
+    if args.cmd == "resolve-browser" and args.status == "ok" and not args.text_file:
+        print("resolve-browser --status ok requires --text-file", file=sys.stderr)
         return 2
     return args.func(args)
 

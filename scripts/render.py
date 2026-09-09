@@ -375,7 +375,8 @@ _TIER_LABELS = {
     4: "Unpaywall location",
     5: "open-access fetch",
     6: "preprint twin",
-    7: "quarantined; full text not obtained",
+    7: "browser search/fetch",
+    8: "quarantined; full text not obtained",
 }
 
 

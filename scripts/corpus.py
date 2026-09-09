@@ -398,12 +398,12 @@ def normalize_record(raw: dict, *, allow_extra: bool = False) -> dict:
             f"{rec['evidence_id']}: truncation_detected=true forces status=abstract_only "
             "(schema.md §4 invariant)"
         )
-    # schema.md §4: source_tier is null before stage 4. The `missing => tier 7`
+    # schema.md §4: source_tier is null before stage 4. The `missing => tier 8`
     # invariant applies only once retrieval was actually attempted (access_route set).
     if ft["status"] == "missing" and ft["access_route"] and ft["source_tier"] is None:
-        ft["source_tier"] = 7
-    if ft["source_tier"] is not None and not (0 <= int(ft["source_tier"]) <= 7):
-        raise UserError(f"{rec['evidence_id']}: fulltext.source_tier must be 0-7 or null")
+        ft["source_tier"] = 8
+    if ft["source_tier"] is not None and not (0 <= int(ft["source_tier"]) <= 8):
+        raise UserError(f"{rec['evidence_id']}: fulltext.source_tier must be 0-8 or null")
     rec["fulltext"] = ft
 
     rec["extraction_path"] = raw.get("extraction_path") or None
@@ -1007,8 +1007,8 @@ def cmd_validate(args) -> int:
     for rec in corpus.list():
         eid = rec["evidence_id"]
         ft = rec["fulltext"]
-        if ft["status"] == "missing" and ft["access_route"] and ft["source_tier"] != 7:
-            errors.append(f"{eid}: attempted-but-missing requires source_tier=7")
+        if ft["status"] == "missing" and ft["access_route"] and ft["source_tier"] != 8:
+            errors.append(f"{eid}: attempted-but-missing requires source_tier=8")
         if ft["truncation_detected"] and ft["status"] != "abstract_only":
             errors.append(f"{eid}: truncation_detected requires status=abstract_only")
         if eid != derive_evidence_id(rec):
