@@ -65,18 +65,17 @@ Check your own tool list, once, at Stage 0:
 `scripts/eutils.py` and Europe PMC are plain HTTPS and need no connector; `narrow` through
 `wide` therefore run on PubMed MCP alone.
 
-What to do about a missing one, in the turn you find it:
+**PubMed MCP is mandatory, every scope.** If `mcp__claude_ai_PubMed__*` is not in your tool
+list, do not proceed at any reduced scope. Tell the user PubMed MCP is missing, that it's
+authorized in claude.ai → Settings → Connectors and picked up by a **new** session, and stop —
+wait for them to connect and start a new session. Do not offer a workaround that fetches the
+same material another way, and do not ask for an authorization code, token, or callback URL
+(it's a browser OAuth flow you cannot drive). No "proceed anyway" option for this one.
 
-- **Tell the user which server is missing, by name**, and that it is authorized in
-  claude.ai → Settings → Connectors, then picked up by a **new** session — not this one.
-- You cannot authorize it yourself: it is a browser OAuth flow. Never ask the user for an
-  authorization code, token, or callback URL, and never offer a workaround that fetches the
-  same material another way.
-- Then ask whether to **proceed at a reduced scope now** or **stop and resume after
-  connecting**. Their call, not yours. `max` without Scholar Gateway and Consensus is `wide`
-  with extra steps — say that plainly rather than running `max` and quietly returning less.
-- Missing PubMed MCP is more serious: ladder rung 1 cannot run at any scope, so paywalled
-  records lose their best source. Say so before screening, not after.
+Scholar Gateway / Consensus (both `max`-only) stay optional: if missing, tell the user by name,
+then ask whether to **proceed at a reduced scope now** or **stop and resume after connecting**.
+Their call. `max` without them is `wide` with extra steps — say that plainly rather than running
+`max` and quietly returning less.
 
 Record what you found in `config.json` under `connectors`, e.g.
 `{"pubmed_mcp": true, "scholar_gateway": false, "consensus": false, "checked_at": "<iso>"}`,
@@ -88,13 +87,33 @@ session, which is exactly when availability changes.
 
 ### Ask, if not already known
 
+Always ask explicitly — never silently default a profile or filter set because the question
+"sounds like" a given mode. Present the profile table (with what each one trades off) and wait
+for the user's pick rather than inferring `fast`/`standard`/etc. from phrasing.
+
 1. **Question** — restate it back as a PICO/PECO before proceeding.
-2. **Profile** (or scope / rigor / gates individually).
+2. **Profile** — show the profile table above and ask the user to pick one (or set
+   scope / rigor / gates individually). Say what the chosen profile implies: `max_articles`,
+   whether gates apply, whether dual screening runs, whether it's report-only.
 3. **Target wiki** — needed *early*, because the run directory and PDF library live in it.
    Enumerate the wikis directory at runtime; never hardcode the list. Missing wiki →
    confirm creation and location with the user first.
 4. **Filters** — years, authors, journals, article types, species/age, language, OA-only.
+   **Ask explicitly whether meta-analyses and systematic reviews should be included** in the
+   corpus or excluded as an article-type filter — do not assume either way. If included, ask
+   whether they should be synthesized alongside primary studies or reported/appraised
+   separately (AMSTAR-2 applies to reviews, not RoB2/ROBINS-I). Record the answer in
+   `config.json` under `filters.article_types` / `filters.include_reviews`.
 5. **Outputs** — `report.md` always; optionally HTML artifact, Quarto PDF/docx, OKF bundle promotion.
+
+### Progress updates — every profile, including `fast`
+
+A run with no visible progress looks stalled even when it isn't. After **every** stage
+transition (bump of `config.json`'s `stage`) and at least once per batch of dispatched
+subagents, run `python3 scripts/status.py <run_dir>` and post its output (or a short summary of
+it — current stage, progress bar, counts) to the user as plain text. This applies to `fast`
+profile too: "report only" affects which *artifacts* get produced, not whether the user sees
+what stage the run is in. Do not wait until the final report to surface stage progress.
 
 ### Run directory
 
@@ -179,7 +198,17 @@ per-host rate limits hold regardless, and `--offline` runs serially.
 
 **Stage 5 — extract.** One subagent per paper, opus, `references/prompts/extract.md`. Design,
 N, population, I/C, outcomes with effect + CI + direction, funding/COI, limitations, quotes
-with anchors. `evidence_basis` is `abstract_only` whenever no full text was obtained.
+with anchors. `evidence_basis` is `abstract_only` whenever no full text was obtained. When the
+stage completes, run `python3 scripts/status.py <run_dir> --table` and post the table to the
+user — it shows which papers were downloaded, in what format (PDF/HTML/Text), and whether
+extraction/appraisal ran, so the user can see corpus coverage before synthesis.
+
+After posting the table, if any record is `✗ Missing` or `~ Abstract`, **stop and ask** the user
+to either proceed as-is (synthesis marks those records provisional/abstract-only per stage 4) or
+supply full text themselves — drop PDFs/HTML into `<run_dir>/inbox/` (any filename), then run
+`python3 scripts/library.py ingest-inbox <run_dir>` to match them to the quarantined records and
+re-run `status.py --table` to confirm before continuing to stage 6. If every record is already
+`✓ Fulltext`, skip the question and continue.
 
 **Stage 6 — appraise.** One subagent per paper, opus, `references/prompts/appraise.md`. Tool
 by design (RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 / none), then GRADE domains.

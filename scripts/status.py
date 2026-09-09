@@ -3,7 +3,7 @@
 
 Shows:
   - current stage with progress (e.g., Stage 3: Retrieve - 12/25 completed)
-  - formatted table: PMID | Title | Authors | PDF Status (fulltext/abstract/missing)
+  - formatted table: PMID | Title | Authors | PDF Status (fulltext/abstract/missing) | Format (pdf/html/text)
   - filtering options (e.g., --missing to show only records without PDFs)
 
 Environment: python3 3.14, stdlib only. No third-party imports, no pip.
@@ -46,6 +46,43 @@ FULLTEXT_ICONS = {
     "abstract_only": "~ Abstract",
     "missing": "✗ Missing",
 }
+
+# access_route -> stored format label, keyed on the tokens in references/schema/04-corpus.md.
+# `local_path` extension is checked first and wins when present (ground truth over route name).
+ROUTE_FORMAT = {
+    "library": "PDF",
+    "pmc_mcp": "Text",
+    "pmc_pdf": "PDF",
+    "epmc_xml": "Text",
+    "unpaywall": "Text",
+    "unpaywall_pdf": "PDF",
+    "oa_pdf": "PDF",
+    "oa_html": "HTML",
+    "preprint_twin": "Text",
+    "inbox_manual": "PDF",
+    "quarantine": "—",
+}
+
+EXT_FORMAT = {
+    ".pdf": "PDF",
+    ".html": "HTML",
+    ".htm": "HTML",
+    ".xml": "Text",
+    ".txt": "Text",
+}
+
+
+def infer_format(ft: dict) -> str:
+    """Derive stored format (PDF/HTML/Text) from a corpus record's fulltext block."""
+    local_path = ft.get("local_path")
+    if local_path:
+        suffix = Path(local_path).suffix.lower()
+        if suffix in EXT_FORMAT:
+            return EXT_FORMAT[suffix]
+    route = ft.get("access_route")
+    if route in ROUTE_FORMAT:
+        return ROUTE_FORMAT[route]
+    return "—"
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -197,6 +234,7 @@ def format_corpus_table(run_dir: Path, filter_missing: bool = False, limit: int 
         ft = rec.get("fulltext") or {}
         status = ft.get("status") or "unknown"
         icon = FULLTEXT_ICONS.get(status, "? " + status)
+        fmt = infer_format(ft) if status != "missing" else "—"
 
         # Screening decision (if available)
         screening = rec.get("screening") or {}
@@ -207,6 +245,7 @@ def format_corpus_table(run_dir: Path, filter_missing: bool = False, limit: int 
             "title": title,
             "authors": author_str,
             "status": icon,
+            "format": fmt,
             "screen": screen_decision,
             "extracted": "✓" if rec.get("extraction_path") else "",
             "appraised": "✓" if rec.get("appraisal_path") else "",
@@ -220,6 +259,7 @@ def format_corpus_table(run_dir: Path, filter_missing: bool = False, limit: int 
     title_w = max(30, min(70, max(len(r["title"]) for r in rows)))
     authors_w = max(15, min(50, max(len(r["authors"]) for r in rows)))
     status_w = 12
+    format_w = max(6, max(len(r["format"]) for r in rows))
     screen_w = 8
     extract_w = 3
     appraise_w = 3
@@ -231,6 +271,7 @@ def format_corpus_table(run_dir: Path, filter_missing: bool = False, limit: int 
         f"{'Title':<{title_w}}  "
         f"{'Authors':<{authors_w}}  "
         f"{'PDF Status':<{status_w}}  "
+        f"{'Format':<{format_w}}  "
         f"{'Screen':<{screen_w}}  "
         f"{'Ext':<{extract_w}}  "
         f"{'Apr':<{appraise_w}}"
@@ -244,6 +285,7 @@ def format_corpus_table(run_dir: Path, filter_missing: bool = False, limit: int 
             f"{row['title']:<{title_w}}  "
             f"{row['authors']:<{authors_w}}  "
             f"{row['status']:<{status_w}}  "
+            f"{row['format']:<{format_w}}  "
             f"{row['screen']:<{screen_w}}  "
             f"{row['extracted']:<{extract_w}}  "
             f"{row['appraised']:<{appraise_w}}"
