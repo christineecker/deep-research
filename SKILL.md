@@ -36,6 +36,11 @@ re-prompt for a value already in `config.json` unless the user asks to change it
 |---|---|---|---|---|---|
 | `fast` | narrow | fast | none | 10 | report only |
 | **`standard`** (default) | medium | standard | protocol+strategy | 25 | report + OKF bundle when a wiki is selected |
+
+`scope`/`rigor`/`gates` only change search breadth, appraisal depth, and which approval
+checkpoints show back to the user. They never change *how* Stage 4 retrieval runs: every
+profile, including `fast`, goes through `scripts/fulltext.py acquire` — see Stage 4 below. There
+is no profile-specific shortcut that fetches full text directly.
 | `systematic` | wide | systematic | both | 60 | dual screening, PRISMA log, full verifier, optional Quarto export |
 | `max` | max | systematic | both | 100 | + guidelines / grey literature / preprints, connector auth checks |
 
@@ -241,7 +246,12 @@ say in the report how the cap was applied.
 
 **Stage 4 — retrieve.** `scripts/fulltext.py acquire` walks the ladder — full mechanics,
 truncation detector, fallback rules, and the quarantine/inbox gate are in
-`references/acquisition.md`, not repeated here. Two rungs need you specifically, because a
+`references/acquisition.md`, not repeated here. **Every profile, `fast` included, runs Stage 4
+through `fulltext.py acquire` — no profile, scope, or "narrow" retrieval shortcut skips it.**
+Never call `get_full_text_article` (or any full-text-fetching tool) directly from the main
+thread or a subagent outside the rung-1 handoff below; that bypasses the truncation detector,
+the ladder's remaining rungs, and the `missing.md` PDF-ask gate, and silently mislabels
+abstract-only records as resolved. Two rungs need you specifically, because a
 script cannot call an MCP tool: rung 1 (PubMed MCP `get_full_text_article`, §4) and rung 7
 (claude-in-chrome browser search/fetch, §4b, OA content only — see invariant 9). Both append a
 handoff task and let the ladder keep moving; you fetch the text, write it to the task's
