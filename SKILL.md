@@ -39,6 +39,16 @@ re-prompt for a value already in `config.json` unless the user asks to change it
 | `systematic` | wide | systematic | both | 60 | dual screening, PRISMA log, full verifier, optional Quarto export |
 | `max` | max | systematic | both | 100 | + guidelines / grey literature / preprints, connector auth checks |
 
+Orthogonal to profile: **`pipeline.stop_after_stage`** (`config.json`, integer, default unset).
+Set it to `5` to build the shared paper pool only — search → screen → retrieve → extract, then
+halt: no appraisal, no synthesis, no report, no OKF promotion. Ask about this alongside the
+profile pick ("just build/extend the extracted-paper pool for this question, or run the full
+pipeline through appraisal and a report?"). A `stop_after_stage: 5` run still runs
+`pool.py sync` at the end (Stage 5's normal exit), so its extractions are immediately reusable
+by any later run, on this question or another, that hits the same papers. Resuming later with
+`stop_after_stage` cleared continues the *same* run into Stage 6 onward — it is a pause point,
+not a different pipeline.
+
 ### Scope tiers
 
 - **narrow** — PubMed MCP only (`search_articles`, `get_article_metadata`, `find_related_articles`)
@@ -104,7 +114,12 @@ for the user's pick rather than inferring `fast`/`standard`/etc. from phrasing.
    whether they should be synthesized alongside primary studies or reported/appraised
    separately (AMSTAR-2 applies to reviews, not RoB2/ROBINS-I). Record the answer in
    `config.json` under `filters.article_types` / `filters.include_reviews`.
-5. **Outputs** — `report.md` always; optionally HTML artifact, Quarto PDF/docx, OKF bundle promotion.
+5. **Outputs** — `report.md` always; optionally HTML artifact, Quarto PDF/docx, OKF bundle
+   promotion. Also ask whether this run should stop after extraction (`pipeline.stop_after_stage:
+   5`, see Profiles above) instead of running the full pipeline. A wiki-wide `refs.bib` covering
+   every paper ever pooled (not just this run's included set) is always available on demand via
+   `python3 scripts/pool.py bib --wiki <root> --out <path>` — mention it once the pool is
+   non-empty, it does not need a per-run flag.
 
 ### Progress updates — every profile, including `fast`
 
@@ -163,8 +178,8 @@ incomplete/failed tasks. Do not restart the stage. Do not re-prompt.
 | 2 | Search | main, scripts only | — | `workspace/search/<query_id>.json` |
 | 3 | Screen | subagents, batched | sonnet | `workspace/screening/<screener>/pmid-*.json` |
 | 4 | Retrieve | main + `fulltext.py` | — | corpus `fulltext` block, `missing.md` |
-| 5 | Extract | subagents, 1/paper | opus | `workspace/extractions/pmid-*.json` |
-| 6 | Appraise | subagents, 1/paper | opus | `workspace/appraisals/pmid-*.json` |
+| 5 | Extract | subagents, 1/paper | opus | `workspace/extractions/pmid-*.json`, pool synced. **Halts here if `stop_after_stage: 5`** |
+| 6 | Appraise | subagents, 1/paper | opus | `workspace/appraisals/pmid-*.json`, pool synced |
 | 7 | Synthesize | main only | main | `outputs/report.md` |
 | 7b | Digest | subagent, 1 | opus | `outputs/digest.md` |
 | 8 | Verify / report | main | main | `outputs/verification.json` |
@@ -200,7 +215,9 @@ every remaining record. `acquire` fetches records concurrently (`--workers`, def
 
 Once acquisition has been attempted for every selected record (stage 4 fully finished), handle
 `missing.md` the same way in every profile: **halt before stage 5** and ask the user — a single
-consolidated table (Title, PMID, DOI, PMCID, rung reached, links), the exact path to drop PDFs
+consolidated table (Title, PMID, DOI, PMCID, rung reached, links) — render DOI as
+`https://doi.org/<doi>` and PMID as `https://pubmed.ncbi.nlm.nih.gov/<pmid>/` so both are
+clickable, never bare identifiers — plus the exact path to drop PDFs
 into (`<run_dir>/inbox/`), and an explicit question of whether they can supply any of them. This
 is a question, asked once for the whole quarantine list, never per record and never mid-ladder.
 For `systematic` and `max`, this is a hard gate — stage 5 does not start until every quarantined
@@ -209,12 +226,34 @@ do, proceed to stage 5 with the affected records tagged as missing and the synth
 **PROVISIONAL**. The user drops PDFs/HTML into `inbox/`, `python3 scripts/library.py ingest-inbox
 <run_dir>` matches them in, and `fulltext.py acquire` (or a rerun) clears `missing.md`.
 
-**Stage 5 — extract.** One subagent per paper, opus, `references/prompts/extract.md`. Design,
-N, population, I/C, outcomes with effect + CI + direction, funding/COI, limitations, quotes
-with anchors. `evidence_basis` is `abstract_only` whenever no full text was obtained. When the
-stage completes, run `python3 scripts/status.py <run_dir> --table` and post the table to the
-user — it shows which papers were downloaded, in what format (PDF/HTML/Text), and whether
-extraction ran, so the user can see corpus coverage before appraisal.
+**Stage 5 — extract.** Before dispatching a subagent for a paper, try the shared pool:
+`python3 scripts/pool.py reuse --run-dir <run_dir> --wiki <root> --pmid <pmid>` (fall back to
+`--doi`/`--pmcid` when no PMID). A `matched: true` with a non-null `extraction` means another
+run already extracted this exact paper — `reuse` has already copied that file into this run's
+`workspace/extractions/pmid-*.json` (tagged `"reused_from": "<run-slug>"`) **and** re-registered
+every snapshot its spans cite into this run's own evidence-kernel store (same `source_id`,
+content-addressed, so it resolves byte-identically here — `references/evidence-kernel.md`), so
+its quotes/spans verify locally exactly like a freshly extracted paper's. Skip the subagent and
+log the reuse. Otherwise dispatch as normal: one subagent per paper, opus,
+`references/prompts/extract.md`. Design, N, population, I/C, outcomes with effect + CI +
+direction, funding/COI, limitations, quotes with anchors. `evidence_basis` is `abstract_only`
+whenever no full text was obtained. When the stage completes, run
+`python3 scripts/pool.py sync --run-dir <run_dir>` so this run's fresh extractions become
+reusable by every future run, then `python3 scripts/status.py <run_dir> --table` and post the
+table to the user (note which rows were reused vs. freshly extracted) — it shows which papers
+were downloaded, in what format (PDF/HTML/Text), and whether extraction ran, so the user can
+see corpus coverage before appraisal.
+
+A reused snapshot carries a `register` event, never `fresh` (R22 — the text was not retrieved
+in this run). `verify.py`'s C-FRESH-FETCH reports it as non-fresh accordingly, exactly like any
+other cached/registered text; C-SNAPSHOT and C-SPAN pass normally since the content is now
+locally present and hash-verified.
+
+If `config.json`'s `pipeline.stop_after_stage` is `5`: stop here. Do not dispatch Stage 6, do
+not synthesize, do not render a report, do not promote to `<wiki>/research/`. Tell the user the
+pool now holds N extracted papers for this question and that a later run (same question, cleared
+`stop_after_stage`, or an unrelated question that cites the same papers) will reuse them via the
+lookup above instead of re-extracting.
 
 Stage 6 does not start until stage 5 has actually finished for every record eligible under the
 profile's quarantine policy — `status.py --table` shows no row still pending extraction. If a
@@ -222,9 +261,15 @@ fresh quarantine surfaces during extraction itself, apply the same rule as stage
 table, point at `inbox/`, and ask. `systematic` and `max` do not proceed until resolved; `fast`
 and `standard` may proceed provisionally if the user says to continue without it.
 
-**Stage 6 — appraise.** One subagent per paper, opus, `references/prompts/appraise.md`. Tool
-by design (RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 / none), then GRADE domains.
-Abstract-only records are **not** appraised as if full text.
+**Stage 6 — appraise.** Same reuse gate as Stage 5: `pool.py reuse` (harmless to call again
+per paper even if Stage 5 already reused its extraction — it's idempotent and this time checks
+for a resolving `appraisal_path`). A hit copies `workspace/appraisals/pmid-*.json` with
+`"reused_from"` set, its snapshots re-registered the same way, and skips the subagent;
+otherwise dispatch as normal. One subagent per paper, opus, `references/prompts/appraise.md`.
+Tool by design (RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 / none), then GRADE domains.
+Abstract-only records are **not** appraised as if full text. Run
+`python3 scripts/pool.py sync --run-dir <run_dir>` again when the stage completes, so the
+appraisal pointer joins the extraction pointer already synced.
 
 **Stage 7 — synthesize.** Main thread only. Effect-direction tabulation, agreement and
 conflict *with an explanation of why*, certainty, gaps, and a hard-walled hypotheses section.
@@ -404,7 +449,8 @@ by manual supply.
 |---|---|
 | `scripts/eutils.py` | esearch / efetch / elink, throttle, retry, hit counts, translated query |
 | `scripts/fulltext.py` | acquisition ladder, resumable, truncation detector |
-| `scripts/library.py` | `<wiki>/assets/papers/` index, matching, inbox ingestion |
+| `scripts/library.py` | `<wiki>/assets/papers/` PDF index, matching, inbox ingestion |
+| `scripts/pool.py` | `<wiki>/assets/papers/pool.jsonl` shared extraction/appraisal pool (`reuse` carries spans across runs via the evidence kernel) + wiki-wide BibTeX |
 | `scripts/corpus.py` | corpus.jsonl, dedupe, PRISMA counters, `task` CLI, guards |
 | `scripts/okf.py` | bundle concept writer + validator |
 | `scripts/render.py` | report.md → .qmd + refs.bib → quarto render (pdf/docx) |

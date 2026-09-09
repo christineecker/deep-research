@@ -1,59 +1,90 @@
 # deep-research — usage
 
-Operator's manual. `SKILL.md` is the agent-facing router.
-This file is for the person running the skill.
+Operator's manual. `SKILL.md` is the agent-facing router; this file is for the person running
+the skill.
 
-## 1. What it does
+## What it does
 
-PubMed-centred literature research, end to end: writes a protocol, designs and logs several
-orthogonal PubMed queries, screens titles/abstracts against numbered criteria, walks an
-open-access ladder to get *full text* (not abstracts), extracts study data one paper at a time,
-critically appraises each study (RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2, then GRADE
-domains), synthesises direction and conflict, and runs a verifier over the finished report.
-Deliverables land in your wiki, with a PRISMA-style count and a citation audit.
+PubMed-centred literature research, end to end: protocol → search → screen → full-text
+acquisition → extraction → appraisal → synthesis → verified report, promotable into a wiki.
 
-What it is **not**:
+**Not**: a meta-analysis (no pooled effects, no I², no forest plots — synthesis is
+effect-direction tabulation plus explained conflict), a paywall bypass (no credentials, no
+proxies, no scraping around access — unobtainable text is quarantined and handed back to you),
+or a tool for summarising a single paper / general web research.
 
-- It is **not a meta-analysis**. It does not pool effect estimates, does not compute I², does
-  not produce forest plots. Synthesis is effect-direction tabulation plus explained conflict.
-- It **does not circumvent paywalls**. No credentials, no institutional proxies, no browser
-  automation for access, no pirate mirrors. The OA ladder is the whole ladder; anything else is
-  quarantined and handed back to you.
-- It is not for summarising one paper, and not a general web research tool.
+## Invoking it
 
-## 2. How to invoke it
-
-Ask in the session. The skill triggers on: "literature review", "systematic review", "evidence
+Ask in the session — triggers on "literature review", "systematic review", "evidence
 synthesis", "what does the evidence say about X", "deep research on X", "PubMed search",
-"critical appraisal", or a request to have papers screened / extracted / appraised / written up
-with citations.
+"critical appraisal", or a request to screen/extract/appraise/write up papers with citations.
 
-At stage 0 it asks only for what it does not already know:
+Stage 0 asks only for what it doesn't already know, and never re-asks what's already in the
+run's `config.json`:
 
 | Asked | Detail |
 |---|---|
-| Question | Restated back to you as PICO/PECO before anything runs |
-| Profile | `fast` / `standard` / `systematic` / `max`, or scope / rigor / gates individually |
-| Target wiki | Needed early — the run directory and PDF library live inside it. The wikis directory is enumerated at runtime; a missing wiki is confirmed with you before creation |
+| Question | Restated back as PICO/PECO before anything runs |
+| Profile | `fast` / `standard` / `systematic` / `max` (table below), or scope/rigor/gates individually |
+| Target wiki | Run directory and PDF library live inside it; a missing wiki is confirmed with you first |
 | Filters | Years, authors, journals, article types, species/age, language, OA-only |
-| Outputs | `report.md` always; optionally HTML artifact, Quarto PDF/docx, OKF bundle promotion |
+| Outputs | `report.md` always; optionally HTML, Quarto PDF/docx, OKF bundle promotion |
 
-Values already in the run's `config.json` are never re-asked unless you say to change them.
+## Profiles
 
-## 3. Profiles
+| Profile | scope | gates | max_articles | For |
+|---|---|---|---|---|
+| `fast` | narrow | none | 10 | Quick read of the field. PubMed MCP only, report only |
+| **`standard`** (default) | medium | protocol+strategy | 25 | The normal case. Adds E-utilities |
+| `systematic` | wide | both | 60 | Defensible review. Adds Europe PMC, dual screening, PRISMA log, full verifier |
+| `max` | max | both | 100 | Widest sweep. Adds guidelines/grey-lit/web connectors |
 
-| Profile | scope | rigor | gates | max_articles | For |
-|---|---|---|---|---|---|
-| `fast` | narrow | fast | none | 10 | A quick read of the field. PubMed MCP only, report only, no stop-and-confirm |
-| **`standard`** (default) | medium | standard | protocol+strategy | 25 | The normal case. Adds E-utilities for exact boolean/MeSH and hit counts; report + OKF bundle when a wiki is chosen |
-| `systematic` | wide | systematic | both | 60 | A defensible review. Adds Europe PMC (incl. preprints), dual independent screening + adjudicator, PRISMA log, full verifier pass, optional Quarto export |
-| `max` | max | systematic | both | 100 | Widest sweep: adds guidelines, grey literature and web connectors, with source-type tagging and connector authorization checks |
+Overridable field-by-field in the run's `config.json`.
 
-`gates` = where the run stops for your approval: `protocol+strategy`, `screening`, `both`, or
-`none`. `max_articles` is the post-screening cap; the report states how the cap was applied.
-Profiles are overridable field-by-field in the run's `config.json`.
+Orthogonal to profile: set `pipeline.stop_after_stage: 5` to run search → screen → retrieve →
+extract and then halt — no appraisal, no report, no OKF promotion. Useful for building up the
+shared paper pool (below) for a topic before deciding whether it's worth a full appraised
+review. Resume the same run later with that field cleared to continue into appraisal.
 
-## 4. Where things live
+## The pipeline
+
+Every run walks the same nine stages; the profile only changes scope and where it stops to ask.
+
+```
+0 Configure   → question, profile, wiki, filters, outputs; check connector authorization
+1 Protocol    → PICO/PECO, numbered inclusion/exclusion criteria
+2 Search      → 4–8 orthogonal PubMed queries, logged
+3 Screen      → dedupe, then title/abstract triage against the numbered criteria
+4 Retrieve    → walk the open-access ladder for full text; quarantine what it can't get
+5 Extract     → one subagent per paper: design, N, I/C, outcomes, funding/COI, quotes
+6 Appraise    → one subagent per paper: RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 → GRADE
+7 Synthesize  → main thread: effect-direction tabulation, agreement/conflict, gaps, hypotheses
+7b Digest     → compress the report into a short wiki-ready summary
+8 Publish     → assemble → verify → render → promote to the wiki (if requested)
+```
+
+Stage 4's quarantine is the one place the run stops mid-pipeline to talk to you — see below.
+Every other stage boundary is just a progress update, not a question.
+
+## Selection & appraisal criteria
+
+Stage 1 frames question as **PICO** (Population, Intervention, Comparator, Outcome) or
+**PECO** (Exposure instead of Intervention, for observational/etiological questions), then
+turns it into numbered inclusion/exclusion criteria used for screening in Stage 3.
+
+Stage 6 appraises each paper with the tool matching its design — never one-size-fits-all:
+
+| Design | Tool |
+|---|---|
+| Randomized trial | RoB2 (Risk of Bias 2) |
+| Non-randomized/observational study of an intervention | ROBINS-I |
+| Cohort / case-control | Newcastle-Ottawa Scale (NOS) |
+| Systematic review | AMSTAR-2 |
+
+Per-outcome certainty is then rated with **GRADE** (High/Moderate/Low/Very low), which can
+downgrade for risk of bias, inconsistency, indirectness, imprecision, or publication bias.
+
+## Where things live
 
 ```
 <wiki>/outputs/deep-research/<slug>/   # the run
@@ -62,196 +93,152 @@ Profiles are overridable field-by-field in the run's `config.json`.
   missing.md   inbox/
 <wiki>/assets/papers/                  # shared PDF library, all runs (rung 0)
   index.json                           # versioned; the PDFs themselves are gitignored
+  pool.jsonl                           # shared extraction/appraisal pool, all runs
 <wiki>/research/                       # the OKF bundle (promoted concepts)
   index.md  log.md  studies/  claims/  appraisals/  gaps/  hypotheses/  …
 ```
 
-The skill directory itself stays code-only; data lives in the wiki, which is iCloud-synced.
+The skill directory stays code-only; data lives in the wiki. **`<wiki>/wiki/` is never written
+to** — that belongs to wiki-manager (OKF 0.1). deep-research owns `<wiki>/research/` only
+(spec in `references/okf-bundle.md`); cross-links from `wiki/` into `research/` are yours to make.
 
-**`<wiki>/wiki/` is never written to.** That bundle belongs to wiki-manager (OKF 0.1).
-deep-research owns `<wiki>/research/` (OKF 0.2-style, its own frontmatter convention, spec in
-`references/okf-bundle.md`). Cross-links from `wiki/` into `research/` are yours to make.
+Run `python3 scripts/library.py init --wiki <root>` once per wiki to set up `assets/papers/`.
 
-Run `python3 scripts/library.py init --wiki <root>` once per wiki; it creates
-`assets/papers/` and rewrites the `.gitignore` rule so `index.json` is versioned and the PDFs
-are not.
-
-## 5. Outputs
+## Outputs
 
 | Output | Command | Good for |
 |---|---|---|
-| `outputs/report.md` | always written by the synthesis stage | The primary deliverable: evidence, conflicts, certainty, gaps, hard-walled hypotheses, footnote citations |
-| `outputs/report.html` | `html_report.py build --run-dir <dir>` | A self-contained page to read or share: evidence table, effect-direction chart, per-study cards, gaps shown honestly. `--no-external-links` strips every URL |
-| `outputs/prisma.{json,md}` | `corpus.py prisma --run-dir <dir> --out` | The flow numbers: identified → deduped → screened → included, and dual-screen agreement |
-| PDF / docx | `render.py all --run-dir <dir> --formats pdf,docx` | A citable document. Generates `refs.bib` + `report.qmd`, then `quarto render` |
-| `outputs/verification.json` | `verify.py run --run-dir <dir> [--wiki <root>]` | The audit: citations resolve, records complete, hypotheses not phrased as findings |
-| `<wiki>/research/` concepts | `okf.py promote --run-dir <dir> --wiki <root>` | Durable, linkable wiki knowledge that outlives the run directory |
+| `outputs/report.md` | always | The primary deliverable: evidence, conflicts, certainty, gaps, hypotheses, citations |
+| `outputs/digest.md` | Stage 7b | Short summary used as the body of `<wiki>/research/reviews/<slug>.md` |
+| `outputs/report.html` | `html_report.py build` | Self-contained shareable page |
+| `outputs/prisma.{json,md}` | `corpus.py prisma --out` | Flow numbers: identified → deduped → screened → included |
+| PDF / docx | `render.py all --formats pdf,docx` | Citable document via Quarto |
+| `outputs/verification.json` | `verify.py run` | Audit: citations resolve, records complete, hypotheses not phrased as findings |
+| `<wiki>/research/` concepts | `okf.py promote --run-dir <dir> --wiki <root>` | Durable wiki knowledge |
+| `<wiki>/assets/papers/pool.jsonl` | `pool.py sync --run-dir <dir>` (automatic at end of Stage 5/6) | Cross-run extraction/appraisal reuse |
+| Wiki-wide `refs.bib` | `pool.py bib --wiki <root> --out <path>` | BibTeX for every paper ever pooled, any run, for publications |
 
-`render.py` can also emit HTML via Quarto (`render.py html`); that is the paper-style export.
-`html_report.py` is the richer standalone artifact. Export failure never destroys
-`outputs/report.md` — it is preserved and the failure goes to `engine.log`.
+OKF promotion requires `outputs/digest.md` plus a completed `digest:slug:report` taskboard
+receipt — the full report stays the audit trail, the digest becomes the wiki concept body.
 
-## 6. Quarantine → inbox → resume
+## Quarantine → inbox → resume
 
-The workflow you will actually use. When a paper's full text is not obtainable through the OA
-ladder, the run quarantines it and then follows the selected profile's policy.
+The workflow you'll actually hit. When a paper's full text isn't obtainable through the OA
+ladder, it's quarantined; the run keeps walking the ladder for every remaining record and only
+surfaces the result once acquisition has been attempted for **all** selected records.
 
-1. **The run alerts you** with a count and the path to `<run-dir>/missing.md`.
-2. **You read `missing.md`.** Each block has the title, evidence_id, PMID, DOI, PMCID, journal,
-   which rungs were attempted, and direct PubMed / DOI / PMC links to fetch it yourself.
-3. In `fast` and `standard`, the run continues and marks the synthesis **PROVISIONAL**. In
-   `systematic` and `max`, the run halts before extraction until the missing full text is
-   resolved.
-4. **You drop the PDFs into `<run-dir>/inbox/`.** Any filenames; no renaming needed.
-5. **You rerun the skill** (or run `library.py ingest-inbox --run-dir <dir>` directly).
-6. Matching: page-1 `pdftotext` output → DOI regex `10\.\d{4,}/\S+` → exact DOI match against
-   the corpus; failing that, fuzzy title match against quarantined records (normalized title
-   slid across page-1 text, ratio ≥ 0.85; titles under 25 normalized characters are never
-   fuzzy-matched). Unmatched PDFs stay in `inbox/` and are listed with a reason — never guessed
-   onto a record.
-7. The PDF is filed into `<wiki>/assets/papers/` (sha256 dedupe), `index.json` and
-   `corpus.jsonl` are updated (`source_tier: 0`, `access_route: inbox_manual`), the record's
-   block is removed from `missing.md`, and the text is extracted to `workspace/fulltext/`.
-8. The run extracts, appraises and **re-synthesises** the newly available studies.
+1. **The run alerts you and asks**: a consolidated table (title, PMID, DOI, PMCID, rung reached,
+   links) for every quarantined record, the path `<run-dir>/inbox/`, and a direct question of
+   whether you can supply any of them.
+2. In `systematic`/`max` this is a hard gate — extraction doesn't start until resolved.
+   In `fast`/`standard` you may answer to continue without them; the run proceeds and marks the
+   synthesis **PROVISIONAL**.
+3. **Drop PDFs into `<run-dir>/inbox/`** (any filenames) and rerun the skill, or run
+   `library.py ingest-inbox --run-dir <dir>` directly.
+4. Matching: DOI regex on page-1 text → exact DOI match; failing that, fuzzy title match
+   (ratio ≥ 0.85, never for titles under 25 characters). Unmatched PDFs stay in `inbox/`,
+   listed with a reason — never guessed onto a record.
+5. Matched PDFs are filed into `<wiki>/assets/papers/` (sha256 dedupe); the run then extracts,
+   appraises and re-synthesizes the newly available studies, and the report notes which studies
+   arrived by manual supply.
 
-**The report records which studies arrived by manual supply.** Use `--no-apply` on
-`ingest-inbox` to see the proposed matches without rewriting `corpus.jsonl`.
+Use `--no-apply` on `ingest-inbox` to preview matches without rewriting `corpus.jsonl`.
 
-## 7. Resuming an interrupted run
+## Shared paper pool — never extract the same paper twice
 
-Resume is **by task, not by stage**. Every unit of work is a record in `taskboard.jsonl`; a
-rerun reads `config.json` + the taskboard and continues only the incomplete, failed and blocked
-tasks. It does not restart the last stage, does not redo completed work, and **does not
-re-prompt for anything already in `config.json`**. Completed outputs are immutable unless their
-`inputs_hash` changes.
+`<wiki>/assets/papers/pool.jsonl` is a second, wiki-wide store next to the PDF library
+(`index.json`): one record per paper (keyed by the same `pmid`/`doi`/`pmcid` `evidence_id`
+used everywhere), carrying full bibliographic metadata plus a *pointer* to whichever run's
+`workspace/extractions/` and `workspace/appraisals/` files actually hold that paper's
+structured extraction/appraisal. The heavy content stays inside the run that produced it —
+only the pointer and the biblio are shared.
 
-Point the skill at the same question/wiki, or just say "resume". Useful probes:
+- **Automatic.** Every run calls `pool.py sync` when Stage 5 (and again Stage 6) finishes — no
+  separate step to remember.
+- **Reuse.** Before dispatching an extraction or appraisal subagent, the run calls
+  `pool.py reuse --run-dir <dir> --wiki <root> --pmid <pmid>`; a hit copies the other run's
+  result in *and* re-registers the snapshot(s) its spans cite into this run's own
+  evidence-kernel store (content-addressed by `sha256(url+text)`, so the copy is byte-identical
+  and gets the same `source_id`) — the reused quotes verify locally, not just for display. A
+  paper researched once, in any run, is never re-extracted by a later run on a different
+  question, and its citations stay fully auditable.
+- **BibTeX.** `python3 scripts/pool.py bib --wiki <root> --out refs.bib` emits one consolidated
+  `.bib` covering every paper ever pooled in that wiki — not just one run's included set — ready
+  to cite in a manuscript. `--select appraised` narrows it to papers that also have an appraisal.
+- **Build a pool without appraising.** Set `pipeline.stop_after_stage: 5` (Profiles, above) to
+  run search/screen/retrieve/extract only; the pool still fills in, appraisal and synthesis just
+  don't run. Good for surveying a topic's extractable literature before committing to a full
+  systematic review.
+- **Freshness stays honest**: a reused snapshot is logged as a `register` event, never `fresh`
+  — the text wasn't retrieved in this run. `verify.py`'s C-FRESH-FETCH reports it as non-fresh
+  accordingly, same as any other cached text; the integrity/span checks (C-SNAPSHOT, C-SPAN)
+  pass normally since the content is now locally present and hash-verified.
+
+## Resuming an interrupted run
+
+Resume is **by task, not by stage**: every unit of work is a record in `taskboard.jsonl`, and a
+rerun continues only the incomplete/failed/blocked tasks — it never redoes completed work or
+re-asks anything already in `config.json`. Just point the skill at the same question/wiki, or
+say "resume".
 
 ```bash
 python3 scripts/corpus.py task stats  --run-dir <dir>
-python3 scripts/corpus.py task next   --run-dir <dir> --stage extract
 python3 scripts/fulltext.py status    --run-dir <dir>
-python3 scripts/corpus.py validate    --run-dir <dir>
+python3 scripts/status.py <run-dir> --table     # PMID/title/authors/PDF status/screen/extract/appraise
+python3 scripts/status.py <run-dir> --missing   # records with no full text
 ```
 
-Never hand-edit `taskboard.jsonl`; `corpus.py task` is its only writer.
+Never hand-edit `taskboard.jsonl` — `corpus.py task` is its only writer.
 
-## 8. Script reference
+## Script reference
 
 All under `scripts/`, all `python3`.
 
-| Script | Purpose | Subcommands |
-|---|---|---|
-| `eutils.py` | NCBI E-utilities client: hit counts, NCBI-translated query, PMIDs, normalized bibliographic JSON, citation chaining. Throttled and retried | `esearch`, `efetch`, `elink` |
-| `fulltext.py` | The acquisition ladder (rungs 0–7), resumable, records `source_tier` + `access_route`, HTML truncation detector, quarantine | `acquire`, `status`, `resolve-mcp` |
-| `library.py` | The shared PDF library at `<wiki>/assets/papers/`: index, sha256/DOI/PMID/PMCID/fuzzy-title matching, inbox ingestion | `init`, `lookup`, `add`, `ingest-inbox`, `list` |
-| `corpus.py` | `corpus.jsonl` store, dedupe, PRISMA counters, screening ingestion, duplicate-query guard, no-progress guard, and the taskboard CLI | `init`, `add`, `list`, `get`, `export`, `dedupe`, `validate`, `prisma`, `screen-ingest`, `disagreements`, `query-check`, `query-register`, `guard`, `task` |
-| `okf.py` | OKF bundle writer and validator for `<wiki>/research/` (enforces V1–V25) | `init`, `write`, `promote`, `validate`, `selftest` |
-| `render.py` | `report.md` → `refs.bib` + `report.qmd` → `quarto render` | `bib`, `qmd`, `pdf`, `docx`, `html`, `all` |
-| `html_report.py` | Self-contained HTML deliverable from a run directory | `build` |
-| `verify.py` | Final consistency pass; writes `outputs/verification.json`, never edits `report.md`. Exit 0 = no failures (warnings allowed), 1 = a check failed, 2 = fatal | `run` |
-| `status.py` | Run status overview: current stage progress and corpus table (PMID, title, authors, PDF access status) | `--table`, `--missing`, `--limit` |
+| Script | Purpose |
+|---|---|
+| `eutils.py` | NCBI E-utilities client: hit counts, query translation, PMIDs, citation chaining |
+| `fulltext.py` | The acquisition ladder (rungs 0–7), quarantine, `acquire` / `status` / `resolve-mcp` |
+| `library.py` | Shared PDF library at `<wiki>/assets/papers/`: `init`, `lookup`, `add`, `ingest-inbox`, `list` |
+| `pool.py` | Shared extraction/appraisal pool at `<wiki>/assets/papers/pool.jsonl`: `sync`, `lookup`, `reuse` (carries spans across runs), `bib`, `list` |
+| `corpus.py` | `corpus.jsonl` store, dedupe, PRISMA counters, screening ingestion, taskboard CLI |
+| `okf.py` | OKF bundle writer/validator for `<wiki>/research/`: `init`, `write`, `promote`, `validate` |
+| `render.py` | `report.md` → `refs.bib` + `report.qmd` → `quarto render` (`pdf`, `docx`, `html`, `all`) |
+| `html_report.py` | Self-contained HTML deliverable (`build`) |
+| `verify.py` | Final consistency pass, writes `outputs/verification.json` (never edits the report) |
+| `status.py` | Run status overview: stage progress + corpus table |
 
-`corpus.py task` sub-subcommands: `create`, `claim`, `complete`, `fail`, `block`, `cancel`,
-`reopen`, `list`, `next`, `show`, `stats`.
+## Requirements
 
-Verifier checks: `C-CITE-RESOLVE`, `C-CORPUS-COMPLETE`, `C-SEARCH-LOG`, `C-RETRACTION`,
-`C-FULLTEXT`, `C-HYPOTHESIS-WALL`, `C-PRISMA`, `C-PREPRINT`, `C-ATTRIBUTION`, `C-SECTIONS`,
-`C-PROVISIONAL`, `C-OKF` (skipped unless `--wiki` is given).
+- **`python3`** only — no `python` on this machine.
+- **Packages**: stdlib + `requests` + `pdfminer`. No pip installs, ever.
+- **Binaries**: `pdftotext`, `pdfinfo`, `tesseract` (OCR fallback), `quarto` + `pandoc` (export).
+- **`NCBI_API_KEY`** (optional) — 3 req/s without it, 10 with.
+- **`DEEP_RESEARCH_EMAIL`** (required by the Unpaywall rung and sent to NCBI per their policy).
+- `DEEP_RESEARCH_FIXTURES` / `DEEP_RESEARCH_RECORD` — offline replay/recording for tests.
 
-### Using status.py for run overview
+## Limitations, honestly
 
-Quick progress check with stage tracking and record table:
+- **`max` needs connectors that may not be attached** (Scholar Gateway, Consensus). Missing one
+  is named explicitly at Stage 0, with a choice to continue at reduced scope or stop; a
+  connector authorized mid-run isn't picked up until a new session.
+- **The hypothesis-wall check is lexical, not semantic.** It flags banned phrasings; a pass
+  means "no banned phrasing found," not "the wall holds."
+- **No pooled estimates** — no meta-analytic effect, no I², no funnel plot.
+- **Abstract-only evidence is labelled and never appraised as full text.**
+- **Rung 1 needs a coordinator MCP call** (a script can't call the PubMed MCP tool); the ladder
+  keeps moving and picks the result up via `resolve-mcp` or a rerun.
+- **HTML full-text can be truncated** — the truncation detector demotes short/paywalled pages
+  to abstract-only rather than treating a teaser as a paper.
+- **Preprints are included at `wide`/`max` and tagged loudly.**
 
-```bash
-# Show current stage, corpus summary, and question
-python3 scripts/status.py <run-dir>
+## Testing
 
-# Show full corpus table (PMID, title, authors, PDF status)
-python3 scripts/status.py <run-dir> --table
-
-# Show only records without full text (for quarantine → inbox workflow)
-python3 scripts/status.py <run-dir> --missing
-
-# Limit table to first N records (default 100)
-python3 scripts/status.py <run-dir> --table --limit 50
-
-# Skip summary, table only
-python3 scripts/status.py <run-dir> --table --no-summary
-```
-
-The table columns are:
-- **PMID**: PubMed identifier
-- **Title**: Article title (truncated at 70 chars)
-- **Authors**: First 3 authors, "et al" if more (last name + initial)
-- **PDF Status**: ✓ Fulltext (PDF or HTML obtained), ~ Abstract (abstract_only), ✗ Missing
-- **Screen**: Include/Exclude/Unclear (screening decision)
-- **Ext**: ✓ if data extracted
-- **Apr**: ✓ if critically appraised
-
-## 9. Requirements
-
-- **`python3`** — there is no `python` on this machine; every script and shebang uses `python3`.
-- **Python packages**: stdlib + `requests` + `pdfminer` only. **No pip installs, ever.**
-  `lxml`, `bs4`, `PyYAML` etc. are absent by design — XML is parsed with `xml.etree`, YAML
-  frontmatter with `okf.py`'s own serializer (`okf.py selftest` round-trips it).
-- **Binaries**: `pdftotext`, `pdfinfo` (text extraction and PDF metadata), `tesseract` (OCR
-  fallback when a PDF yields under ~100 characters), `quarto` + `pandoc` (PDF/docx export).
-  `ocrmypdf` is not installed and not used. OCR scans at most `budgets.max_ocr_pages` pages per
-  PDF when set in `config.json`; otherwise the default cap is 30.
-- **`NCBI_API_KEY`** (optional) — 3 requests/s without it, 10 with.
-- **`DEEP_RESEARCH_EMAIL`** (required by the Unpaywall rung; also sent as `email=` to NCBI per
-  their policy). Overridable per call with `--email`.
-- `DEEP_RESEARCH_FIXTURES` / `DEEP_RESEARCH_RECORD` — offline replay and recording for
-  `eutils.py`.
-
-## 10. Limitations, honestly
-
-- **`max` scope depends on connectors that may not be attached.** Scholar Gateway and Consensus
-  are the extra sources `max` adds; everything below it (`narrow`/`medium`/`wide`) runs on the
-  PubMed MCP, `eutils.py` and Europe PMC, which need no connector. The skill checks its own tool
-  list at Stage 0, records the result in `config.json` under `connectors`, and if one is missing
-  it names the server, tells you to authorize it in claude.ai → Settings → Connectors, and asks
-  whether to continue at reduced scope or stop. Two consequences worth knowing: a connector you
-  authorize mid-run is not picked up until a **new** session, because MCP servers attach at
-  session start; and a `max` run that could not reach both connectors searched a `wide` set, so
-  the report's Methods section says exactly that. It will not silently skip them or pretend the
-  coverage happened.
-- **The hypothesis-wall check is lexical and structural, not semantic.** `C-HYPOTHESIS-WALL`
-  matches banned phrasings on each side of the evidence/hypothesis boundary and flags unhedged
-  declaratives; it warns, it does not prove. A `PASS` means "no banned phrasing found", not
-  "the wall holds". Same register applies to the other verifier checks: they catch
-  inconsistency, not wrongness.
-- **No pooled estimates.** No meta-analytic summary effect, no I², no funnel plot statistics.
-  Publication-bias discussion is qualitative.
-- **Abstract-only evidence is labelled and never appraised as full text.** Records with
-  `evidence_basis: abstract_only` carry that label through extraction, appraisal and the report.
-- **Rung 1 of the ladder needs a coordinator MCP call.** A script cannot call the PubMed MCP
-  `get_full_text_article` tool. `fulltext.py` writes a `needs_mcp` task to
-  `workspace/retrieve/mcp-tasks.jsonl` and keeps walking the ladder, so the run never blocks;
-  the agent makes the call and hands the text back via `fulltext.py resolve-mcp` (or a re-run of
-  `acquire`, which picks up the saved file).
-- **HTML full-text routes can be truncated.** The truncation detector (body under 1500 words,
-  or paywall markers such as "Access options" / "Purchase" / "Sign in to view") demotes those to
-  abstract-only rather than treating a teaser as a paper.
-- **Preprints are included at `wide`/`max` and tagged loudly** — their content differs from the
-  published version.
-
-## 11. Testing
-
-`scripts/eval.py` runs fixture-backed evals offline by default, with `--live` opting in to
-real PubMed. `python3 -m unittest discover -s tests` runs the unit suite: store/source/assemble
-contracts, the validation pipeline, and the concurrency invariants for `acquire --workers`.
-Neither needs credentials or the network.
-
-What works today for offline testing:
+`scripts/eval.py` runs fixture-backed evals offline by default (`--live` opts into real PubMed).
+`python3 -m unittest discover -s tests` runs the unit suite. Neither needs credentials or network.
 
 ```bash
 DEEP_RESEARCH_FIXTURES=<dir> python3 scripts/eutils.py esearch --query '...'   # replay
-DEEP_RESEARCH_RECORD=<dir>   python3 scripts/eutils.py esearch --query '...'   # record
 python3 scripts/fulltext.py acquire --run-dir <dir> --corpus <path> --offline  # local rungs only
 python3 scripts/okf.py selftest
-python3 scripts/okf.py validate --wiki <root> --run-dir <dir>
-python3 scripts/corpus.py validate --run-dir <dir>
 python3 scripts/verify.py run --run-dir <dir> --wiki <root> --json
 ```
