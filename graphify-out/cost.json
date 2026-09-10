@@ -12,8 +12,20 @@
       "output_tokens": 0,
       "files": 3,
       "type": "incremental"
+    },
+    {
+      "date": "2026-09-09T11:02:48.390937+00:00",
+      "input_tokens": 226418,
+      "output_tokens": 0,
+      "files": 17
+    },
+    {
+      "date": "2026-09-10T12:43:23.657158+00:00",
+      "input_tokens": 242160,
+      "output_tokens": 0,
+      "files": 59
     }
   ],
-  "total_input_tokens": 273614,
+  "total_input_tokens": 742192,
   "total_output_tokens": 0
 }
