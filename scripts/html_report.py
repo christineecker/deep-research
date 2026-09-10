@@ -104,7 +104,29 @@ ROB_VAR = {
     "rob-mod": "--rob-mod, #8a6a08",
     "rob-high": "--rob-high, #8a1c17",
     "rob-unc": "--rob-unc, #63635c",
+    "rob-count": "--rob-count, #35507a",
 }
+# Tools whose `overall_judgement` is a checklist/star count string (e.g. "7/10"), not a
+# risk-of-bias rating -- schema §8. Never colour these through ROB_CLASS: a count is not
+# comparable across tools and is not itself a risk-of-bias verdict (references/appraisal.md
+# §4/§8/§9).
+COUNT_TOOLS = {"Newcastle-Ottawa", "CASP-qualitative", "JBI-prevalence", "JBI-cross-sectional"}
+# schema §8 domains[].domain_group enum -> human-readable label for report rendering.
+DOMAIN_GROUP_LABEL = {
+    "risk_of_bias": "risk of bias",
+    "applicability": "applicability",
+    "reporting": "reporting",
+    "certainty": "certainty",
+}
+
+
+def overall_judgement_class(tool: str | None, value) -> str:
+    """CSS class for an `overall_judgement` badge. Count-based tools (star/checklist counts)
+    always render as a neutral `rob-count` style; every other tool keeps the risk-of-bias
+    colour scale."""
+    if tool in COUNT_TOOLS:
+        return "rob-count"
+    return ROB_CLASS.get(str(value).strip().lower(), "rob-unc")
 TIER_LABEL = {
     0: "0 — local library",
     1: "1 — PMC MCP full text",
@@ -732,7 +754,7 @@ def make_row(st: Study, o: dict | None) -> dict:
         "rob": plain(rob, "not appraised"),
         "rob_key": rob_key,
         "rob_rank": ROB_RANK.get(rob_key, 7),
-        "rob_class": ROB_CLASS.get(rob_key, "rob-unc"),
+        "rob_class": overall_judgement_class(st.tool, rob),
         "tool": plain(st.tool, "none recorded"),
         "basis": st.basis,
         "tier": st.tier,
@@ -1681,6 +1703,69 @@ def h_card(st: Study, links: bool, kernel: Kernel) -> str:
         else:
             otable = ('<p class="muted">The extraction record reports no extractable '
                       "outcome.</p>")
+        das = ext.get("diagnostic_accuracy") or []
+        if das:
+            darows = "".join(
+                "<tr>"
+                f"<td>{T(da.get('index_test'))}</td>"
+                f"<td>{T(da.get('reference_standard'))}</td>"
+                f"<td>{T(da.get('threshold'))}</td>"
+                f"<td>{T(fmt_num(da.get('sensitivity')) or None, NOT_REPORTED)}</td>"
+                f"<td>{T(fmt_num(da.get('specificity')) or None, NOT_REPORTED)}</td>"
+                f"<td>{T(da.get('verification'))}</td>"
+                "</tr>" for da in das if isinstance(da, dict))
+            datable = ('<h5>Diagnostic accuracy</h5>'
+                       '<div class="tablewrap"><table class="meta"><thead><tr>'
+                       "<th>Index test</th><th>Reference standard</th><th>Threshold</th>"
+                       "<th>Sensitivity</th><th>Specificity</th><th>Verification</th>"
+                       "</tr></thead><tbody>" + darows + "</tbody></table></div>")
+        else:
+            datable = ""
+        pms = ext.get("prediction_model") or []
+        if pms:
+            pmrows = "".join(
+                "<tr>"
+                f"<td>{T(pm.get('model_name'))}</td>"
+                f"<td>{T(pm.get('study_type'))}</td>"
+                f"<td>{T(pm.get('outcome_definition'))}</td>"
+                f"<td>{T(pm.get('discrimination'))}</td>"
+                f"<td>{T(pm.get('calibration'))}</td>"
+                "</tr>" for pm in pms if isinstance(pm, dict))
+            pmtable = ('<h5>Prediction model</h5>'
+                       '<div class="tablewrap"><table class="meta"><thead><tr>'
+                       "<th>Model</th><th>Study type</th><th>Outcome</th>"
+                       "<th>Discrimination</th><th>Calibration</th>"
+                       "</tr></thead><tbody>" + pmrows + "</tbody></table></div>")
+        else:
+            pmtable = ""
+        qe = ext.get("qualitative_evidence")
+        if isinstance(qe, dict) and any(qe.values()):
+            qeblock = (
+                '<h5>Qualitative evidence</h5><dl class="kv">'
+                f"<dt>Methodology</dt><dd>{T(qe.get('methodology'))}</dd>"
+                f"<dt>Sampling strategy</dt><dd>{T(qe.get('sampling_strategy'))}</dd>"
+                f"<dt>Data collection</dt><dd>{T(qe.get('data_collection_method'))}</dd>"
+                f"<dt>Analysis approach</dt><dd>{T(qe.get('analysis_approach'))}</dd>"
+                f"<dt>Researcher reflexivity</dt><dd>{T(qe.get('researcher_reflexivity'))}</dd>"
+                f"<dt>Key themes</dt><dd>{T(qe.get('key_themes'))}</dd>"
+                "</dl>")
+        else:
+            qeblock = ""
+        cse = ext.get("cross_sectional_evidence")
+        if isinstance(cse, dict) and any(cse.values()):
+            cseblock = (
+                '<h5>Cross-sectional evidence</h5><dl class="kv">'
+                f"<dt>Sample frame</dt><dd>{T(cse.get('sample_frame'))}</dd>"
+                f"<dt>Sampling method</dt><dd>{T(cse.get('sampling_method'))}</dd>"
+                f"<dt>Response rate</dt><dd>{T(cse.get('response_rate'))}</dd>"
+                f"<dt>Condition measurement</dt><dd>{T(cse.get('condition_measurement_method'))}</dd>"
+                f"<dt>Exposure measurement</dt><dd>{T(cse.get('exposure_measurement_method'))}</dd>"
+                f"<dt>Confounders identified</dt><dd>{T(cse.get('confounders_identified'))}</dd>"
+                f"<dt>Confounders handling</dt><dd>{T(cse.get('confounders_handling'))}</dd>"
+                f"<dt>Prevalence estimate</dt><dd>{T(cse.get('prevalence_estimate'))}</dd>"
+                "</dl>")
+        else:
+            cseblock = ""
         extraction = (
             "<h4>Extraction</h4>"
             '<dl class="kv">'
@@ -1696,7 +1781,7 @@ def h_card(st: Study, links: bool, kernel: Kernel) -> str:
             f"<dt>Limitations</dt><dd>{T(ext.get('limitations'))}</dd>"
             f"<dt>Extractor notes</dt><dd>{T(ext.get('extractor_notes'), 'none')}</dd>"
             f"<dt>Evidence basis</dt><dd>{T(ext.get('evidence_basis'))}</dd>"
-            "</dl>" + otable)
+            "</dl>" + otable + datable + pmtable + qeblock + cseblock)
 
     # -- appraisal
     if not app:
@@ -1706,16 +1791,25 @@ def h_card(st: Study, links: bool, kernel: Kernel) -> str:
     else:
         domains = app.get("domains") or []
         if domains:
+            groups = {d.get("domain_group") for d in domains if isinstance(d, dict)}
+            grouped = bool(groups - {None})
             drows = "".join(
                 "<tr>"
-                f"<td>{T(d.get('domain'))}</td>"
+                + (f'<td>{T(DOMAIN_GROUP_LABEL.get(d.get("domain_group"), d.get("domain_group")), "risk of bias")}</td>'
+                   if grouped else "")
+                + f"<td>{T(d.get('domain'))}</td>"
                 f'<td class="rob {A(ROB_CLASS.get(str(d.get("judgement")).lower(), "rob-unc"))}">'
                 f"{T(d.get('judgement'))}</td>"
                 f"<td>{T(d.get('rationale'))}</td></tr>"
                 for d in domains if isinstance(d, dict))
             dtable = ('<div class="tablewrap"><table class="meta"><thead><tr>'
-                      "<th>Domain</th><th>Judgement</th><th>Rationale</th>"
+                      + ("<th>Group</th>" if grouped else "")
+                      + "<th>Domain</th><th>Judgement</th><th>Rationale</th>"
                       "</tr></thead><tbody>" + drows + "</tbody></table></div>")
+            if grouped:
+                dtable += ('<p class="small muted">Risk of bias and applicability are separate '
+                           "judgements; a low risk-of-bias overall does not imply low "
+                           "applicability concern, and vice versa.</p>")
         elif str(app.get("tool")) == "none":
             dtable = ('<p class="muted">No in-scope appraisal instrument applies to this '
                       "record, so no domains were rated. This is a pipeline limitation, not a "
@@ -1736,11 +1830,31 @@ def h_card(st: Study, links: bool, kernel: Kernel) -> str:
                       "them wherever the two differ.</p>")
         else:
             gtable = ""
+        tool_label = T(app.get("tool"))
+        variant = app.get("tool_variant")
+        if isinstance(variant, str) and variant.strip():
+            tool_label += f" ({E(variant)})"
+        target = app.get("appraisal_target")
+        target_dd = ""
+        if isinstance(target, dict) and any(target.values()):
+            bits = [f"{E(k.replace('_', ' '))}: {E(str(v))}"
+                    for k, v in target.items() if v not in (None, "")]
+            target_dd = f"<dt>Appraisal target</dt><dd>{'; '.join(bits)}</dd>"
+        is_count_tool = str(app.get("tool")) in COUNT_TOOLS
+        overall_label = "Checklist/star count" if is_count_tool else "Overall judgement"
+        overall_dd = (
+            f"<dt>{overall_label}</dt>"
+            f'<dd class="rob {A(overall_judgement_class(app.get("tool"), app.get("overall_judgement")))}">'
+            f"{T(app.get('overall_judgement'))}</dd>")
+        if is_count_tool:
+            overall_dd += (
+                '<dd class="small muted">A checklist/star count is not a risk-of-bias rating '
+                "and carries no declared pass/fail threshold — never translate it into "
+                "low/high risk of bias (references/appraisal.md).</dd>")
         appraisal = ("<h4>Appraisal</h4>"
                      '<dl class="kv">'
-                     f"<dt>Tool</dt><dd>{T(app.get('tool'))}</dd>"
-                     f"<dt>Overall judgement</dt><dd class=\"rob {A(ROB_CLASS.get(str(app.get('overall_judgement')).lower(), 'rob-unc'))}\">"
-                     f"{T(app.get('overall_judgement'))}</dd>"
+                     f"<dt>Tool</dt><dd>{tool_label}</dd>"
+                     + target_dd + overall_dd +
                      f"<dt>Evidence basis</dt><dd>{T(app.get('evidence_basis'))}</dd>"
                      "</dl>" + dtable + gtable)
 

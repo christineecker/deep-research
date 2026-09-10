@@ -11,6 +11,18 @@ Governing invariants (`SKILL.md` "Invariants"):
 - Absence of reporting is **never** evidence of low risk.
 - Every domain judgement carries a rationale, `unclear` included.
 
+### Storage
+
+In standalone repo mode (`references/pool-architecture.md`), appraisals are **project-scoped**,
+not universal: `data/papers/appraisals/<project_slug>/<paper_id>--<outcome_or_target>.json`, one
+file per paper-and-target within a project, indexed from the registry's `appraisals` map
+(`{project: repo-relative path}`). This is deliberate — risk of bias and applicability depend on
+the review question, outcome, population, index test, comparator, or model target, so the same
+paper can carry different appraisals in different projects. A paper's extraction record stays in
+the shared pool; its appraisal does not. The wiki-backed pipeline instead writes one appraisal
+record per paper under `workspace/appraisals/pmid-<pmid>.json` (schema §8) — that run-scoped
+location has no project dimension.
+
 ---
 
 ## Appraisal strategy
@@ -41,8 +53,11 @@ Use this order every time:
 | Intervention efficacy/effectiveness | Randomized trials; non-randomized intervention studies | RoB 2 for randomized results; ROBINS-I for non-randomized intervention results against a target trial | Separate randomized and non-randomized bodies unless the protocol pre-specifies combining them |
 | Intervention harms/safety | RCT harms, cohorts, case-control studies, registries | RoB 2 if harms were measured as trial outcomes; ROBINS-I/NOS when harms come from observational follow-up | Harms often drive indirectness and imprecision; state follow-up and ascertainment limits |
 | Etiology/risk factors/prognosis | Cohort or case-control studies | Newcastle-Ottawa, with principal confounders declared before awarding comparability stars | Report star counts and lost domains; do not translate NOS stars into "low risk" |
-| Diagnostic accuracy | Cross-sectional or case-control diagnostic studies | `tool: "none"` in this pipeline; QUADAS-2 is out of scope | Treat as unappraised by this skill and name the missing instrument as a limitation |
-| Prevalence/burden/descriptive epidemiology | Cross-sectional surveys, registries, surveillance | `tool: "none"` in this pipeline unless a comparator/exposure design triggers another tool | Summarize descriptively; do not attach RoB 2/ROBINS-I/NOS labels |
+| Diagnostic accuracy | Cross-sectional or case-control diagnostic-accuracy studies with an index test and reference standard | QUADAS-2, per index test / reference-standard pairing | Report risk of bias and applicability separately; do not fold applicability concerns into the risk-of-bias overall |
+| Prediction model development/validation | Prognostic or diagnostic prediction-model studies (development, validation, or both) | PROBAST, per model | Report risk of bias and applicability separately per model; a validation study of someone else's model is appraised as its own PROBAST record, not folded into the development paper's |
+| Qualitative or experience/process questions | Qualitative studies (interviews, focus groups, ethnography) | CASP qualitative checklist, per study | Report as a count out of 10 with lost items named; never translate the count into a risk-of-bias label |
+| Prevalence/burden/descriptive epidemiology | Cross-sectional surveys, registries, surveillance reporting a standalone estimate | JBI prevalence checklist, per study | Report as a count out of 9; do not attach RoB 2/ROBINS-I/NOS labels |
+| Cross-sectional exposure-outcome association | Cross-sectional studies analyzing an association, no temporal ordering | JBI analytical cross-sectional checklist, per study | Report as a count out of 8; name indirectness from the lack of temporal ordering, which no checklist item captures |
 | Systematic reviews | Systematic review +/- meta-analysis | AMSTAR-2 for confidence in the review's results | Avoid double-counting included primary studies already present in the corpus |
 | Guidelines, editorials, narrative reviews | Non-systematic secondary or opinion sources | `tool: "none"` | Use as background only, never as appraised effect evidence |
 
@@ -93,7 +108,12 @@ Pick exactly one tool. Record it in `appraisal record.tool`.
 | Etiological / prognostic cohort study (no intervention framing) | Newcastle-Ottawa, cohort form | `Newcastle-Ottawa` | star count, max 9 |
 | Case-control study | Newcastle-Ottawa, case-control form | `Newcastle-Ottawa` | star count, max 9 |
 | Systematic review, with or without meta-analysis | AMSTAR-2 | `AMSTAR-2` | high / moderate / low / critically low |
-| Cross-sectional study, case series, case report, qualitative study, diagnostic accuracy study, animal study, modelling study | `none` — no in-scope tool | `none` | — |
+| Diagnostic accuracy study with an index test and a reference standard (cross-sectional or case-control accuracy design) | QUADAS-2 | `QUADAS-2` | low / high / unclear (per domain, risk of bias and applicability rated separately) |
+| Prediction-model development, validation, or development-plus-validation study (diagnostic or prognostic) | PROBAST | `PROBAST` | low / high / unclear (per domain, risk of bias and applicability rated separately) |
+| Qualitative study (interviews, focus groups, ethnography, grounded theory, phenomenology) | CASP qualitative checklist | `CASP-qualitative` | yes / partial_yes / no / unclear per item; overall a count out of 10 |
+| Cross-sectional survey/registry/surveillance reporting a standalone prevalence or burden estimate | JBI prevalence checklist | `JBI-prevalence` | yes / no / unclear per item; overall a count out of 9 |
+| Cross-sectional study analyzing an exposure-outcome association (no temporal ordering) | JBI analytical cross-sectional checklist | `JBI-cross-sectional` | yes / no / unclear per item; overall a count out of 8 |
+| Case series, case report, animal study, modelling study that is not a prediction model | `none` — no in-scope tool | `none` | — |
 | Narrative review, editorial, commentary, letter, conference abstract with no methods, guideline document | `none` — do not appraise | `none` | — |
 | Preprint with a full methods section | Tool by design, as above, **plus** the preprint flag | per design | per design |
 | Preprint without a methods section, abstract-only record | `none` — do not appraise | `none` | — |
@@ -127,10 +147,16 @@ Do not:
 - appraise a guideline with any of these four. If guideline quality matters to the question,
   say so as a gap; AGREE II is the recognised instrument and is out of scope for this pipeline.
 
-Cross-sectional and diagnostic-accuracy designs are `none` here **because this pipeline carries
-no instrument for them**, not because they are unappraisable. Recognised instruments exist
-(e.g. QUADAS-2 for diagnostic accuracy). State the absence in the report as a limitation rather
-than substituting a mismatched tool.
+Diagnostic-accuracy studies use QUADAS-2 (§5 below); prediction-model development/validation
+studies use PROBAST (§6 below); qualitative studies use the CASP qualitative checklist (§8
+below); cross-sectional/prevalence studies use one of the two JBI checklists (§9 below,
+`JBI-prevalence` vs. `JBI-cross-sectional` — pick by whether the study reports a standalone
+estimate or an exposure-outcome association). Do not use QUADAS-2 for a prediction model, PROBAST
+for a diagnostic-accuracy study, CASP for a study's quantitative arm in a mixed-methods paper, or
+either JBI checklist for a diagnostic-accuracy study labeled "cross-sectional" in its own
+methods — matching the tool to the actual design is the point of §1, not a formality. Case
+series, case reports, animal studies, and non-prediction-model modelling studies remain `none`;
+this pipeline still carries no instrument for those.
 
 ---
 
@@ -291,7 +317,194 @@ Three groups. A maximum of one star per item except Comparability, which allows 
 
 ---
 
-## 5. AMSTAR-2 — systematic reviews
+## 5. QUADAS-2 — diagnostic accuracy
+
+Four domains. Each domain is rated for **risk of bias**; the first three are additionally rated
+for **applicability** — whether the study's patients, index test, and reference standard match
+the review question. Canonical order:
+
+| # | Domain | Risk-of-bias concern | Applicability concern |
+|---|---|---|---|
+| 1 | Patient selection | Consecutive/random sample vs. case-control enrichment; inappropriate exclusions | Does the enrolled population match the review question? |
+| 2 | Index test | Interpreted without knowledge of the reference standard; threshold pre-specified | Does the index test, its conduct, or its threshold match the review question? |
+| 3 | Reference standard | Reference standard correctly classifies target condition; interpreted without knowledge of the index test | Does the target condition, as defined by the reference standard, match the review question? |
+| 4 | Flow and timing | Appropriate interval between index test and reference standard; same reference standard for all; all patients included in analysis | — (flow and timing has no applicability domain) |
+
+Store `domains[]` with four entries for risk of bias and three more for applicability, in this
+order: domain 1 RoB, domain 2 RoB, domain 3 RoB, domain 4 RoB, domain 1 applicability, domain 2
+applicability, domain 3 applicability. Tag each with `domain_group: "risk_of_bias"` or
+`domain_group: "applicability"` (schema §8) so the report layer can group them instead of treating
+seven flat rows as one undifferentiated list.
+
+Domain judgements: `low` / `high` / `unclear` (schema tokens — QUADAS-2's own three-point scale
+maps directly, no `some_concerns`/`moderate` intermediate).
+
+### Target metadata (mandatory)
+
+QUADAS-2 appraises a specific index test against a specific reference standard, not the paper as
+a whole. Set `appraisal_target` (schema §8):
+
+```json
+{
+  "target_type": "index_test",
+  "target_id": "troponin-I-99th-percentile",
+  "population": "Adults presenting to ED with suspected ACS",
+  "index_test": "High-sensitivity troponin I, single draw at presentation",
+  "reference_standard": "Adjudicated final diagnosis of MI per Fourth Universal Definition"
+}
+```
+
+A paper reporting more than one index test (e.g. two assay thresholds, or troponin vs. CK-MB)
+needs one appraisal record per index test — do not average across them. Name the appraised index
+test in `appraisal_target.target_id` and in the first domain's rationale.
+
+Pull `index_test`, `reference_standard`, `threshold`, `verification`, and
+`interval_index_reference` from the extraction record's `diagnostic_accuracy[]` block
+(`references/schema/07-extraction.md`) rather than re-describing the test from scratch — the
+appraiser should judge risk of bias using data the extractor already anchored to spans, not
+re-read the whole paper. `diagnostic_accuracy[].verification == "differential"` is a direct
+flow-and-timing red flag; `.prespecified_threshold == false` (or `null` with no positive
+statement) feeds the index-test risk-of-bias domain.
+
+### Overall judgement
+
+There is no single QUADAS-2 "overall" score by design — the instrument deliberately keeps risk of
+bias and applicability separate so a reader is not handed a false single number. This pipeline
+still requires `overall_judgement` (schema §8 is a non-optional field for every tool); populate it
+as the **worst risk-of-bias domain judgement** (`low` < `unclear` < `high`, no averaging), and
+state the applicability picture separately in the appraiser receipt summary and in
+`domains[].rationale` for the three applicability entries. Do not let a `low` overall imply
+`low` applicability concern — a reader must check both.
+
+### Signalling questions and honesty rules
+
+Same discipline as RoB 2 (§2) and the "unclear" rules in §10 below: absence of reporting is
+`unclear`, never `low`. Specific QUADAS-2 traps:
+
+- A retrospective case-control-style enrichment (diseased cases vs. healthy controls, rather than
+  a consecutive or random clinically-relevant sample) is `high` risk on patient selection even if
+  everything else about the study is well reported — case-control enrichment inflates accuracy
+  estimates.
+- Index test interpreted with knowledge of the reference-standard result (or vice versa) is `high`
+  risk on the corresponding domain; "blinded" claimed without saying who was blinded to what is
+  `unclear`.
+- A reference standard that is itself imperfect for the target condition is an applicability
+  concern on domain 3, not a risk-of-bias fix — do not silently substitute a better reference
+  standard in the rationale.
+- An interval between index test and reference standard long enough for the target condition to
+  change (resolve, progress, get treated) is `high` risk on flow and timing; state the interval
+  when reported.
+- Excluding uninterpretable/indeterminate index-test results from the analysis, without including
+  them in the 2x2, is `high` risk on flow and timing.
+
+QUADAS-2 is for diagnostic test-accuracy studies of an index test against a reference standard.
+Do not use it for prediction models (§6, PROBAST) or for screening-yield/prevalence studies with
+no accuracy comparison (`tool: "none"`).
+
+---
+
+## 6. PROBAST — prediction models
+
+Four domains, all four rated for **risk of bias**; the first three are additionally rated for
+**applicability**. Canonical order:
+
+| # | Domain | Risk-of-bias concern | Applicability concern |
+|---|---|---|---|
+| 1 | Participants | Appropriate data source; inclusion/exclusion criteria that do not distort the intended population | Do the participants match the review question? |
+| 2 | Predictors | Predictors defined and measured the same way for every participant; assessed without knowledge of the outcome; available at the point the model is meant to be used | Do the predictors, their definitions, and their timing match the review question? |
+| 3 | Outcome | Outcome defined and determined appropriately; determined without knowledge of predictor values; appropriate time interval between predictor assessment and outcome | Does the outcome, as defined and timed, match the review question? |
+| 4 | Analysis | Sufficient participants/events per candidate predictor; continuous/categorical predictors handled without data-driven cutpoints; no inappropriate exclusion of participants from the analysis; complete-case handling of missing data justified or multiple imputation used; no univariable predictor selection before the multivariable model; overfitting/optimism accounted for (e.g. internal validation, shrinkage); calibration and discrimination reported | — (analysis has no applicability domain) |
+
+Store `domains[]` with four risk-of-bias entries followed by three applicability entries, in this
+order: domain 1 RoB, domain 2 RoB, domain 3 RoB, domain 4 RoB, domain 1 applicability, domain 2
+applicability, domain 3 applicability — the same seven-entry shape as QUADAS-2 (§5), tagged with
+`domain_group` (schema §8).
+
+Domain judgements: `low` / `high` / `unclear`, same three-point scale as QUADAS-2. No
+`some_concerns`/`moderate` intermediate.
+
+### Development vs. validation
+
+PROBAST appraises one **model**, not one paper. A paper can:
+
+- **develop** a model (derive it from a dataset, with or without internal validation),
+- **validate** a model (apply an already-developed model to new data, "external validation"), or
+- do both.
+
+A development study and a validation study of the same model are two different appraisals, even
+when reported in the same paper — analysis-domain concerns in particular differ (a validation
+study has no predictor-selection or overfitting-in-derivation concern of its own, but does have
+model-update and recalibration concerns). Name which one is being appraised in
+`appraisal_target.target_id` and the first domain's rationale, e.g.
+`"CHA2DS2-VASc, external validation"` vs. `"CHA2DS2-VASc, development"`.
+
+### Target metadata (mandatory)
+
+Set `appraisal_target` (schema §8):
+
+```json
+{
+  "target_type": "prediction_model",
+  "target_id": "risk-score-v2, development",
+  "population": "Adults hospitalized with community-acquired pneumonia",
+  "outcome": "30-day mortality",
+  "prediction_horizon": "30 days from admission"
+}
+```
+
+A paper reporting more than one model, or the same model with more than one outcome or horizon,
+needs one appraisal record per model-outcome-horizon combination — do not average across them.
+
+Pull `outcome_definition`, `prediction_horizon`, `events_per_predictor`, `predictor_selection_method`,
+`validation_approach`, `missing_data_handling`, `discrimination`, and `calibration` from the
+extraction record's `prediction_model[]` block (`references/schema/07-extraction.md`) rather than
+re-deriving them — match the `prediction_model[]` entry to this appraisal by `model_name` and
+`study_type`. A missing `calibration` value in that block, or `events_per_predictor` below ~10,
+is a direct analysis-domain signal (see traps below); read it from the extraction record, do not
+recompute it from raw numbers the extractor did not report.
+
+### Overall judgement
+
+As with QUADAS-2 (§5), there is no single official PROBAST "overall" score — risk of bias and
+applicability are deliberately kept separate. Populate `overall_judgement` as the **worst
+risk-of-bias domain judgement** (`low` < `unclear` < `high`, no averaging: PROBAST's own algorithm
+rates a model "high" overall if any domain is high, "low" only if every domain is low, otherwise
+"unclear"), and state the applicability picture separately in the receipt summary and in the
+three applicability domains' rationales.
+
+### Signalling questions and honesty rules
+
+Same discipline as QUADAS-2 (§5) and the "unclear" rules in §10 below. Specific PROBAST traps:
+
+- A model derived from fewer than ~20 events per candidate predictor (the conventional, if
+  contested, rule of thumb) is `high` risk on the analysis domain for overfitting — state the
+  events-per-predictor ratio in the rationale when the paper reports enough to compute it; do not
+  compute it yourself from numbers the paper does not give.
+- Selecting predictors by univariable significance testing before building the multivariable
+  model (`p < 0.05` screening) is `high` risk on the analysis domain regardless of the model's
+  reported performance.
+- Categorizing a continuous predictor by a data-derived optimal cutpoint (rather than a
+  pre-specified or clinically standard one) is `high` risk on the analysis domain.
+- No internal validation (bootstrap, cross-validation) and no external validation reported for a
+  development study is `high` risk on the analysis domain — apparent performance without any
+  correction for optimism overstates the model.
+- Outcome assessors aware of predictor values (or vice versa) when both require judgement (e.g. a
+  radiologist-read outcome and a symptom-based predictor) is `high` risk on the corresponding
+  domain; unstated blinding is `unclear`, not `low`.
+- Missing predictor or outcome data handled by complete-case analysis without justification, when
+  a nontrivial fraction of participants is missing data, is `high` risk on the analysis domain.
+- Reporting only discrimination (e.g. C-statistic/AUC) with no calibration assessment (calibration
+  plot, calibration slope/intercept, Hosmer-Lemeshow) is `high` risk on the analysis domain —
+  discrimination alone does not establish that predicted risks are trustworthy.
+
+PROBAST is for prediction-model development and validation studies — diagnostic or prognostic.
+Do not use it for a diagnostic-accuracy study of a single index test with no multivariable model
+(QUADAS-2, §5) or for an etiological/exposure cohort with no prediction aim (Newcastle-Ottawa,
+§4).
+
+---
+
+## 7. AMSTAR-2 — systematic reviews
 
 AMSTAR-2 has 16 items. Seven are **critical domains**; the confidence rating is driven by flaws
 in those, weighted against non-critical weaknesses.
@@ -333,7 +546,147 @@ Notes:
 
 ---
 
-## 6. Saying "unclear" honestly
+## 8. CASP qualitative checklist — qualitative studies
+
+Ten items, canonical CASP qualitative-studies checklist order. Unlike QUADAS-2/PROBAST, CASP has
+no risk-of-bias/applicability split — every item is a single quality-of-conduct-and-reporting
+judgement, so `domain_group` stays `null` for every entry (same convention as RoB2/ROBINS-I/NOS/
+AMSTAR-2).
+
+| # | Item |
+|---|---|
+| 1 | Was there a clear statement of the aims of the research? |
+| 2 | Is a qualitative methodology appropriate? |
+| 3 | Was the research design appropriate to address the aims of the research? |
+| 4 | Was the recruitment strategy appropriate to the aims of the research? |
+| 5 | Was the data collected in a way that addressed the research issue? |
+| 6 | Has the relationship between researcher and participants been adequately considered? |
+| 7 | Have ethical issues been taken into consideration? |
+| 8 | Was the data analysis sufficiently rigorous? |
+| 9 | Is there a clear statement of findings? |
+| 10 | How valuable is the research (originality, contribution, dissemination, further questions raised)? |
+
+Domain judgements: `yes` \| `partial_yes` \| `no` \| `unclear` (schema tokens). CASP's own answer
+set is Yes / Can't Tell / No; map "Can't Tell" to `unclear`, not `partial_yes` — `partial_yes` is
+for a genuinely mixed answer (e.g. item 6 addressed for recruitment but not for data collection),
+not a stand-in for "the paper doesn't say". Store `domain: "1. Clear statement of aims"` etc.
+(number + short label) so a reader can match the row back to the checklist without re-reading it.
+
+### Overall judgement
+
+CASP defines no scoring algorithm and no good/fair/poor threshold — same caveat as
+Newcastle-Ottawa (§4). `overall_judgement` is a count string of the `yes` items out of 10 (e.g.
+`"7/10"`); `partial_yes` and `no` both count as not-yes. State the count and which items were
+lost in the receipt summary and the report. **Never translate a count into a risk-of-bias
+label** ("low risk", "high quality") — CASP measures reporting and conduct transparency, not a
+risk-of-bias tier, and a high count does not certify the findings as trustworthy the way a `low`
+RoB 2 rating does for an effect estimate.
+
+### What CASP does and does not tell you
+
+- CASP appraises **conduct and reporting transparency**, not whether the findings are
+  well-grounded in the data (that is closer to CASP's own item 8, but item 8 alone is not a
+  credibility rating). Do not write "CASP 9/10, therefore the themes are credible" — name what
+  item 8's rationale actually found about analytic rigor instead.
+- Item 6 (researcher-participant relationship / reflexivity) is frequently unreported. Absent
+  reporting is `unclear`, not `no` and not `yes` — silence about reflexivity is not evidence the
+  researcher ignored it, and is not evidence they considered it either.
+- Item 9 (clear statement of findings) is about whether findings are presented with enough
+  data/quotes to support them, not about whether you personally find the findings convincing.
+- Do not apply CASP to a paper's quantitative arm in a mixed-methods study; appraise the
+  quantitative component with the tool matching its own design (§§2-4), and CASP only for the
+  qualitative component.
+- If `qualitative_evidence` (`references/schema/07-extraction.md`) was extracted, pull
+  `methodology`, `sampling_strategy`, `data_collection_method`, `analysis_approach`, and
+  `researcher_reflexivity` from it rather than re-describing the study from scratch.
+
+CASP is the default qualitative instrument for this pipeline
+(`SCIENTIFIC_FRAMEWORKS_OPTIMIZATION_PLAN.md` Phase 4). A JBI qualitative checklist path is not
+implemented; do not invent JBI item wording and label it `CASP-qualitative`.
+
+---
+
+## 9. JBI checklists — prevalence and analytical cross-sectional studies
+
+Two related but distinct instruments, chosen by whether the study reports an exposure-outcome
+association (`JBI-cross-sectional`) or a standalone prevalence/burden estimate with no comparator
+(`JBI-prevalence`). Do not use either as a drop-in "cross-sectional study, use JBI" default —
+pick the one that matches what the study actually analyzed (§1).
+
+Both, like CASP (§8), have no risk-of-bias/applicability split: `domain_group` stays `null`. Both
+use `judgement`: `yes` \| `no` \| `unclear` (schema tokens). The official JBI answer set also
+allows "not applicable" (e.g. a confounding-handling item when no confounders were identified);
+this schema has no `not_applicable` token, so record `unclear` with the rationale stating
+`"not applicable: <reason>"` — never `yes` or `no` for a question the study's design makes moot.
+
+### JBI Critical Appraisal Checklist for Prevalence Studies — `JBI-prevalence`
+
+Nine items, canonical order. Store `domain: "1. Sample frame appropriateness"` etc.
+
+| # | Item |
+|---|---|
+| 1 | Was the sample frame appropriate to address the target population? |
+| 2 | Were study participants sampled in an appropriate way? |
+| 3 | Was the sample size adequate? |
+| 4 | Were the study subjects and the setting described in detail? |
+| 5 | Was the data analysis conducted with sufficient coverage of the identified sample? |
+| 6 | Were valid methods used for the identification of the condition? |
+| 7 | Was the condition measured in a standard, reliable way for all participants? |
+| 8 | Was there appropriate statistical analysis? |
+| 9 | Was the response rate adequate, and if not, was the low response rate managed appropriately? |
+
+### JBI Critical Appraisal Checklist for Analytical Cross-Sectional Studies — `JBI-cross-sectional`
+
+Eight items, canonical order.
+
+| # | Item |
+|---|---|
+| 1 | Were the criteria for inclusion in the sample clearly defined? |
+| 2 | Were the study subjects and the setting described in detail? |
+| 3 | Was the exposure measured in a valid and reliable way? |
+| 4 | Were objective, standard criteria used for measurement of the condition? |
+| 5 | Were confounding factors identified? |
+| 6 | Were strategies to deal with confounding factors stated? |
+| 7 | Were the outcomes measured in a valid and reliable way? |
+| 8 | Was appropriate statistical analysis used? |
+
+Item 6 is `unclear`/`not applicable` (recorded as `unclear`, rationale `"not applicable: no
+confounders identified (item 5)"`) whenever item 5 is `no` — do not mark it `no` for a handling
+strategy the study had no confounders to apply one to.
+
+### Overall judgement
+
+Same convention as CASP (§8) and Newcastle-Ottawa (§4): no official threshold, no risk-of-bias
+label. `overall_judgement` is a `yes`-count string out of the item count (`"7/9"` for
+`JBI-prevalence`, `"6/8"` for `JBI-cross-sectional`); `no` and `unclear`/not-applicable both count
+as not-yes. State the count and lost items in the receipt summary.
+
+### Extraction support
+
+Pull `sample_frame`, `sampling_method`, `response_rate`, `condition_measurement_method`,
+`exposure_measurement_method`, `confounders_identified`, `confounders_handling`, and
+`prevalence_estimate` from the extraction record's `cross_sectional_evidence` object
+(`references/schema/07-extraction.md`) rather than re-deriving them.
+
+### What this does and does not cover
+
+- Neither checklist is a substitute for QUADAS-2 (§5) when the cross-sectional study is actually
+  a diagnostic-accuracy study (index test vs. reference standard) — route those to QUADAS-2, not
+  here, even though both study designs are commonly labeled "cross-sectional" in a paper's own
+  methods section.
+- `JBI-cross-sectional` appraises the study's overall conduct, not a specific exposure-outcome
+  association; a paper testing several associations does not need one appraisal record per
+  association the way PROBAST/QUADAS-2 need one per model/index-test (`appraisal_target` stays
+  `null`) — name the primary association the appraisal focuses on in the receipt summary if the
+  paper tests several with materially different exposure/outcome measurement quality.
+- A single-timepoint prevalence estimate with a stated denominator and numerator is the target of
+  `JBI-prevalence`; a multi-wave surveillance series or repeated cross-sectional design is still
+  `JBI-prevalence` per wave if appraised at all, or `tool: "none"` with the reason stated if the
+  review is not appraising individual waves.
+
+---
+
+## 10. Saying "unclear" honestly
 
 The single largest failure mode of automated appraisal is converting silence into reassurance.
 
@@ -385,7 +738,7 @@ GOOD "Abstract-only record; randomisation process not assessable from abstract. 
 
 ---
 
-## 7. Abstract-only evidence
+## 11. Abstract-only evidence
 
 Invariant (`SKILL.md` "Invariants", schema §7/§8): `evidence_basis` is carried on both the extraction record
 and the appraisal record and must agree with `corpus record.fulltext.status`.
@@ -398,22 +751,21 @@ and the appraisal record and must agree with `corpus record.fulltext.status`.
 
 Restricted appraisal rules for `evidence_basis: "abstract_only"`:
 
-1. Every domain that cannot be assessed from an abstract is `unclear` with rationale
-   `"not assessable from abstract"` (schema §8 requires exactly this).
-2. `overall_judgement` is `unclear`. Never `low`, never a star count, never an AMSTAR-2 rating.
-3. Prefer `tool: "none"` when *no* domain is assessable — which is the usual case. A record with
-   five `unclear` domains and one weakly-supported judgement communicates less than an honest
-   "not appraised: abstract only".
-4. `grade` may still be filled at the body-of-evidence level, but the abstract-only studies must
+1. `tool` is `"none"`, `domains` is `[]`, `overall_judgement` is `"unclear"` — unconditionally
+   (schema §8). An abstract never supports a domain-level conduct judgement, so no tool is ever
+   selected against `abstract_only` evidence, even when the abstract states a method detail. A
+   record with five `unclear` domains and one weakly-supported judgement communicates less than
+   an honest "not appraised: abstract only".
+2. `grade` may still be filled at the body-of-evidence level, but the abstract-only studies must
    be reflected as risk-of-bias or indirectness limitations in that rating, not ignored.
-5. The report must label the claim as abstract-only at the point of use. The verifier check
+3. The report must label the claim as abstract-only at the point of use. The verifier check
    `C-FULLTEXT` fails on any `abstract_only_claims[].labelled == false` (schema §9).
 
 A truncation-detected HTML fetch is abstract-only. It is never "partial full text".
 
 ---
 
-## 8. GRADE
+## 12. GRADE
 
 GRADE rates **certainty of evidence per outcome**, across the body of studies contributing to that
 outcome — not per study. The `grade` object on an individual appraisal record (schema §8) records

@@ -16,6 +16,10 @@ Checks
   C-CORPUS-COMPLETE  every included study has screening + extraction + appraisal records on
                      disk; every cited evidence_id exists in corpus.jsonl; included but never
                      cited records are listed in `uncited_citations`
+  C-APPRAISAL-SCHEMA every appraisal record on disk (schema §8) has a closed `tool` value, a
+                     domain/overall vocabulary valid for that tool, `appraisal_target` when the
+                     tool requires it, and `abstract_only` records collapsed to
+                     tool="none"/domains=[]/overall="unclear"
   C-SEARCH-LOG       every executed query has a search result record with query string,
                      NCBI-translated query and hit count, and appears verbatim in the report
   C-RETRACTION       retracted / expression-of-concern records are flagged wherever cited
@@ -132,6 +136,74 @@ SKIPPED = "skipped"
 
 #: The evidence-kernel check ids, in execution order (schema §9).
 KERNEL_CHECKS = ("C-SNAPSHOT", "C-SPAN", "C-FRESH-FETCH", "C-ASSEMBLER")
+
+#: Closed `tool` enum (schema §8). A new framework must add a row here alongside prompt/schema/
+#: tests before it can pass C-APPRAISAL-SCHEMA (SCIENTIFIC_FRAMEWORKS_OPTIMIZATION_PLAN.md).
+APPRAISAL_TOOL_SPECS: dict[str, dict] = {
+    "RoB2": {
+        "judgements": {"low", "some_concerns", "high", "unclear"},
+        "overall": {"low", "some_concerns", "high", "unclear"},
+        "domain_groups": {None},
+        "domain_count": 5, "domain_count_unless_variant": True,
+        "target_type": None, "target_required": False,
+    },
+    "ROBINS-I": {
+        "judgements": {"low", "moderate", "serious", "critical", "unclear"},
+        "overall": {"low", "moderate", "serious", "critical", "unclear"},
+        "domain_groups": {None},
+        "domain_count": 7, "domain_count_unless_variant": False,
+        "target_type": None, "target_required": False,
+    },
+    "Newcastle-Ottawa": {
+        "judgements": {"yes", "no"},
+        "overall": re.compile(r"^\d{1,2}/9$"),
+        "domain_groups": {None},
+        "domain_count": None,
+        "target_type": None, "target_required": False,
+    },
+    "AMSTAR-2": {
+        "judgements": {"yes", "partial_yes", "no", "unclear"},
+        "overall": {"high", "moderate", "low", "critically_low"},
+        "domain_groups": {None},
+        "domain_count": 16, "domain_count_unless_variant": False,
+        "target_type": None, "target_required": False,
+    },
+    "QUADAS-2": {
+        "judgements": {"low", "high", "unclear"},
+        "overall": {"low", "high", "unclear"},
+        "domain_groups": {"risk_of_bias", "applicability"},
+        "domain_count": 7, "domain_count_unless_variant": False,
+        "target_type": "index_test", "target_required": True,
+    },
+    "PROBAST": {
+        "judgements": {"low", "high", "unclear"},
+        "overall": {"low", "high", "unclear"},
+        "domain_groups": {"risk_of_bias", "applicability"},
+        "domain_count": 7, "domain_count_unless_variant": False,
+        "target_type": "prediction_model", "target_required": True,
+    },
+    "CASP-qualitative": {
+        "judgements": {"yes", "partial_yes", "no", "unclear"},
+        "overall": re.compile(r"^\d{1,2}/10$"),
+        "domain_groups": {None},
+        "domain_count": 10, "domain_count_unless_variant": False,
+        "target_type": None, "target_required": False,
+    },
+    "JBI-prevalence": {
+        "judgements": {"yes", "no", "unclear"},
+        "overall": re.compile(r"^\d{1,2}/9$"),
+        "domain_groups": {None},
+        "domain_count": 9, "domain_count_unless_variant": False,
+        "target_type": None, "target_required": False,
+    },
+    "JBI-cross-sectional": {
+        "judgements": {"yes", "no", "unclear"},
+        "overall": re.compile(r"^\d{1,2}/8$"),
+        "domain_groups": {None},
+        "domain_count": 8, "domain_count_unless_variant": False,
+        "target_type": None, "target_required": False,
+    },
+}
 
 # D5: store.py is the single implementation of snapshot / span / freshness checking.
 try:
@@ -490,6 +562,25 @@ class RunData:
         return [r for r in self.included()
                 if self.fulltext(r).get("status") == "abstract_only"]
 
+    def appraisal_records(self) -> list[tuple[str, Path, dict]]:
+        """(evidence_id, path, record) for every appraisal record on disk, malformed ones
+        surfaced as `{"_error": ...}` so callers can report rather than crash."""
+        out: list[tuple[str, Path, dict]] = []
+        adir = self.run_dir / "workspace" / "appraisals"
+        if not adir.is_dir():
+            return out
+        for f in sorted(adir.glob("*.json")):
+            if f.name.startswith("."):
+                continue
+            try:
+                rec = read_json(f)
+            except (json.JSONDecodeError, OSError) as exc:
+                out.append((f.stem, f, {"_error": str(exc)}))
+                continue
+            eid = rec.get("evidence_id") or f.stem
+            out.append((eid, f, rec))
+        return out
+
     def label_of(self, rec: dict) -> str:
         eid = rec.get("evidence_id") or "?"
         return f"{eid} ({short(rec.get('title') or '', 70)})"
@@ -618,6 +709,7 @@ class Verifier:
     def run_all(self) -> dict:
         self.check_cite_resolve()
         self.check_corpus_complete()
+        self.check_appraisal_schema()
         self.check_search_log()
         self.check_retraction()
         self.check_fulltext()
@@ -772,6 +864,96 @@ class Verifier:
             n = len({e.split(':')[0] + ':' + e.split(':')[1] for e in excused})
             parts.append(f"{n} quarantined record(s) excused from extraction/appraisal")
         self.add("C-CORPUS-COMPLETE", status, "; ".join(parts))
+
+    # -- C-APPRAISAL-SCHEMA -------------------------------------------------
+
+    def check_appraisal_schema(self) -> None:
+        """Tool-specific appraisal-record contract (schema §8), beyond generic span-debt
+        checks: closed `tool` enum, domain/overall vocabulary per tool, required
+        `appraisal_target` for QUADAS-2/PROBAST, and the unconditional `abstract_only` ->
+        `tool: "none"` / `domains: []` / `overall_judgement: "unclear"` rule."""
+        problems: list[str] = []
+        n_checked = 0
+        for eid, path, rec in self.run.appraisal_records():
+            label = f"{eid} ({path.name})"
+            if "_error" in rec:
+                problems.append(f"{label}: unreadable ({rec['_error']})")
+                continue
+            n_checked += 1
+            tool = rec.get("tool")
+            domains = rec.get("domains")
+            overall = rec.get("overall_judgement")
+            evidence_basis = rec.get("evidence_basis")
+            target = rec.get("appraisal_target")
+
+            if evidence_basis == "abstract_only":
+                if tool != "none" or domains != [] or overall != "unclear":
+                    problems.append(
+                        f"{label}: abstract_only record must have tool=\"none\", domains=[], "
+                        f"overall_judgement=\"unclear\" (got tool={tool!r}, "
+                        f"domains={'[]' if domains == [] else 'non-empty'}, overall={overall!r})")
+                    continue
+
+            if tool == "none":
+                if domains != []:
+                    problems.append(f"{label}: tool=\"none\" requires domains=[]")
+                if overall != "unclear":
+                    problems.append(f"{label}: tool=\"none\" requires overall_judgement=\"unclear\"")
+                continue
+
+            spec = APPRAISAL_TOOL_SPECS.get(tool)
+            if spec is None:
+                problems.append(f"{label}: tool {tool!r} is not a recognized enum value")
+                continue
+
+            if not isinstance(domains, list):
+                problems.append(f"{label}: domains must be a list")
+                domains = []
+
+            if spec["target_required"] and not (isinstance(target, dict) and target):
+                problems.append(f"{label}: {tool} requires appraisal_target")
+            elif isinstance(target, dict) and spec["target_type"] is not None:
+                tt = target.get("target_type")
+                if tt is not None and tt != spec["target_type"]:
+                    problems.append(
+                        f"{label}: {tool} appraisal_target.target_type must be "
+                        f"{spec['target_type']!r}, got {tt!r}")
+
+            dcount = spec["domain_count"]
+            if dcount is not None:
+                skip_count = spec.get("domain_count_unless_variant") and rec.get("tool_variant")
+                if not skip_count and len(domains) != dcount:
+                    problems.append(
+                        f"{label}: {tool} requires exactly {dcount} domains[], got {len(domains)}")
+
+            for i, d in enumerate(domains):
+                if not isinstance(d, dict):
+                    problems.append(f"{label}: domains[{i}] is not an object")
+                    continue
+                j = d.get("judgement")
+                if j not in spec["judgements"]:
+                    problems.append(
+                        f"{label}: domains[{i}].judgement {j!r} not valid for {tool} "
+                        f"(allowed: {sorted(spec['judgements'])})")
+                dg = d.get("domain_group")
+                if dg not in spec["domain_groups"]:
+                    problems.append(
+                        f"{label}: domains[{i}].domain_group {dg!r} not valid for {tool} "
+                        f"(allowed: {sorted(x for x in spec['domain_groups'] if x)})")
+
+            allowed_overall = spec["overall"]
+            overall_ok = (overall in allowed_overall if isinstance(allowed_overall, set)
+                          else isinstance(overall, str) and bool(allowed_overall.match(overall)))
+            if not overall_ok:
+                problems.append(f"{label}: overall_judgement {overall!r} not valid for {tool}")
+
+        status = FAIL if problems else PASS
+        detail = f"{n_checked} appraisal record(s) checked"
+        if problems:
+            detail += "; " + "; ".join(problems[:8])
+            if len(problems) > 8:
+                detail += f"; +{len(problems) - 8} more"
+        self.add("C-APPRAISAL-SCHEMA", status, detail)
 
     # -- C-SEARCH-LOG ------------------------------------------------------
 
@@ -1312,6 +1494,26 @@ class Verifier:
                         "comparator", "funding", "coi", "limitations")
     #: Numeric outcome fields; any non-null one makes the outcome entry a claim (R19).
     OUTCOME_CLAIM_FIELDS = ("effect", "ci_low", "ci_high", "p_value")
+    #: `diagnostic_accuracy[]` fields that make a factual claim (R19); mirrors OUTCOME_CLAIM_FIELDS
+    #: for the QUADAS-2-oriented extraction block (references/schema/07-extraction.md).
+    DIAGNOSTIC_ACCURACY_CLAIM_FIELDS = (
+        "index_test", "reference_standard", "target_condition", "threshold",
+        "tp", "fp", "fn", "tn", "sensitivity", "specificity")
+    #: `prediction_model[]` fields that make a factual claim (R19); mirrors
+    #: DIAGNOSTIC_ACCURACY_CLAIM_FIELDS for the PROBAST-oriented extraction block.
+    PREDICTION_MODEL_CLAIM_FIELDS = (
+        "model_name", "outcome_definition", "prediction_horizon", "n_participants",
+        "n_events", "events_per_predictor", "discrimination", "calibration")
+    #: `qualitative_evidence` (a single object, not an array) fields that make a factual claim
+    #: (R19). Mirrors the array-based *_CLAIM_FIELDS tuples but the object itself is singular.
+    QUALITATIVE_EVIDENCE_CLAIM_FIELDS = (
+        "research_question", "methodology", "sampling_strategy", "sample_size",
+        "data_collection_method", "analysis_approach", "key_themes")
+    #: `cross_sectional_evidence` (a single object, not an array) fields that make a factual
+    #: claim (R19). Mirrors QUALITATIVE_EVIDENCE_CLAIM_FIELDS.
+    CROSS_SECTIONAL_EVIDENCE_CLAIM_FIELDS = (
+        "sample_frame", "sampling_method", "sample_size", "response_rate",
+        "condition_measurement_method", "exposure_measurement_method", "prevalence_estimate")
 
     #: Span-level failures that are *never* downgraded by the gate flag (R20).
     SPAN_TAMPER_CODES = ("SPAN_OUT_OF_RANGE", "SPAN_TOO_LONG", "EXCERPT_MISMATCH")
@@ -1415,6 +1617,44 @@ class Verifier:
                                             for f in self.OUTCOME_CLAIM_FIELDS):
                         gaps.append({"artifact": artifact, "field": f"outcomes[{i}]",
                                      "detail": "effect estimate with no span (R19)"})
+                for i, da in enumerate(rec.get("diagnostic_accuracy") or []):
+                    if not isinstance(da, dict):
+                        continue
+                    da_spans = self._spans_of(da)
+                    for span in da_spans:
+                        take(artifact, kind, f"diagnostic_accuracy[{i}]", span, None, path)
+                    if not da_spans and any(da.get(f) is not None
+                                            for f in self.DIAGNOSTIC_ACCURACY_CLAIM_FIELDS):
+                        gaps.append({"artifact": artifact, "field": f"diagnostic_accuracy[{i}]",
+                                     "detail": "diagnostic-accuracy claim with no span (R19)"})
+                for i, pm in enumerate(rec.get("prediction_model") or []):
+                    if not isinstance(pm, dict):
+                        continue
+                    pm_spans = self._spans_of(pm)
+                    for span in pm_spans:
+                        take(artifact, kind, f"prediction_model[{i}]", span, None, path)
+                    if not pm_spans and any(pm.get(f) is not None
+                                            for f in self.PREDICTION_MODEL_CLAIM_FIELDS):
+                        gaps.append({"artifact": artifact, "field": f"prediction_model[{i}]",
+                                     "detail": "prediction-model claim with no span (R19)"})
+                qe = rec.get("qualitative_evidence")
+                if isinstance(qe, dict):
+                    qe_spans = self._spans_of(qe)
+                    for span in qe_spans:
+                        take(artifact, kind, "qualitative_evidence", span, None, path)
+                    if not qe_spans and any(qe.get(f) is not None
+                                            for f in self.QUALITATIVE_EVIDENCE_CLAIM_FIELDS):
+                        gaps.append({"artifact": artifact, "field": "qualitative_evidence",
+                                     "detail": "qualitative-evidence claim with no span (R19)"})
+                cse = rec.get("cross_sectional_evidence")
+                if isinstance(cse, dict):
+                    cse_spans = self._spans_of(cse)
+                    for span in cse_spans:
+                        take(artifact, kind, "cross_sectional_evidence", span, None, path)
+                    if not cse_spans and any(cse.get(f) is not None
+                                            for f in self.CROSS_SECTIONAL_EVIDENCE_CLAIM_FIELDS):
+                        gaps.append({"artifact": artifact, "field": "cross_sectional_evidence",
+                                     "detail": "cross-sectional-evidence claim with no span (R19)"})
             else:
                 for i, dom in enumerate(rec.get("domains") or []):
                     if not isinstance(dom, dict):

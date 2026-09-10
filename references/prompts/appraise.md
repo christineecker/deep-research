@@ -25,7 +25,11 @@ synthesise across the body of evidence.
 
 - Run directory: `{{RUN_DIR}}` (paths below are relative to it)
 - `evidence_id`: `{{EVIDENCE_ID}}`, PMID `{{PMID}}`
-- Extraction record: `workspace/extractions/pmid-{{PMID}}.json` (design, N, outcomes, spans)
+- Extraction record: `workspace/extractions/pmid-{{PMID}}.json` (design, N, outcomes,
+  `diagnostic_accuracy[]` when the design is a diagnostic-accuracy study, `prediction_model[]`
+  when the design is a prediction-model study, `qualitative_evidence` when the design has a
+  qualitative component, `cross_sectional_evidence` when the design is cross-sectional/
+  prevalence, spans)
 - Snapshot to appraise from: `source_id = {{SOURCE_ID}}`, `access = {{ACCESS}}`
   (`full_text` | `abstract` | `preprint` | `guideline` | `web`), length `{{TEXT_LENGTH}}` characters
 - Text windows: read them with `scripts/source.py read --run-dir {{RUN_DIR}} --source-id {{SOURCE_ID}}
@@ -64,13 +68,21 @@ Read this twice. Your judgements are only as good as what you can point at.
 | Non-randomised study of an intervention/exposure (quasi-experimental, controlled before-after, interrupted time series) | `ROBINS-I` |
 | Observational cohort or case-control | `Newcastle-Ottawa` |
 | Systematic review / meta-analysis | `AMSTAR-2` |
-| Narrative review, editorial, guideline, case report/series, cross-sectional descriptive, or any record where only the abstract exists | `none` |
+| Diagnostic accuracy study with an index test and a reference standard | `QUADAS-2` |
+| Prediction-model development, validation, or development-plus-validation study (diagnostic or prognostic) | `PROBAST` |
+| Qualitative study (interviews, focus groups, ethnography, grounded theory, phenomenology) | `CASP-qualitative` |
+| Cross-sectional survey/registry/surveillance reporting a standalone prevalence/burden estimate | `JBI-prevalence` |
+| Cross-sectional study analyzing an exposure-outcome association (no temporal ordering) | `JBI-cross-sectional` |
+| Narrative review, editorial, guideline, case report/series, or any record where only the abstract exists | `none` |
 
-`tool` is a closed enum: `RoB2` | `ROBINS-I` | `Newcastle-Ottawa` | `AMSTAR-2` | `none`.
+`tool` is a closed enum: `RoB2` | `ROBINS-I` | `Newcastle-Ottawa` | `AMSTAR-2` | `QUADAS-2` |
+`PROBAST` | `CASP-qualitative` | `JBI-prevalence` | `JBI-cross-sectional` | `none`.
 If the design is ambiguous, pick the tool that matches what the paper actually did (as
 described in Methods), not what it calls itself, and record the reasoning in the first domain's
 `rationale`. `tool: "none"` REQUIRES `domains: []`; state why no instrument applies in the
 receipt summary so the coordinator can carry it into the report, not as a fabricated domain.
+**`{{EVIDENCE_BASIS}} == "abstract_only"` overrides this table regardless of design: `tool` is
+always `"none"`** — see "Abstract-only records" below.
 
 ## Step 2 — domain judgements
 
@@ -83,9 +95,60 @@ Work the tool's canonical domains, in the tool's order (see `references/appraisa
   the reported result.
 - **Newcastle-Ottawa**: selection (4 items); comparability (1 item); outcome/exposure (3 items).
 - **AMSTAR-2**: the 16 items, with the 7 critical items identified in the rationales.
+- **QUADAS-2**: four domains — patient selection; index test; reference standard; flow and
+  timing — each rated for risk of bias, and the first three additionally rated for
+  applicability. Emit seven `domains[]` entries in this order: domain 1 RoB, domain 2 RoB,
+  domain 3 RoB, domain 4 RoB, domain 1 applicability, domain 2 applicability, domain 3
+  applicability. Tag every entry's `domain_group` as `"risk_of_bias"` or `"applicability"`.
+  Set `appraisal_target` (`target_type: "index_test"`, plus `index_test`, `reference_standard`,
+  `population`) — pull `index_test`/`reference_standard` from the extraction record's
+  `diagnostic_accuracy[]` entry when present, rather than re-describing the test yourself; one
+  appraisal record per `diagnostic_accuracy[]` entry if the paper reports more than one index
+  test or threshold. Use `diagnostic_accuracy[].verification` and
+  `.interval_index_reference` directly for the flow-and-timing domain, and
+  `.prespecified_threshold` for the index-test domain, instead of re-deriving them from the text.
+- **PROBAST**: four domains — participants; predictors; outcome; analysis — the first three
+  rated for risk of bias and applicability, analysis for risk of bias only. Emit seven
+  `domains[]` entries: domain 1 RoB, domain 2 RoB, domain 3 RoB, domain 4 RoB (analysis), domain
+  1 applicability, domain 2 applicability, domain 3 applicability. Tag every entry's
+  `domain_group`. Set `appraisal_target` (`target_type: "prediction_model"`, `target_id` naming
+  the model AND whether development or validation is being appraised, e.g. `"CHA2DS2-VASc,
+  external validation"`, plus `population`, `outcome`, `prediction_horizon`). A development study
+  and a validation study of the same model get separate appraisal records. Pull
+  `outcome_definition`, `prediction_horizon`, `events_per_predictor`, `predictor_selection_method`,
+  `validation_approach`, `missing_data_handling`, `discrimination`, and `calibration` from the
+  extraction record's `prediction_model[]` entry matching this model/`study_type` rather than
+  re-deriving them. `references/appraisal.md` §6 lists the analysis-domain traps
+  (events-per-predictor, univariable predictor screening, data-driven cutpoints, missing
+  internal/external validation, complete-case handling, missing calibration reporting) — work
+  through them explicitly rather than defaulting to `low`.
+  `overall_judgement` is the worst of the four risk-of-bias domain judgements only; do not fold
+  applicability into it. See `references/appraisal.md` §6.
+- **CASP-qualitative**: ten items, no risk-of-bias/applicability split — leave every entry's
+  `domain_group` `null`. `judgement` is `yes` | `partial_yes` | `no` | `unclear` per item (map
+  CASP's own "Can't Tell" to `unclear`). `appraisal_target` is `null` — CASP appraises the whole
+  study. `overall_judgement` is a `yes`-count string out of 10 (e.g. `"7/10"`); **never** turn it
+  into a risk-of-bias label. Pull `methodology`, `sampling_strategy`, `data_collection_method`,
+  `analysis_approach`, and `researcher_reflexivity` from the extraction record's
+  `qualitative_evidence` object rather than re-describing the study. See
+  `references/appraisal.md` §8 for full item wording and traps (item 6 reflexivity silence is
+  `unclear` not `no`; item 8 rigor is not the same as findings being "convincing").
+- **JBI-prevalence** (standalone estimate, nine items) / **JBI-cross-sectional**
+  (exposure-outcome association, eight items): pick by what the study analyzed, not by the
+  paper's self-label. No risk-of-bias/applicability split — `domain_group` `null`.
+  `judgement` is `yes` | `no` | `unclear`; the official JBI "not applicable" answer maps to
+  `unclear` with rationale `"not applicable: <reason>"`, never `yes`/`no`. `appraisal_target` is
+  `null`. `overall_judgement` is a `yes`-count string (`"7/9"` for prevalence, `"6/8"` for
+  cross-sectional). Pull `sample_frame`, `sampling_method`, `response_rate`,
+  `condition_measurement_method`, `exposure_measurement_method`, `confounders_identified`,
+  `confounders_handling`, and `prevalence_estimate` from the extraction record's
+  `cross_sectional_evidence` object rather than re-describing the study. See
+  `references/appraisal.md` §9 for full item wording (cross-sectional item 6 is `unclear`/not
+  applicable whenever item 5 found no confounders — never `no`).
 
 `judgement` must be one of: `low` | `some_concerns` | `moderate` | `serious` | `critical` |
 `high` | `unclear` | `yes` | `no` | `partial_yes` — the tool's own vocabulary, nothing else.
+QUADAS-2 and PROBAST use only `low` | `high` | `unclear`.
 
 ## Step 3 — GRADE
 
@@ -139,10 +202,13 @@ pretty-printed JSON object, exactly this shape:
 | `pmid` | string; `null` for non-PubMed evidence |
 | `evidence_id` | exactly `{{EVIDENCE_ID}}` |
 | `tool` | closed enum, chosen in step 1 |
+| `tool_variant` | optional; `null` unless a named variant applies (e.g. `"cluster"` for a cluster-RCT RoB2) |
+| `appraisal_target` | `null` for Newcastle-Ottawa/AMSTAR-2/CASP-qualitative/JBI-prevalence/JBI-cross-sectional. **Required for QUADAS-2 and PROBAST** — see step 2. Optional and preferred for RoB2/ROBINS-I when the appraised outcome, result, comparator, follow-up window, or effect of interest is known; `null` when appraising the study's overall/primary conduct |
 | `domains` | tool's canonical domains, canonical order; exactly `[]` when `tool == "none"` |
+| `domains[].domain_group` | `null` except for QUADAS-2 and PROBAST, where every entry needs `"risk_of_bias"` or `"applicability"` |
 | `domains[].rationale` | <=300 chars, states the evidence for the judgement. Never empty — `unclear` still needs a reason |
 | `domains[].spans` | one or more claim spans locating the reported method the judgement rests on. **Required for every judgement that is not `unclear`.** An `unclear` grounded in absent reporting takes `spans: []` — there is nothing to point at, and that is the honest record |
-| `overall_judgement` | RoB2/ROBINS-I: `low` \| `some_concerns` \| `moderate` \| `serious` \| `critical` \| `high` \| `unclear`. NOS: star string, e.g. `"7/9"`. AMSTAR-2: `high` \| `moderate` \| `low` \| `critically_low` |
+| `overall_judgement` | RoB2/ROBINS-I: `low` \| `some_concerns` \| `moderate` \| `serious` \| `critical` \| `high` \| `unclear`. NOS: star string, e.g. `"7/9"`. AMSTAR-2: `high` \| `moderate` \| `low` \| `critically_low`. QUADAS-2/PROBAST: `low` \| `high` \| `unclear`, the worst risk-of-bias domain only. CASP-qualitative: `yes`-count string, e.g. `"7/10"`. JBI-prevalence: `yes`-count string out of 9. JBI-cross-sectional: `yes`-count string out of 8 |
 | `grade` | object above, or `null` |
 | `evidence_basis` | `fulltext` \| `abstract_only` — must equal `{{EVIDENCE_BASIS}}` |
 
@@ -184,12 +250,10 @@ conduct.
 If `{{EVIDENCE_BASIS}}` is `abstract_only`, an abstract cannot support a conduct appraisal:
 
 - Set `evidence_basis: "abstract_only"`.
-- Set **every** domain that is not assessable from an abstract to `judgement: "unclear"` with
-  `rationale: "not assessable from abstract"` and `spans: []`.
-- `overall_judgement` is `unclear` unless a tool convention says otherwise. Never assign a
-  favourable overall rating to an abstract-only record.
-- Prefer `tool: "none"` with `domains: []` when even domain names would imply access you do not
-  have; put the reason in the receipt summary.
+- Set `tool: "none"`, `domains: []`, and `overall_judgement: "unclear"`. This is unconditional —
+  no domain-level judgement is ever recorded against `abstract_only` evidence, even when the
+  abstract happens to mention a method detail; put the reason (and anything notable the abstract
+  did say) in the receipt summary, not as a fabricated domain.
 - GRADE `risk_of_bias` for such a record is at least `serious`.
 
 ## Honesty rules
