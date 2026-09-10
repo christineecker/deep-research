@@ -22,9 +22,13 @@ status: {{REPORT_STATUS}}   # final | provisional (any verifier fail, or quarant
      and nowhere else. -->
 
 > **Status: {{REPORT_STATUS}}.** {{STATUS_NOTE}}
-> <!-- e.g. "Provisional: 3 of 28 included studies could not be obtained in full text; see §13." -->
+> <!-- e.g. "Provisional: 3 of 28 included studies could not be obtained in full text; see §14." -->
 
-## 1. Plain-language summary
+## 1. Short answer and plain-language summary
+
+**Short answer.** {{BOTTOM_LINE}}
+
+<!-- Lead with the bottom line — readers see the verdict before the supporting summary. -->
 
 {{PLAIN_LANGUAGE_SUMMARY}}
 
@@ -32,9 +36,19 @@ status: {{REPORT_STATUS}}   # final | provisional (any verifier fail, or quarant
      Every sentence must be traceable to §8. Hedge honestly: if the evidence does not answer the
      question, say that first. -->
 
-**Short answer.** {{BOTTOM_LINE}}
+## 2. Evidence at a glance
 
-## 2. Question and protocol
+| Outcome | Studies / participants | Direction of effect | Best estimate / range | Certainty | Main limitation |
+|---|---|---|---|---|---|
+| {{GLANCE_OUTCOME}} | {{GLANCE_N_STUDIES}} / {{GLANCE_N_PARTICIPANTS}} | {{GLANCE_DIRECTION}} | {{GLANCE_ESTIMATE}} | {{GLANCE_CERTAINTY}} | {{GLANCE_LIMITATION}} |
+
+<!-- One row per outcome carried through to §8/§9. This table summarizes only findings that are
+     fully supported later in the report — never introduce a number here that §8 or §9 does not
+     also state. If no outcome yet has a synthesized estimate (e.g. `fast` profile, single study
+     per outcome), state that plainly instead of a table: "Not populated at this profile/stage:
+     <reason>. See §8." -->
+
+## 3. Question and protocol
 
 {{RESEARCH_QUESTION}}
 
@@ -53,9 +67,18 @@ status: {{REPORT_STATUS}}   # final | provisional (any verifier fail, or quarant
 
 Inclusion / exclusion criteria: {{CRITERIA_LIST}} <!-- ids I1, I2, ..., E1, E2, ... matching protocol.md -->
 
-Deviations from protocol: {{DEVIATIONS_SUMMARY}} <!-- "none" or a short list pointing at protocol §9 -->
+### Protocol deviations
 
-## 3. Methods — search
+| Deviation | Reason | Affected records/outcomes | Likely impact |
+|---|---|---|---|
+| {{DEVIATION}} | {{DEVIATION_REASON}} | {{DEVIATION_AFFECTED}} | {{DEVIATION_IMPACT}} |
+
+<!-- "none" as the single row's Deviation cell if no protocol departures occurred. Point at
+     protocol.md §9 for the underlying record. -->
+
+## 4. Methods
+
+### 4.1 Search
 
 Sources searched: {{SOURCES}}
 Unauthorized/unreachable connectors this session: {{CONNECTORS_UNAVAILABLE}} <!-- e.g. "max run without Scholar Gateway / Consensus: searched a `wide` set only; state what this means for coverage" -->
@@ -66,13 +89,22 @@ Unauthorized/unreachable connectors this session: {{CONNECTORS_UNAVAILABLE}} <!-
 
 <!-- Every query actually run, verbatim and reproducible — link to the search-strategy log if long. -->
 
-## 4. Methods — screening, retrieval, appraisal
+### 4.2 Screening
 
 Screening design: {{SCREENING_MODE}} <!-- single | dual -->
 Dual screening: {{DUAL_SCREEN_NOTE}} <!-- disagreement rate = adjudications / dual-screened; "n/a" for single-screen profiles -->
+
+### 4.3 Retrieval
+
 Acquisition ladder rungs used this run: {{LADDER_RUNGS_USED}}
-Appraisal tools by design: {{APPRAISAL_TOOLS_BY_DESIGN}} <!-- e.g. RCT: RoB2, cohort: ROBINS-I, "none": narrative/guideline -->
+
+### 4.4 Extraction
+
 Models used per stage: {{MODELS_PER_STAGE}}
+
+### 4.5 Appraisal
+
+Appraisal tools by design: {{APPRAISAL_TOOLS_BY_DESIGN}} <!-- e.g. RCT: RoB2, cohort: ROBINS-I, "none": narrative/guideline -->
 
 ## 5. PRISMA flow and screening log
 
@@ -135,14 +167,15 @@ preprints {{INCLUDED_PREPRINTS}}, retracted/EoC flagged {{RETRACTED_FLAGGED}}, q
 
 <!-- Insert templates/evidence-table.md rendered for this run, or link to it if long. -->
 
-## 7. Risk of bias / quality
+## 7. Risk of bias and appraisal
 
-| Study | Tool | Domain-level judgement | Overall |
-|---|---|---|---|
-| {{ROB_STUDY}} | {{ROB_TOOL}} | {{ROB_DOMAINS}} | {{ROB_OVERALL}} |
+| Study | Design | Tool | Key domain concerns | Overall judgement | Evidence basis |
+|---|---|---|---|---|---|
+| {{ROB_STUDY}} | {{ROB_DESIGN}} | {{ROB_TOOL}} | {{ROB_DOMAINS}} | {{ROB_OVERALL}} | {{ROB_EVIDENCE_BASIS}} |
 
-<!-- `tool: "none"` records (narrative/guideline sources) listed with the reason. If this profile
-     does not run formal appraisal (e.g. `fast`), state that plainly instead of a table:
+<!-- `tool: "none"` records (narrative/guideline sources) listed with the reason no in-scope tool
+     applies — do not force them into a pseudo-domain or quality grade. If this profile does not
+     run formal appraisal (e.g. `fast`), state that plainly instead of a table:
      "Not run at this profile (`fast`): no RoB2/ROBINS-I/NOS appraisal was performed; screening
      and eligibility judgments were made directly against protocol.md criteria. See §13." -->
 
@@ -165,6 +198,25 @@ Direction: {{OUTCOME_1_DIRECTION_TALLY}} <!-- e.g. "4 favor intervention, 2 null
 ### 8.2 {{OUTCOME_2_NAME}}
 
 {{OUTCOME_2_NARRATIVE}}
+
+### 8.x Harms and adverse events
+
+{{HARMS_NARRATIVE}}
+
+<!-- Required: either a harms/adverse-events subsection with the same evidence discipline as any
+     other outcome, or a stated reason harms were not assessed, e.g. "Harms were not assessed
+     because no included study reported adverse events and the protocol did not pre-specify a
+     harms outcome." Never silently omit harms. -->
+
+### 8.y Funding and COI synthesis
+
+| Funding / COI pattern | Studies affected | Possible interpretive impact |
+|---|---|---|
+| {{FUNDING_PATTERN}} | {{FUNDING_STUDIES}} | {{FUNDING_IMPACT}} |
+
+<!-- Summarize funding source and COI patterns across included studies (per-study detail lives in
+     §6's evidence table). Feed this into the publication-bias column of §9 and into §10/§13
+     where a funding pattern plausibly explains a conflict or limitation. -->
 
 ## 9. Certainty of evidence (GRADE)
 
@@ -199,39 +251,7 @@ Reasons for downgrading/upgrading: {{GRADE_FOOTNOTES}}
 |---|---|---|
 | {{GAP}} | {{GAP_WHY}} | {{GAP_STUDY_NEEDED}} |
 
----
-
-## 12. New insights & hypotheses — NOT EVIDENCE
-
-> **Hard wall.** Everything below this line is generated inference, not a finding of the
-> literature. Nothing here is supported by the studies reviewed above; it is what the reviewer
-> thinks *might* be true and how it could be tested. Do not cite this section as evidence, do
-> not quote it as a conclusion, and do not carry any sentence from it back into sections 1-11.
-
-<!-- Enforced by verifier check C-HYPOTHESIS-WALL. Every item MUST be phrased conditionally
-     ("may", "could", "if X then Y would be expected") and MUST carry a testable prediction.
-     A hypothesis phrased as an established finding is a verifier failure. Footnotes here point
-     to the evidence that PROMPTED the idea; they never make the idea itself evidenced. -->
-
-### H1 — {{HYPOTHESIS_1_TITLE}}
-
-- **Idea (speculative):** {{HYPOTHESIS_1_STATEMENT}}
-- **What prompted it:** {{HYPOTHESIS_1_TRIGGER}}[^{{KEY_C}}]
-- **Testable prediction:** {{HYPOTHESIS_1_PREDICTION}}
-- **How to test it:** {{HYPOTHESIS_1_TEST}}
-- **What would falsify it:** {{HYPOTHESIS_1_FALSIFIER}}
-
-### H2 — {{HYPOTHESIS_2_TITLE}}
-
-- **Idea (speculative):** {{HYPOTHESIS_2_STATEMENT}}
-- **What prompted it:** {{HYPOTHESIS_2_TRIGGER}}
-- **Testable prediction:** {{HYPOTHESIS_2_PREDICTION}}
-- **How to test it:** {{HYPOTHESIS_2_TEST}}
-- **What would falsify it:** {{HYPOTHESIS_2_FALSIFIER}}
-
----
-
-## 13. Limitations of this review
+## 12. Limitations of this review
 
 <!-- Stated plainly. This section is what separates an honest review from a confident one. -->
 
@@ -248,6 +268,50 @@ Reasons for downgrading/upgrading: {{GRADE_FOOTNOTES}}
   which the search returned nothing; state that this is absence of evidence, not evidence of
   absence -->
 - **Other known limitations:** {{REVIEW_LIMITATIONS}}
+
+---
+
+## 13. New insights & hypotheses — NOT EVIDENCE
+
+> **Hard wall.** Everything below this line is generated inference, not a finding of the
+> literature. Nothing here is supported by the studies reviewed above; it is what the reviewer
+> thinks *might* be true and how it could be tested. Do not cite this section as evidence, do
+> not quote it as a conclusion, and do not carry any sentence from it back into sections 1-11.
+
+<!-- Enforced by verifier check C-HYPOTHESIS-WALL. Every item MUST be phrased conditionally
+     ("may", "could", "if X then Y would be expected") and MUST carry a testable prediction.
+     A hypothesis phrased as an established finding is a verifier failure. Footnotes here point
+     to the evidence that PROMPTED the idea; they never make the idea itself evidenced. -->
+
+### Opportunity map
+
+| Opportunity | Evidence trigger | Gap addressed | Potential study/analysis | Feasibility | Priority |
+|---|---|---|---|---|---|
+| {{OPPORTUNITY}} | {{OPPORTUNITY_TRIGGER}} | {{OPPORTUNITY_GAP}} | {{OPPORTUNITY_STUDY}} | {{OPPORTUNITY_FEASIBILITY}} | {{OPPORTUNITY_PRIORITY}} |
+
+### H1 — {{HYPOTHESIS_1_TITLE}}
+
+- **Idea (speculative):** {{HYPOTHESIS_1_STATEMENT}}
+- **What prompted it:** {{HYPOTHESIS_1_TRIGGER}}[^{{KEY_C}}]
+- **Mechanism or rationale:** {{HYPOTHESIS_1_MECHANISM}}
+- **Testable prediction:** {{HYPOTHESIS_1_PREDICTION}}
+- **Proposed analysis or study design:** {{HYPOTHESIS_1_TEST}}
+- **Minimum data needed:** {{HYPOTHESIS_1_DATA_NEEDED}}
+- **What would falsify it:** {{HYPOTHESIS_1_FALSIFIER}}
+- **Grant/paper angle:** {{HYPOTHESIS_1_ANGLE}}
+
+### H2 — {{HYPOTHESIS_2_TITLE}}
+
+- **Idea (speculative):** {{HYPOTHESIS_2_STATEMENT}}
+- **What prompted it:** {{HYPOTHESIS_2_TRIGGER}}
+- **Mechanism or rationale:** {{HYPOTHESIS_2_MECHANISM}}
+- **Testable prediction:** {{HYPOTHESIS_2_PREDICTION}}
+- **Proposed analysis or study design:** {{HYPOTHESIS_2_TEST}}
+- **Minimum data needed:** {{HYPOTHESIS_2_DATA_NEEDED}}
+- **What would falsify it:** {{HYPOTHESIS_2_FALSIFIER}}
+- **Grant/paper angle:** {{HYPOTHESIS_2_ANGLE}}
+
+---
 
 ## 14. Unobtainable / quarantined evidence
 
@@ -285,5 +349,7 @@ Resume instructions: PDFs dropped into the run's `inbox/` are ingested on rerun;
 | Verification summary | {{VERIFICATION_SUMMARY}} <!-- link to outputs/verification.json -->
 | OKF promotion status | {{OKF_PROMOTION_STATUS}} |
 | Run slug | {{RUN_SLUG}} |
+| Artifacts | [`protocol.md`](../protocol.md) · [`evidence-table.md`](../evidence-table.md) · [`prisma.json`](../prisma.json) / [`prisma.md`](../prisma.md) · [`missing.md`](../missing.md) · [`verification.json`](../verification.json) · [`result.json`](../result.json) |
+| OKF bundle | {{OKF_BUNDLE_PATH}} |
 
 Searched {{SEARCH_DATE}}. Generated by deep-research; run `{{RUN_SLUG}}`.

@@ -32,13 +32,25 @@ execute:
 {{STATUS_NOTE}}
 :::
 
-# Question
-
-{{RESEARCH_QUESTION}}
+# Short answer and plain-language summary
 
 **Short answer.** {{BOTTOM_LINE}}
 
-# Protocol summary
+{{PLAIN_LANGUAGE_SUMMARY}}
+
+<!-- <=200 words. GRADE wordings only. Every sentence traceable to the synthesis-by-outcome section. -->
+
+# Evidence at a glance
+
+| Outcome | Studies / participants | Direction of effect | Best estimate / range | Certainty | Main limitation |
+|---|---|---|---|---|---|
+| {{GLANCE_OUTCOME}} | {{GLANCE_N_STUDIES}} / {{GLANCE_N_PARTICIPANTS}} | {{GLANCE_DIRECTION}} | {{GLANCE_ESTIMATE}} | {{GLANCE_CERTAINTY}} | {{GLANCE_LIMITATION}} |
+
+<!-- Summarizes only findings fully supported later in the document. -->
+
+# Question and protocol
+
+{{RESEARCH_QUESTION}}
 
 | | |
 |---|---|
@@ -51,7 +63,13 @@ execute:
 | Sources searched | {{SOURCES}} |
 | Screening | {{SCREENING_MODE}} |
 
-Deviations from protocol: {{DEVIATIONS_SUMMARY}}
+## Protocol deviations
+
+| Deviation | Reason | Affected records/outcomes | Likely impact |
+|---|---|---|---|
+| {{DEVIATION}} | {{DEVIATION_REASON}} | {{DEVIATION_AFFECTED}} | {{DEVIATION_IMPACT}} |
+
+<!-- "none" as the single row's Deviation cell if no protocol departures occurred. -->
 
 # Search and selection (PRISMA flow)
 
@@ -75,6 +93,15 @@ Dual screening: {{DUAL_SCREEN_NOTE}}
 <!-- Wide tables: keep to the page width or wrap the block in a landscape page.
      Study labels cite as [@key]; the References section is generated from refs.bib. -->
 
+# Risk of bias and appraisal
+
+| Study | Design | Tool | Key domain concerns | Overall judgement | Evidence basis |
+|---|---|---|---|---|---|
+| {{ROB_STUDY}} | {{ROB_DESIGN}} | {{ROB_TOOL}} | {{ROB_DOMAINS}} | {{ROB_OVERALL}} | {{ROB_EVIDENCE_BASIS}} |
+
+<!-- `tool: "none"` records listed with the reason no in-scope tool applies. If not run at this
+     profile, state that plainly instead of a table. -->
+
 # Synthesis by outcome
 
 ## {{OUTCOME_1_NAME}}
@@ -87,6 +114,21 @@ Direction: {{OUTCOME_1_DIRECTION_TALLY}}.
 ## {{OUTCOME_2_NAME}}
 
 {{OUTCOME_2_NARRATIVE}} [@{{KEY_B}}]
+
+## Harms and adverse events
+
+{{HARMS_NARRATIVE}}
+
+<!-- Required: a harms subsection with the same evidence discipline as any other outcome, or a
+     stated reason harms were not assessed. -->
+
+## Funding and COI synthesis
+
+| Funding / COI pattern | Studies affected | Possible interpretive impact |
+|---|---|---|
+| {{FUNDING_PATTERN}} | {{FUNDING_STUDIES}} | {{FUNDING_IMPACT}} |
+
+<!-- Feeds the publication-bias column below and any funding-explained conflict/limitation. -->
 
 # Agreement and conflict
 
@@ -106,6 +148,12 @@ Direction: {{OUTCOME_1_DIRECTION_TALLY}}.
 
 Reasons for downgrading: {{GRADE_FOOTNOTES}}
 
+# Evidence gaps
+
+| Gap | Why it matters | What would close it |
+|---|---|---|
+| {{GAP}} | {{GAP_WHY}} | {{GAP_STUDY_NEEDED}} |
+
 # What is missing, quarantined, or uncertain
 
 - **Full text not obtained ({{N_QUARANTINED}}):** {{QUARANTINED_LIST}}. Excluded from synthesis; possible bias direction: {{QUARANTINE_BIAS_DIRECTION}}.
@@ -114,12 +162,6 @@ Reasons for downgrading: {{GRADE_FOOTNOTES}}
 - **Preprints (not peer reviewed):** {{PREPRINT_LIST}}
 - **Searched but not found:** {{SEARCHED_NOT_FOUND}}
 - **Limitations of this review:** {{REVIEW_LIMITATIONS}}
-
-# Evidence gaps
-
-| Gap | Why it matters | What would close it |
-|---|---|---|
-| {{GAP}} | {{GAP_WHY}} | {{GAP_STUDY_NEEDED}} |
 
 {{< pagebreak >}}
 
@@ -136,21 +178,33 @@ conclusion, and do not carry any sentence from it into the preceding sections.
      to what PROMPTED the idea; they do not make the idea evidenced. Verifier check
      C-HYPOTHESIS-WALL fails the run if a hypothesis is phrased as an established finding. -->
 
+## Opportunity map
+
+| Opportunity | Evidence trigger | Gap addressed | Potential study/analysis | Feasibility | Priority |
+|---|---|---|---|---|---|
+| {{OPPORTUNITY}} | {{OPPORTUNITY_TRIGGER}} | {{OPPORTUNITY_GAP}} | {{OPPORTUNITY_STUDY}} | {{OPPORTUNITY_FEASIBILITY}} | {{OPPORTUNITY_PRIORITY}} |
+
 ## H1 — {{HYPOTHESIS_1_TITLE}}
 
 - **Idea (speculative):** {{HYPOTHESIS_1_STATEMENT}}
 - **What prompted it:** {{HYPOTHESIS_1_TRIGGER}} [@{{KEY_C}}]
+- **Mechanism or rationale:** {{HYPOTHESIS_1_MECHANISM}}
 - **Testable prediction:** {{HYPOTHESIS_1_PREDICTION}}
-- **How to test it:** {{HYPOTHESIS_1_TEST}}
+- **Proposed analysis or study design:** {{HYPOTHESIS_1_TEST}}
+- **Minimum data needed:** {{HYPOTHESIS_1_DATA_NEEDED}}
 - **What would falsify it:** {{HYPOTHESIS_1_FALSIFIER}}
+- **Grant/paper angle:** {{HYPOTHESIS_1_ANGLE}}
 
 ## H2 — {{HYPOTHESIS_2_TITLE}}
 
 - **Idea (speculative):** {{HYPOTHESIS_2_STATEMENT}}
 - **What prompted it:** {{HYPOTHESIS_2_TRIGGER}}
+- **Mechanism or rationale:** {{HYPOTHESIS_2_MECHANISM}}
 - **Testable prediction:** {{HYPOTHESIS_2_PREDICTION}}
-- **How to test it:** {{HYPOTHESIS_2_TEST}}
+- **Proposed analysis or study design:** {{HYPOTHESIS_2_TEST}}
+- **Minimum data needed:** {{HYPOTHESIS_2_DATA_NEEDED}}
 - **What would falsify it:** {{HYPOTHESIS_2_FALSIFIER}}
+- **Grant/paper angle:** {{HYPOTHESIS_2_ANGLE}}
 
 {{< pagebreak >}}
 
@@ -158,6 +212,22 @@ conclusion, and do not carry any sentence from it into the preceding sections.
 
 ::: {#refs}
 :::
+
+# Provenance {.unnumbered}
+
+| | |
+|---|---|
+| Profile | {{PROFILE}} |
+| Scope | {{SCOPE}} |
+| Rigor | {{RIGOR}} |
+| Budgets | {{BUDGETS}} |
+| Models per stage | {{MODELS_PER_STAGE}} |
+| Script versions | {{SCRIPT_VERSIONS}} |
+| Verification summary | {{VERIFICATION_SUMMARY}} |
+| OKF promotion status | {{OKF_PROMOTION_STATUS}} |
+| Run slug | {{RUN_SLUG}} |
+| Artifacts | protocol.md · evidence-table.md · prisma.json / prisma.md · missing.md · verification.json · result.json |
+| OKF bundle | {{OKF_BUNDLE_PATH}} |
 
 <!-- Literature identified via PubMed (https://pubmed.ncbi.nlm.nih.gov/); full text via
      PMC / Europe PMC / Unpaywall as recorded per study in corpus.jsonl.

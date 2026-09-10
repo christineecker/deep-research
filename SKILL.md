@@ -312,7 +312,7 @@ conflict *with an explanation of why*, certainty, gaps, and a hard-walled hypoth
 See `references/synthesis.md`.
 
 **Stage 7b — digest.** One subagent, opus, `references/prompts/digest.md`. Compresses the
-finished `outputs/report.md` (§1, §8, §9, §10, §11, §12, §15 only) into `outputs/digest.md`:
+finished `outputs/report.md` (§1, §8, §9, §10, §11, §13, §15 only) into `outputs/digest.md`:
 answer-first paragraph, a categorical outcomes table (outcome/direction/certainty/studies), and
 a `## Open Questions` section merging gaps and hypotheses — each with what would resolve it. No
 new research, no re-derived judgement, same GRADE wordings and hard-walled hypothesis

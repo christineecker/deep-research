@@ -33,13 +33,14 @@ rating, add a claim absent from the report, or soften/strengthen any GRADE wordi
   - §9 Certainty of evidence (GRADE table)
   - §10 Conflicts and inconsistencies
   - §11 Evidence gaps
-  - §12 New insights / hypotheses
+  - §13 New insights / hypotheses
   - §15 References (footnote definitions — copy verbatim, never renumber into new ids)
 - Task id: `{{TASK_ID}}` (`digest:slug:report`)
 - Output path: `outputs/digest.md`
 
-Do not read §2-§7, §13-§14, or §16. They are protocol, methods, and provenance detail a wiki
-reader does not need and you have no license to summarize further than the report already did.
+Do not read §2-§7, §12, §14, or §16. They are protocol, methods, limitations, and provenance
+detail a wiki reader does not need and you have no license to summarize further than the report
+already did.
 
 ## Step 1 — answer first
 
@@ -63,7 +64,7 @@ in §8, and do not merge two outcomes to shorten the table.
 `## Open Questions` heading, one bullet per item, each sourced from exactly one of:
 
 - an evidence gap from report §11 (`no study reported X` — observation, not explanation), or
-- a hypothesis from report §12, carried over **with its hedge and its test intact** — see the
+- a hypothesis from report §13, carried over **with its hedge and its test intact** — see the
   hard wall below.
 
 Each bullet ends with what would resolve it: a design, population, or comparison that would
@@ -83,7 +84,7 @@ report sentence belongs to, leave it out rather than guess.
 
 If report §0's title block carries a **PROVISIONAL** marker, or §7 records `tool: "none"` for
 more than a token number of studies, open the digest with the same marker and a one-line reason
-copied from §0/§13. Never omit a provisional marker present in the source report.
+copied from §0/§12. Never omit a provisional marker present in the source report.
 
 ## Output
 

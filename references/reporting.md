@@ -146,29 +146,33 @@ Standard markdown links are the graph layer; Obsidian wikilinks are additive onl
 
 ## 3. Report skeleton
 
-Each section names its data source. `scripts/verify.py` checks section presence.
+Each section names its data source. `scripts/verify.py` checks section presence by heading-regex
+match (`REQUIRED_SECTIONS`), not by number or exact order — renumbering or adding subsections is
+safe as long as the required headings still match their pattern.
 
 | § | Section | Data source | Notes |
 |---|---|---|---|
 | 0 | Title block | `config.json` | question, profile, scope, rigor, run slug, date of last search, **PROVISIONAL** marker when applicable |
-| 1 | Plain-language summary | synthesis | <=200 words; GRADE wordings only; every sentence traceable to §8 |
-| 2 | Question and protocol | `protocol.md` | PICO/PECO, inclusion/exclusion criteria with ids (`I1`, `E2`, …), pre-declared timepoint bands, moderators, MIDs |
-| 3 | Methods — search | `workspace/search/*.json`, `config.json` `connectors` | every `query_string`, `translated_query`, `source`, `count`, `executed_at`, verbatim and reproducible. Name any source the profile assumes but the session could not reach (an unauthorized connector), and say what it means for coverage — a `max` run without Scholar Gateway / Consensus searched a `wide` set and must say so |
-| 4 | Methods — screening, retrieval, appraisal | `taskboard.jsonl`, `config.json` | dual-screening design, acquisition-ladder rungs used, appraisal tools by design, models per stage |
-| 5 | PRISMA flow + screening log | `corpus.py prisma` | §1 counters, exclusion reasons by criterion id, dual-screening agreement |
+| 1 | Short answer and plain-language summary | synthesis | short answer first, then the <=200 word summary; GRADE wordings only; every sentence traceable to §8 |
+| 2 | Evidence at a glance | synthesis + appraisal `grade` | one row per outcome: studies/participants, direction, best estimate, certainty, main limitation — summarizes only what §8/§9 fully support; never a number not stated there |
+| 3 | Question and protocol | `protocol.md` | PICO/PECO, inclusion/exclusion criteria with ids (`I1`, `E2`, …), pre-declared timepoint bands, moderators, MIDs, protocol deviation table (deviation, reason, affected records/outcomes, likely impact) |
+| 4 | Methods | `workspace/search/*.json`, `taskboard.jsonl`, `config.json` | 4.1 search (every `query_string`, `translated_query`, `source`, `count`, `executed_at`, verbatim and reproducible; unauthorized/unreachable connectors and what that means for coverage), 4.2 screening (dual-screening design), 4.3 retrieval (acquisition-ladder rungs used), 4.4 extraction (models per stage), 4.5 appraisal (tools by design; GRADE itself is reported in §9) |
+| 5 | PRISMA flow + screening log | `corpus.py prisma` | §1 (reporting.md) counters, exclusion reasons by criterion id, dual-screening agreement |
 | 6 | Characteristics of included studies | `corpus.jsonl` + `workspace/extractions/*.json` | evidence table: study, design, N, population, I/C, outcomes, funding/COI, evidence basis, source tier |
-| 7 | Risk of bias / quality | `workspace/appraisals/*.json` | per study, tool named, domain-level table; `tool: "none"` records listed with the reason |
-| 8 | Results by outcome | synthesis (`references/synthesis.md` §2) | one subsection per synthesis unit: effect-direction table, prose reading, conflicts with attribution, heterogeneity |
+| 7 | Risk of bias and appraisal | `workspace/appraisals/*.json` | per study, design, tool named, key domain concerns, overall judgement, evidence basis; `tool: "none"` records listed with the reason no in-scope tool applies |
+| 8 | Results by outcome | synthesis (`references/synthesis.md` §2) | one subsection per synthesis unit: effect-direction table, prose reading, conflicts with attribution, heterogeneity; required harms/adverse-events subsection (or a stated reason harms were not assessed); funding/COI synthesis subsection feeding §9's publication-bias column |
 | 9 | Certainty of evidence | appraisal `grade` + synthesis | GRADE summary-of-findings-style table per outcome, with the reason for every downgrade/upgrade |
 | 10 | Conflicts and inconsistencies | synthesis §5 | each conflict, its attribution (C1–C9), or an explicit "unexplained" |
 | 11 | Evidence gaps | corpus + synthesis | "no study reported X" statements only; observations, not explanations |
-| 12 | **New insights / hypotheses** | synthesis §7 | hard-walled section; every item labelled and paired with what would test it |
-| 13 | Limitations of this review | `engine.log`, `verification.json`, `missing.md` | quarantine, abstract-only reliance, scope tier, language/database restrictions, no pooling |
+| 12 | Limitations of this review | `engine.log`, `verification.json`, `missing.md` | quarantine, abstract-only reliance, scope tier, language/database restrictions, no pooling |
+| 13 | **New insights / hypotheses** | synthesis §7 | hard-walled section, placed after limitations; opportunity map table, then every hypothesis item labelled and paired with what would test it |
 | 14 | Unobtainable / quarantined evidence | `missing.md` | PMID, DOI, PMCID, title, journal, links, rung reached, resume instructions |
-| 15 | References | footnote definitions | rendering of the §2 footnotes; never the sole citation mechanism |
-| 16 | Provenance | `config.json`, `verification.json` | profile, budgets, models per stage, script versions, verification summary, OKF promotion status |
+| 15 | References | footnote definitions | rendering of the in-body footnotes (format defined in "2. Citation format" above); never the sole citation mechanism |
+| 16 | Provenance | `config.json`, `verification.json` | profile, budgets, models per stage, script versions, verification summary, OKF promotion status, direct links to protocol.md, evidence-table.md, prisma.json/md, missing.md, verification.json, result.json, and the OKF bundle path |
 
 `templates/report.md` carries this skeleton; `templates/evidence-table.md` carries §6.
+`templates/report.qmd` mirrors the same section set and order (Quarto heading levels instead of
+numbered `##`/`###`).
 
 ---
 
@@ -219,7 +223,7 @@ Flagged at screening (`SKILL.md` "Invariants"; `screening verdict.retraction_fla
 
 | `retraction_status` | Handling |
 |---|---|
-| `retracted` | Excluded from synthesis. Listed in §13 with the retraction notice. If cited at all, the citation carries **RETRACTED** in the sentence and in the footnote |
+| `retracted` | Excluded from synthesis. Listed in §12 with the retraction notice. If cited at all, the citation carries **RETRACTED** in the sentence and in the footnote |
 | `expression_of_concern` | May be included; carries **Expression of Concern** at every point of use; contributes to GRADE risk of bias |
 | `corrected` | Included; the report states that a correction exists and which version was extracted |
 | `none` | Normal handling |
@@ -250,7 +254,7 @@ report provisional and blocks OKF promotion. The report is still delivered.
 | `C-SEARCH-LOG` | Every executed query has a `search result record` with `hit_count_logged == true`, and all appear verbatim in §3 |
 | `C-RETRACTION` | Every record with `retraction_status != "none"` is flagged at every point of use; retracted records are excluded from synthesis |
 | `C-FULLTEXT` | `missing_fulltext` matches `missing.md`; every entry of `abstract_only_claims` has `labelled == true` |
-| `C-HYPOTHESIS-WALL` | No sentence in §12 uses evidence-side verb forms; no sentence outside §12 asserts an unlabelled hypothesis; `unsupported_claims` is empty |
+| `C-HYPOTHESIS-WALL` | No sentence in §13 uses evidence-side verb forms; no sentence outside §13 asserts an unlabelled hypothesis; `unsupported_claims` is empty |
 | `C-OKF` | Bundle concepts validate against `references/okf-bundle.md`; PubMed metadata preserved; `sources[]` present. `skipped` when no wiki promotion was requested |
 
 Reporting-stage checks defined here, added to schema §9's open `check_id` list:
@@ -270,7 +274,7 @@ Reporting-stage checks defined here, added to schema §9's open `check_id` list:
 2. verify.py          -> outputs/verification.json
 3. any fail?          -> mark PROVISIONAL, block OKF promotion, keep report.md,
                          write outputs/okf-validation.md if the OKF check failed
-4. any warn?          -> the warning is stated in section 13, not buried
+4. any warn?          -> the warning is stated in section 12, not buried
 5. deliver report.md; render / HTML / OKF promotion only after 3-4
 ```
 
