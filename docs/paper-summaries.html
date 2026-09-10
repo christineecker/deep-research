@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Paper summaries - deep-research</title>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="brand" href="index.html"><strong>deep-research</strong><span>Skill documentation</span></a>
+      <nav class="nav" aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="quickstart.html">Quickstart</a>
+        <a href="pipeline.html">Full pipeline</a>
+        <a href="paper-summaries.html" aria-current="page">Paper summaries</a>
+        <a href="architecture.html">Repo architecture</a>
+        <a href="appraisal.html">Appraisal frameworks</a>
+        <a href="commands.html">Command reference</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <p class="eyebrow">Lightweight profiles</p>
+        <h1>Summarize one paper or a selected set without running a full review.</h1>
+        <p class="lead">The summary profiles reuse the canonical registry, source store, extraction records, appraisals, and verifier.</p>
+      </section>
+
+      <h2>Single-Paper Summary</h2>
+      <pre><code>python3 scripts/paper.py summarize --repo &lt;repo&gt; --pmid &lt;pmid&gt;
+python3 scripts/paper.py summarize --repo &lt;repo&gt; --doi &lt;doi&gt;
+python3 scripts/paper.py summarize --repo &lt;repo&gt; --pmcid &lt;pmcid&gt;
+python3 scripts/paper.py summarize --repo &lt;repo&gt; --pdf paper.pdf
+python3 scripts/paper.py summarize --repo &lt;repo&gt; --evidence-id pmid:12345678</code></pre>
+      <p>Single-paper summaries include appraisal by default when full text is available and a supported framework applies. Use <code>--no-appraise</code> only for a deliberate extraction-only summary.</p>
+
+      <h2>Selected-Paper Summary Set</h2>
+      <pre><code>python3 scripts/paper.py summarize-set --repo &lt;repo&gt; --pmid 123 --pmid 456
+python3 scripts/paper.py summarize-set --repo &lt;repo&gt; --ids-file papers.txt
+python3 scripts/paper.py summarize-set --repo &lt;repo&gt; --bib refs.bib
+python3 scripts/paper.py summarize-set --repo &lt;repo&gt; --folder papers/ --recursive
+python3 scripts/paper.py summarize-set --repo &lt;repo&gt; --question "..."
+python3 scripts/paper.py summarize-set --repo &lt;repo&gt; --topic "..."</code></pre>
+      <p>Set mode produces one verified paper summary per included paper, plus an optional bounded overview. Topic and question mode perform candidate discovery, not systematic retrieval.</p>
+
+      <h2>Run Status</h2>
+      <table>
+        <thead><tr><th>Status</th><th>Agent action</th></tr></thead>
+        <tbody>
+          <tr><td><code>pending_retrieval</code></td><td>Acquire source material or ask the user for missing files.</td></tr>
+          <tr><td><code>pending_extraction</code></td><td>Dispatch the extraction prompt for the target paper.</td></tr>
+          <tr><td><code>pending_appraisal</code></td><td>Dispatch the appraisal prompt for the verified extraction.</td></tr>
+          <tr><td><code>pending_summary</code></td><td>Dispatch the paper-summary prompt or assemble summary JSON.</td></tr>
+          <tr><td><code>completed</code></td><td>Read the rendered Markdown/HTML outputs.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Output Sections</h2>
+      <p>A single-paper summary includes citation, bottom line, reason for summary, design and evidence basis, population and setting, intervention/exposure/test/model, comparator, outcomes, appraisal, limitations, practical takeaways, what not to conclude, and provenance.</p>
+
+      <div class="callout">
+        Set overviews may compare descriptive attributes across included papers. They must not claim pooled effects, certainty of a body of evidence, or consensus unless a full review produced those artifacts.
+      </div>
+
+      <footer class="footer">Source manual: <code>references/single-paper-summary.md</code>.</footer>
+    </main>
+  </div>
+</body>
+</html>

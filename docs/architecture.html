@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Repo architecture - deep-research</title>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="brand" href="index.html"><strong>deep-research</strong><span>Skill documentation</span></a>
+      <nav class="nav" aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="quickstart.html">Quickstart</a>
+        <a href="pipeline.html">Full pipeline</a>
+        <a href="paper-summaries.html">Paper summaries</a>
+        <a href="architecture.html" aria-current="page">Repo architecture</a>
+        <a href="appraisal.html">Appraisal frameworks</a>
+        <a href="commands.html">Command reference</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <p class="eyebrow">Standalone mode</p>
+        <h1>The repo is the source of truth for papers, sources, extractions, appraisals, projects, and exports.</h1>
+        <p class="lead">It does not require wiki-manager. Wiki import and export are compatibility bridges only.</p>
+      </section>
+
+      <h2>Layout</h2>
+      <pre><code>&lt;repo&gt;/
+  data/
+    sources/
+      assets/            hash-named PDFs
+      sources/           evidence-kernel snapshots
+      events.jsonl       retrieval log
+    papers/
+      registry.jsonl     canonical paper registry
+      pool.jsonl         regenerated view, not hand-edited
+      extractions/       canonical Stage 5 records
+      appraisals/
+        &lt;project&gt;/       project-scoped appraisal records
+  projects/&lt;slug&gt;/       protocol, synthesis, manuscript, refs, figures, tables
+  runs/&lt;slug&gt;/           run-local config, corpus, workspace, outputs
+  templates/
+  exports/</code></pre>
+
+      <h2>Where Data Lives</h2>
+      <table>
+        <thead><tr><th>Artifact</th><th>Location</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Paper metadata</td><td><code>data/papers/registry.jsonl</code></td><td>Canonical one-record-per-paper registry.</td></tr>
+          <tr><td>PDFs</td><td><code>data/sources/assets/</code></td><td>Content-addressed by sha256.</td></tr>
+          <tr><td>Source snapshots</td><td><code>data/sources/snapshots/</code></td><td>Write-once text snapshots used by spans; legacy reads may fall back to <code>data/sources/sources/</code>.</td></tr>
+          <tr><td>Extractions</td><td><code>data/papers/extractions/</code></td><td>Reusable across runs and projects.</td></tr>
+          <tr><td>Appraisals</td><td><code>data/papers/appraisals/&lt;project&gt;/</code></td><td>Scoped to the project question.</td></tr>
+          <tr><td>Run outputs</td><td><code>runs/&lt;slug&gt;/outputs/</code></td><td>Reports, summaries, verification output.</td></tr>
+          <tr><td>Manuscripts</td><td><code>projects/&lt;slug&gt;/</code></td><td>Project-owned writing and export inputs.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Reuse Rule</h2>
+      <p>New runs should seed from the registry, reuse verified extractions when available, and promote newly verified extractions back to the canonical store. Appraisals are reused only for the same project because risk-of-bias and certainty depend on the review question.</p>
+
+      <footer class="footer">Source manual: <code>references/pool-architecture.md</code>.</footer>
+    </main>
+  </div>
+</body>
+</html>

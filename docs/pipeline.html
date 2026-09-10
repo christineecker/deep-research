@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Full pipeline - deep-research</title>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="brand" href="index.html"><strong>deep-research</strong><span>Skill documentation</span></a>
+      <nav class="nav" aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="quickstart.html">Quickstart</a>
+        <a href="pipeline.html" aria-current="page">Full pipeline</a>
+        <a href="paper-summaries.html">Paper summaries</a>
+        <a href="architecture.html">Repo architecture</a>
+        <a href="appraisal.html">Appraisal frameworks</a>
+        <a href="commands.html">Command reference</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <p class="eyebrow">Stage 0-8</p>
+        <h1>The full pipeline is for literature reviews and evidence synthesis.</h1>
+        <p class="lead">Profiles change breadth and gates, but every full run follows the same audited shape.</p>
+      </section>
+
+      <h2>Stages</h2>
+      <table>
+        <thead><tr><th>Stage</th><th>Name</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td>0</td><td>Configure</td><td>Question, profile, target root, filters, outputs, connector preflight.</td></tr>
+          <tr><td>1</td><td>Protocol</td><td>Question framework and numbered inclusion/exclusion criteria.</td></tr>
+          <tr><td>2</td><td>Search</td><td>Pool seeding plus orthogonal PubMed queries.</td></tr>
+          <tr><td>3</td><td>Screen</td><td>Dedupe and title/abstract triage.</td></tr>
+          <tr><td>4</td><td>Retrieve</td><td>Open-access ladder, full-text acquisition, quarantine for missing text.</td></tr>
+          <tr><td>5</td><td>Extract</td><td>One structured extraction per paper with spans.</td></tr>
+          <tr><td>6</td><td>Appraise</td><td>Design-specific appraisal and outcome-level certainty inputs.</td></tr>
+          <tr><td>7</td><td>Synthesize</td><td>Effect-direction synthesis, conflicts, gaps, hypotheses.</td></tr>
+          <tr><td>7b</td><td>Digest</td><td>Short digest of the completed report.</td></tr>
+          <tr><td>8</td><td>Publish</td><td>Assemble, verify, render, and promote or export.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Profiles</h2>
+      <table>
+        <thead><tr><th>Profile</th><th>Scope</th><th>Typical use</th></tr></thead>
+        <tbody>
+          <tr><td><code>fast</code></td><td>Narrow</td><td>Quick field read, smaller article cap.</td></tr>
+          <tr><td><code>standard</code></td><td>Medium</td><td>Default review path with protocol and strategy gates.</td></tr>
+          <tr><td><code>systematic</code></td><td>Wide</td><td>Defensible review with dual screening and PRISMA log.</td></tr>
+          <tr><td><code>max</code></td><td>Maximum</td><td>Broadest sweep, optional grey literature and extra connectors.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Stop After Extraction</h2>
+      <p>Set <code>pipeline.stop_after_stage: 5</code> to build the extracted-paper pool without appraisal, synthesis, or report generation. Later runs can reuse those canonical extractions.</p>
+
+      <h2>Quarantine</h2>
+      <p>When full text cannot be acquired, the run records missing papers and asks the user to supply PDFs in the run inbox. Abstract-only records remain labeled as such and cannot receive full-text appraisal.</p>
+
+      <footer class="footer">Source manuals: <code>SKILL.md</code>, <code>references/acquisition.md</code>, <code>references/reporting.md</code>.</footer>
+    </main>
+  </div>
+</body>
+</html>

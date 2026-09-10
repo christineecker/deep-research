@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>deep-research documentation</title>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="brand" href="index.html"><strong>deep-research</strong><span>Skill documentation</span></a>
+      <nav class="nav" aria-label="Documentation">
+        <a href="index.html" aria-current="page">Overview</a>
+        <a href="quickstart.html">Quickstart</a>
+        <a href="pipeline.html">Full pipeline</a>
+        <a href="paper-summaries.html">Paper summaries</a>
+        <a href="architecture.html">Repo architecture</a>
+        <a href="appraisal.html">Appraisal frameworks</a>
+        <a href="commands.html">Command reference</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <p class="eyebrow">PubMed-centred research workflow</p>
+        <h1>deep-research turns scientific questions and papers into verified, reusable evidence artifacts.</h1>
+        <p class="lead">Use it for full literature reviews, manuscript-oriented evidence projects, and lightweight one-paper or selected-paper summaries backed by extraction spans and appraisal records.</p>
+      </section>
+
+      <section class="grid" aria-label="Primary workflows">
+        <article class="card">
+          <span class="pill">Full review</span>
+          <h3>Question to report</h3>
+          <p>Configure a PICO/PECO-style question, search PubMed, screen records, retrieve full text, extract, appraise, synthesize, verify, and render the report.</p>
+          <a href="pipeline.html">View pipeline</a>
+        </article>
+        <article class="card">
+          <span class="pill">Manuscript repo</span>
+          <h3>Standalone storage</h3>
+          <p>Create a repo with canonical paper metadata, source snapshots, reusable extractions, project-scoped appraisals, manuscript files, and exports.</p>
+          <a href="architecture.html">View architecture</a>
+        </article>
+        <article class="card">
+          <span class="pill">Lightweight profile</span>
+          <h3>Paper summaries</h3>
+          <p>Summarize one paper or a user-specified set by reusing the same registry, extraction, appraisal, and verifier machinery without running a full review.</p>
+          <a href="paper-summaries.html">View summaries</a>
+        </article>
+      </section>
+
+      <h2>What It Is For</h2>
+      <table>
+        <thead><tr><th>Need</th><th>Use</th><th>Output</th></tr></thead>
+        <tbody>
+          <tr><td>Literature review or evidence synthesis</td><td>Full Stage 0-8 pipeline</td><td>Verified report, evidence table, PRISMA flow, optional HTML/PDF/docx</td></tr>
+          <tr><td>One article summary with appraisal</td><td><code>scripts/paper.py summarize</code></td><td>Single-paper summary plus appraisal and verification</td></tr>
+          <tr><td>Several specified papers</td><td><code>scripts/paper.py summarize-set</code></td><td>One summary per paper plus optional bounded overview</td></tr>
+          <tr><td>Manuscript project without wiki-manager</td><td><code>scripts/research.py init</code> and <code>project create</code></td><td>Standalone project, reusable paper pool, exports</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        <strong>Boundary:</strong> selected-paper summaries are not systematic reviews. They may orient the reader across a bounded set, but they do not claim comprehensive retrieval, pooled effects, or body-of-evidence certainty.
+      </div>
+
+      <h2>Core Evidence Rule</h2>
+      <p>Scientific claims should flow through structured records: source snapshots, extraction spans, appraisal domains, summary records, then verification. The tool avoids direct free-form summarization from PDFs when a structured extraction should exist.</p>
+
+      <footer class="footer">Generated documentation for the local deep-research skill.</footer>
+    </main>
+  </div>
+</body>
+</html>

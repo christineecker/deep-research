@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Command reference - deep-research</title>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="brand" href="index.html"><strong>deep-research</strong><span>Skill documentation</span></a>
+      <nav class="nav" aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="quickstart.html">Quickstart</a>
+        <a href="pipeline.html">Full pipeline</a>
+        <a href="paper-summaries.html">Paper summaries</a>
+        <a href="architecture.html">Repo architecture</a>
+        <a href="appraisal.html">Appraisal frameworks</a>
+        <a href="commands.html" aria-current="page">Command reference</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <p class="eyebrow">Scripts</p>
+        <h1>Commands do deterministic state work; agents do extraction, appraisal, summary, and synthesis reasoning.</h1>
+        <p class="lead">Most commands emit JSON. Agent harnesses should read status fields and resume by rerunning the same command after required files are written.</p>
+      </section>
+
+      <h2>Repo And Project</h2>
+      <pre><code>python3 scripts/research.py init &lt;path&gt;
+python3 scripts/research.py init &lt;path&gt; --from-wiki &lt;wiki-root&gt;
+python3 scripts/research.py project create &lt;slug&gt; --repo &lt;path&gt;
+python3 scripts/research.py project list --repo &lt;path&gt;
+python3 scripts/research.py export wiki --repo &lt;path&gt; --wiki &lt;wiki-root&gt; --project &lt;slug&gt;</code></pre>
+
+      <h2>Registry Intake</h2>
+      <pre><code>python3 scripts/registry.py add --repo &lt;path&gt; --pmid &lt;pmid&gt;
+python3 scripts/registry.py add --repo &lt;path&gt; --doi &lt;doi&gt;
+python3 scripts/registry.py add-pdf --repo &lt;path&gt; --file &lt;pdf&gt;
+python3 scripts/registry.py import-bib --repo &lt;path&gt; --file refs.bib
+python3 scripts/registry.py import-folder --repo &lt;path&gt; --dir papers/ --recursive
+python3 scripts/registry.py lookup --repo &lt;path&gt; --evidence-id pmid:12345678
+python3 scripts/registry.py list --repo &lt;path&gt;
+python3 scripts/registry.py pool --repo &lt;path&gt;</code></pre>
+
+      <h2>Pool Reuse</h2>
+      <pre><code>python3 scripts/pool.py seed --run-dir &lt;run&gt; --repo &lt;path&gt; --query "..."
+python3 scripts/pool.py lookup --repo &lt;path&gt; --pmid &lt;pmid&gt; --project &lt;slug&gt;
+python3 scripts/pool.py reuse --run-dir &lt;run&gt; --repo &lt;path&gt; --pmid &lt;pmid&gt; --project &lt;slug&gt;
+python3 scripts/registry.py promote --repo &lt;path&gt; --run-dir &lt;run&gt;
+python3 scripts/registry.py appraise-promote --repo &lt;path&gt; --run-dir &lt;run&gt; --project &lt;slug&gt;</code></pre>
+
+      <h2>Paper Summaries</h2>
+      <pre><code>python3 scripts/paper.py summarize --repo &lt;path&gt; --pmid &lt;pmid&gt; --project &lt;slug&gt; --format both
+python3 scripts/paper.py summarize --repo &lt;path&gt; --pdf paper.pdf --project &lt;slug&gt;
+python3 scripts/paper.py summarize-set --repo &lt;path&gt; --pmid 123 --pmid 456 --overview
+python3 scripts/paper.py summarize-set --repo &lt;path&gt; --topic "..." --limit 10 --select-only</code></pre>
+
+      <h2>Verification And Rendering</h2>
+      <pre><code>python3 scripts/verify.py run --run-dir &lt;run&gt; --report &lt;run&gt;/outputs/report.md
+python3 scripts/verify.py single-paper-summary --summary &lt;run&gt;/workspace/summaries/pmid-123.json --run-dir &lt;run&gt;
+python3 scripts/verify.py paper-summary-set --summary-set &lt;run&gt;/workspace/summary-set.json --run-dir &lt;run&gt;
+python3 scripts/html_report.py build --run-dir &lt;run&gt; --out &lt;run&gt;/outputs/report.html
+python3 scripts/render.py all --run-dir &lt;run&gt; --formats pdf,docx</code></pre>
+
+      <footer class="footer">Run <code>python3 scripts/&lt;name&gt;.py --help</code> for exact parser options.</footer>
+    </main>
+  </div>
+</body>
+</html>

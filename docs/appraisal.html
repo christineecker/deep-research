@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Appraisal frameworks - deep-research</title>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="brand" href="index.html"><strong>deep-research</strong><span>Skill documentation</span></a>
+      <nav class="nav" aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="quickstart.html">Quickstart</a>
+        <a href="pipeline.html">Full pipeline</a>
+        <a href="paper-summaries.html">Paper summaries</a>
+        <a href="architecture.html">Repo architecture</a>
+        <a href="appraisal.html" aria-current="page">Appraisal frameworks</a>
+        <a href="commands.html">Command reference</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <p class="eyebrow">Critical appraisal</p>
+        <h1>Appraisal is design-specific and span-backed.</h1>
+        <p class="lead">The tool selects a framework based on study design and records domain judgements with source support.</p>
+      </section>
+
+      <h2>Framework Routing</h2>
+      <table>
+        <thead><tr><th>Design</th><th>Framework</th><th>Important boundary</th></tr></thead>
+        <tbody>
+          <tr><td>Randomized trial</td><td>RoB2</td><td>Result-specific risk of bias.</td></tr>
+          <tr><td>Non-randomized intervention study</td><td>ROBINS-I</td><td>Effect-of-interest must be named.</td></tr>
+          <tr><td>Cohort or case-control</td><td>Newcastle-Ottawa Scale</td><td>Report star count, not a generic quality label.</td></tr>
+          <tr><td>Systematic review</td><td>AMSTAR-2</td><td>Review appraisal, not primary-study appraisal.</td></tr>
+          <tr><td>Diagnostic accuracy</td><td>QUADAS-2</td><td>Per index test/reference standard; separates applicability.</td></tr>
+          <tr><td>Prediction model</td><td>PROBAST</td><td>Per model and development/validation target.</td></tr>
+          <tr><td>Qualitative study</td><td>CASP qualitative</td><td>Report checklist count, not risk of bias.</td></tr>
+          <tr><td>Prevalence estimate</td><td>JBI prevalence</td><td>Report checklist count.</td></tr>
+          <tr><td>Cross-sectional association</td><td>JBI analytical cross-sectional</td><td>Report checklist count.</td></tr>
+          <tr><td>No suitable tool or abstract-only</td><td><code>tool: "none"</code></td><td>Record why appraisal was not performed.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Single-Paper Summaries</h2>
+      <p>For one-paper summaries, appraisal is part of the default path. If full text is missing, the design is unsupported, or the user explicitly passes <code>--no-appraise</code>, the summary must state why appraisal was skipped.</p>
+
+      <h2>Project Scope</h2>
+      <p>Appraisals live under <code>data/papers/appraisals/&lt;project&gt;/</code>. The same paper may have different appraisal targets or certainty implications in different manuscript projects.</p>
+
+      <footer class="footer">Source manuals: <code>references/appraisal.md</code> and <code>references/schema/08-appraisal.md</code>.</footer>
+    </main>
+  </div>
+</body>
+</html>

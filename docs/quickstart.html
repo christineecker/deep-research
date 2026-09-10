@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quickstart - deep-research</title>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="brand" href="index.html"><strong>deep-research</strong><span>Skill documentation</span></a>
+      <nav class="nav" aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="quickstart.html" aria-current="page">Quickstart</a>
+        <a href="pipeline.html">Full pipeline</a>
+        <a href="paper-summaries.html">Paper summaries</a>
+        <a href="architecture.html">Repo architecture</a>
+        <a href="appraisal.html">Appraisal frameworks</a>
+        <a href="commands.html">Command reference</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <p class="eyebrow">Start here</p>
+        <h1>Initialize a standalone research repo, then add projects, papers, and runs.</h1>
+        <p class="lead">Standalone repo mode is the default path when you do not want generated wiki-manager output.</p>
+      </section>
+
+      <h2>Create A Repo</h2>
+      <pre><code>python3 scripts/research.py init ~/research/my-manuscript-repo
+python3 scripts/research.py project create adolescent-cbt --repo ~/research/my-manuscript-repo</code></pre>
+
+      <h2>Add Papers Manually</h2>
+      <pre><code>python3 scripts/registry.py add --repo ~/research/my-manuscript-repo --pmid 12345678
+python3 scripts/registry.py add --repo ~/research/my-manuscript-repo --doi 10.1000/example
+python3 scripts/registry.py add-pdf --repo ~/research/my-manuscript-repo --file paper.pdf
+python3 scripts/registry.py import-bib --repo ~/research/my-manuscript-repo --file refs.bib
+python3 scripts/registry.py import-folder --repo ~/research/my-manuscript-repo --dir papers/ --recursive</code></pre>
+
+      <h2>Summarize One Paper</h2>
+      <pre><code>python3 scripts/paper.py summarize \
+  --repo ~/research/my-manuscript-repo \
+  --project adolescent-cbt \
+  --pmid 12345678 \
+  --purpose journal-club \
+  --format both</code></pre>
+      <p>Single-paper summaries appraise by default when full text and a supported appraisal framework are available.</p>
+
+      <h2>Summarize Several Papers</h2>
+      <pre><code>python3 scripts/paper.py summarize-set \
+  --repo ~/research/my-manuscript-repo \
+  --project adolescent-cbt \
+  --pmid 12345678 \
+  --pmid 23456789 \
+  --overview \
+  --format both</code></pre>
+
+      <h2>Run A Full Review</h2>
+      <p>Ask the agent for a literature review or evidence synthesis. It will configure Stage 0, confirm the profile and target root, then run the Stage 0-8 workflow.</p>
+
+      <div class="callout">
+        Agent harnesses such as Claude Code or Codex should run the deterministic scripts, inspect returned JSON status, dispatch extraction/appraisal/summary work only when requested by that status, then rerun the command to resume.
+      </div>
+
+      <footer class="footer">Related: <a href="commands.html">Command reference</a> and <a href="architecture.html">repo architecture</a>.</footer>
+    </main>
+  </div>
+</body>
+</html>
