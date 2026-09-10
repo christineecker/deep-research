@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Asking scientific questions - deep-research</title>
+  <link rel="icon" href="assets/favicon.png" type="image/png">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="brand" href="index.html"><img src="assets/logo.png" alt="" width="36" height="36"><span class="brand-text"><strong>deep-research</strong><span>Skill documentation</span></span></a>
+      <nav class="nav" aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="quickstart.html">Quickstart</a>
+        <a href="questions.html" aria-current="page">Scientific questions</a>
+        <a href="pipeline.html">Full pipeline</a>
+        <a href="paper-summaries.html">Paper summaries</a>
+        <a href="architecture.html">Repo architecture</a>
+        <a href="appraisal.html">Appraisal frameworks</a>
+        <a href="commands.html">Command reference</a>
+        <a href="../teach-deep-research/lessons/0001-what-is-deep-research.html">Guided course</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <p class="eyebrow">Stage 0 - framing</p>
+        <h1>Pick a question framework before searching, not after.</h1>
+        <p class="lead">deep-research routes every question to one of six frameworks, each with its own required fields. Restating a vague question in framework form catches missing scope before PubMed search strings are built.</p>
+      </section>
+
+      <h2>Six Frameworks</h2>
+      <table>
+        <thead><tr><th>Question type</th><th>Framework</th><th>Required fields</th></tr></thead>
+        <tbody>
+          <tr><td>Intervention effectiveness/efficacy</td><td><strong>PICO</strong></td><td>Population, Intervention, Comparator, Outcome</td></tr>
+          <tr><td>Etiology, risk factors, prognosis</td><td><strong>PECO</strong></td><td>Population, Exposure, Comparator, Outcome</td></tr>
+          <tr><td>Prevalence, incidence, association with no comparator</td><td><strong>PEO</strong></td><td>Population, Exposure, Outcome</td></tr>
+          <tr><td>Scoping review of an evidence base</td><td><strong>PCC</strong></td><td>Population, Concept, Context</td></tr>
+          <tr><td>Qualitative or mixed-methods experience/process</td><td><strong>SPIDER</strong></td><td>Sample, Phenomenon of Interest, Design, Evaluation, Research type</td></tr>
+          <tr><td>Service delivery, implementation, evaluation</td><td><strong>SPICE</strong></td><td>Setting, Perspective, Intervention, Comparison, Evaluation</td></tr>
+        </tbody>
+      </table>
+      <p>Default to PICO for a comparator-bearing intervention question and PECO for an etiological question with no intervention. Reach for PEO/PCC/SPIDER/SPICE only when the question genuinely does not fit PICO/PECO's shape - do not force a scoping or qualitative aim into intervention columns just because PICO is the familiar path.</p>
+
+      <h2>Worked Examples</h2>
+
+      <h3>Vague to PICO</h3>
+      <p class="lead" style="font-style:italic;">"Does exercise help with depression?"</p>
+      <pre><code>Population:   Adults with a clinical diagnosis of major depressive disorder
+Intervention: Structured aerobic exercise program
+Comparator:   Treatment as usual / waitlist control
+Outcome:      Depressive symptom severity (standardized scale)</code></pre>
+
+      <h3>Vague to PECO</h3>
+      <p class="lead" style="font-style:italic;">"Is screen time bad for kids' sleep?"</p>
+      <pre><code>Population:  Children and adolescents aged 6-17
+Exposure:    Recreational screen time in the two hours before bed
+Comparator:  Low or no pre-bed screen time
+Outcome:     Sleep onset latency and total sleep duration</code></pre>
+
+      <h3>Vague to PEO</h3>
+      <p class="lead" style="font-style:italic;">"How common is burnout among ICU nurses?"</p>
+      <pre><code>Population: Registered nurses working in intensive care units
+Exposure:   ICU nursing role (no comparator group sought)
+Outcome:    Burnout prevalence (validated inventory, e.g. Maslach Burnout Inventory)</code></pre>
+
+      <h3>Vague to PCC (scoping)</h3>
+      <p class="lead" style="font-style:italic;">"What has been studied about telehealth in rural mental health care?"</p>
+      <pre><code>Population: Rural and remote populations
+Concept:    Telehealth-delivered mental health services
+Context:    Primary and community mental health care settings</code></pre>
+
+      <h3>Vague to SPIDER (qualitative)</h3>
+      <p class="lead" style="font-style:italic;">"What do patients think about being diagnosed with a chronic illness?"</p>
+      <pre><code>Sample:                  Adults recently diagnosed with a chronic illness
+Phenomenon of Interest:  Lived experience of receiving a chronic-illness diagnosis
+Design:                  Interviews, focus groups
+Evaluation:              Patient-reported meaning, coping, and identity change
+Research type:           Qualitative</code></pre>
+
+      <h3>Vague to SPICE (service evaluation)</h3>
+      <p class="lead" style="font-style:italic;">"Does adding a pharmacist to the discharge team reduce readmissions?"</p>
+      <pre><code>Setting:      Acute hospital discharge process
+Perspective:  Hospital system / patient
+Intervention: Pharmacist-led discharge medication review
+Comparison:   Standard discharge process without pharmacist review
+Evaluation:   30-day all-cause readmission rate</code></pre>
+
+      <div class="callout">
+        <strong>Ambiguous fit:</strong> an intervention question with no real comparator can be written as PICO with <code>Comparator: "none (single-arm / descriptive)"</code> rather than switched to PEO - keep the comparator column unless the review is explicitly scoping or qualitative.
+      </div>
+
+      <h2>Recording The Framework</h2>
+      <p>The agent records the chosen framework and fields in <code>config.json</code> at Stage 0, alongside the existing filters:</p>
+      <pre><code>{
+  "question_framework": "PICO",
+  "framework_fields": {
+    "population": "Adolescents 12-17y with moderate MDD, outpatient",
+    "intervention": "Manualized group CBT",
+    "comparator": "Waitlist control",
+    "outcome": "Depressive symptom severity"
+  }
+}</code></pre>
+      <p>Every required field for the chosen framework needs a concrete answer or an explicit <code>"none"</code>/<code>"not applicable"</code> with a one-line reason. If the question does not obviously map to one framework, the agent restates it back using the framework it picked and asks for confirmation before proceeding - never guesses a value the user did not give.</p>
+
+      <h2>Search Axes Follow The Framework</h2>
+      <table>
+        <thead><tr><th>Framework</th><th>Query axes</th></tr></thead>
+        <tbody>
+          <tr><td>PICO</td><td>population, intervention, comparator (if not "none"), outcome</td></tr>
+          <tr><td>PECO</td><td>population, exposure, comparator (if not "none"), outcome</td></tr>
+          <tr><td>PEO</td><td>population, exposure, outcome</td></tr>
+          <tr><td>PCC</td><td>population/context, concept - broader and less outcome-constrained, no outcome axis</td></tr>
+          <tr><td>SPIDER</td><td>sample, phenomenon of interest, design (qualitative method terms), evaluation</td></tr>
+          <tr><td>SPICE</td><td>setting, perspective, intervention, comparison (if not "none"), evaluation</td></tr>
+        </tbody>
+      </table>
+      <p>For PICO, PECO, PEO, and SPICE, at least one query should target null/negative and non-significant results - PCC maps evidence rather than testing an effect, so this rule does not apply there.</p>
+
+      <footer class="footer">Source manual: <code>references/question-frameworks.md</code>. See also <a href="appraisal.html">appraisal frameworks</a>, which route off the study design produced by whichever question framework you pick.</footer>
+    </main>
+  </div>
+</body>
+</html>
