@@ -1,7 +1,8 @@
 # deep-research — usage
 
 `SKILL.md` is the agent-facing router. This file is the short version for a human. Full
-docs: [`docs/index.html`](docs/index.html).
+docs, live: **https://christineecker.github.io/deep-research/** (source:
+[`skills/deep-research/docs/index.html`](skills/deep-research/docs/index.html)).
 
 ## What it does
 
@@ -47,8 +48,9 @@ matching script directly, no pipeline negotiation:
 | `/deep-research:watch` | Read-only snapshot of a run's progress |
 | `/deep-research:help` | This table, plus the pool-add vs. summarize-set decision tree |
 
-Flags: `commands/*.md`, or `/deep-research:help`. Everything except `status`/`verify`/
-`watch` needs a repo from `/deep-research:init` first.
+Flags: `commands/*.md`, or `/deep-research:help`. Full table with examples:
+[`docs/commands.html`](skills/deep-research/docs/commands.html). Everything except
+`status`/`verify`/`watch` needs a repo from `/deep-research:init` first.
 
 ## The full review
 
@@ -57,25 +59,27 @@ evidence say about X", "PubMed search", "critical appraisal". Stage 0 asks only 
 doesn't already know (question, profile, wiki-or-repo target, filters, outputs), then
 runs nine stages (search → screen → retrieve → extract → appraise → synthesize → verify
 → publish) at one of four profiles (`fast`/`standard`/`systematic`/`max`). Details:
-[`docs/pipeline.html`](docs/pipeline.html).
+[`docs/pipeline.html`](skills/deep-research/docs/pipeline.html). Choosing/framing the
+question (PICO/PECO and friends): [`docs/questions.html`](skills/deep-research/docs/questions.html).
 
 ## Wiki mode vs. standalone repo
 
 Same pipeline either way — only where the run, PDF store, and shared pool live differs.
 Wiki mode needs a wiki-manager wiki; standalone repo mode doesn't, ever — run
 `/deep-research:init <path>` once. Layout and full comparison:
-[`docs/architecture.html`](docs/architecture.html), `references/pool-architecture.md`.
+[`docs/architecture.html`](skills/deep-research/docs/architecture.html), `references/pool-architecture.md`.
 
-For a hands-on walkthrough: [`docs/quickstart.html`](docs/quickstart.html). Or run the
-guided local tutorial: `python3 skills/deep-research/scripts/tutorial.py quickstart --repo
-/tmp/deep-research-tutorial-demo`.
+For a hands-on walkthrough: [`docs/quickstart.html`](skills/deep-research/docs/quickstart.html).
+Or run the guided local tutorial: `python3 skills/deep-research/scripts/tutorial.py
+quickstart --repo /tmp/deep-research-tutorial-demo`. Lightweight one/few-paper summaries
+instead of a full review: [`docs/paper-summaries.html`](skills/deep-research/docs/paper-summaries.html).
 
 ## Appraisal
 
 Each paper gets the framework matching its design (RoB2, ROBINS-I, Newcastle-Ottawa,
 AMSTAR-2, QUADAS-2, PROBAST, CASP-qualitative, JBI-prevalence, JBI-cross-sectional), then
 per-outcome GRADE certainty. Never one-size-fits-all, never averaged across designs.
-Details: [`docs/appraisal.html`](docs/appraisal.html).
+Details: [`docs/appraisal.html`](skills/deep-research/docs/appraisal.html).
 
 ## Quarantine and the shared pool
 
