@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import utcnow  # noqa: E402  (sibling module, stdlib-only)
 import corpus as _corpus  # noqa: E402  (derive_evidence_id, norm_pmid/doi/pmcid, CORPUS_FIELDS)
 import library as _library  # noqa: E402  (wiki_root_for_run, read_corpus)
+import registry as _registry  # noqa: E402  (Registry, extraction_slug — standalone repo mode)
 import render as _render  # noqa: E402  (build_entry, bib_key, atomic_write)
 import store as _store  # noqa: E402  (read_snapshot, register_text — portable spans)
 
@@ -284,10 +285,34 @@ def cmd_sync(args) -> int:
     return 0
 
 
+def _seed_source_records(args) -> tuple[dict, dict[str, dict]]:
+    """`{records}` to seed from, plus a `meta` dict for the emitted payload — repo mode
+    reads the canonical `data/papers/registry.jsonl` (plan Stage 2: "seed from the
+    canonical registry or pool projection"), wiki mode the legacy `Pool`. Both key by
+    `evidence_id` with the same bibliographic field names, so `score_entry` and
+    `seed_record_from_entry` work unchanged on either (registry.py REGISTRY_FIELDS is a
+    subset of pool.py POOL_FIELDS)."""
+    if args.repo:
+        registry = _registry.Registry(args.repo)
+        meta = {"repo": str(registry.repo_root)}
+
+        def has_reusable_work(entry: dict) -> bool:
+            return entry.get("extraction_status") == "extracted" \
+                or entry.get("appraisal_status") not in (None, "not_appraised")
+        return registry.records, meta, has_reusable_work
+    wiki = (Path(args.wiki).expanduser().resolve() if args.wiki
+            else _library.wiki_root_for_run(Path(args.run_dir).expanduser().resolve()))
+    pool = Pool(wiki)
+    meta = {"wiki": str(wiki)}
+
+    def has_reusable_work(entry: dict) -> bool:
+        return bool(pool.resolve_source(entry, "extraction")
+                   or pool.resolve_source(entry, "appraisal"))
+    return pool.records, meta, has_reusable_work
+
+
 def cmd_seed(args) -> int:
     run_dir = Path(args.run_dir).expanduser().resolve()
-    wiki = (Path(args.wiki).expanduser().resolve() if args.wiki
-            else _library.wiki_root_for_run(run_dir))
     query = seed_query_from_run(run_dir, args.query)
     if not query and not args.all:
         emit({
@@ -296,12 +321,10 @@ def cmd_seed(args) -> int:
         })
         return 2
 
-    pool = Pool(wiki)
+    records, meta, has_reusable_work = _seed_source_records(args)
     scored = []
-    for entry in pool.records.values():
-        has_reusable_work = bool(pool.resolve_source(entry, "extraction")
-                                 or pool.resolve_source(entry, "appraisal"))
-        if not has_reusable_work and not args.include_metadata_only:
+    for entry in records.values():
+        if not has_reusable_work(entry) and not args.include_metadata_only:
             continue
         if args.all:
             score, detail = 1.0, {"overlap": ["--all"], "title_ratio": 0.0}
@@ -330,8 +353,8 @@ def cmd_seed(args) -> int:
 
     emit({
         "schema_version": SCHEMA_VERSION, "status": "ok", "command": "seed",
-        "dry_run": args.dry_run, "wiki": str(wiki), "run_dir": str(run_dir),
-        "pool_size": len(pool.records), "query": None if args.all else query,
+        "dry_run": args.dry_run, "run_dir": str(run_dir), **meta,
+        "pool_size": len(records), "query": None if args.all else query,
         "query_id": args.query_id, "min_score": args.min_score,
         "candidates": len(scored), "seeded": len(results),
         "added": sum(1 for r in results if r["action"] == "added"),
@@ -342,6 +365,28 @@ def cmd_seed(args) -> int:
 
 
 def cmd_lookup(args) -> int:
+    if not args.repo and not args.wiki:
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "lookup",
+              "error": "one of --repo/--wiki is required"})
+        return 2
+    if args.repo:
+        repo_root = Path(args.repo).expanduser().resolve()
+        registry = _registry.Registry(repo_root)
+        entry = registry.lookup(evidence_id=args.evidence_id, pmid=args.pmid, doi=args.doi,
+                                pmcid=args.pmcid)
+        result = {"schema_version": SCHEMA_VERSION, "status": "ok", "command": "lookup",
+                  "repo": str(repo_root), "matched": entry is not None, "entry": entry,
+                  "extraction_path": None, "appraisal_path": None}
+        if entry is not None and entry.get("extraction_path"):
+            extraction = repo_root / entry["extraction_path"]
+            result["extraction_path"] = str(extraction) if extraction.exists() else None
+        if entry is not None and args.project:
+            rel = (entry.get("appraisals") or {}).get(args.project)
+            appraisal = repo_root / rel if rel else None
+            result["appraisal_path"] = str(appraisal) if appraisal and appraisal.exists() else None
+        emit(result)
+        return 0 if entry is not None else 1
+
     wiki = Path(args.wiki).expanduser().resolve()
     pool = Pool(wiki)
     entry = pool.lookup(evidence_id=args.evidence_id, pmid=args.pmid, doi=args.doi,
@@ -413,8 +458,55 @@ def _carry_snapshots(origin_run_dir: Path, dest_run_dir: Path, source_ids: list[
     return carried, failed
 
 
+def _cmd_reuse_repo(args, dest_run_dir: Path) -> int:
+    """Repo-mode reuse: copy the canonical extraction/appraisal into the run's workspace.
+
+    No snapshot carrying here (unlike wiki-mode `cmd_reuse`, whose runs are isolated
+    per-run source stores): under `--repo`, Stage 4/5 write snapshots straight into the
+    global store (`store.Store(run_dir, repo_root=...)` — see `store.py` "Source
+    Storage"), so a canonical extraction's spans are already globally resolvable. The
+    caller's own `Store` just needs `repo_root=` set when it later verifies.
+    """
+    repo_root = Path(args.repo).expanduser().resolve()
+    registry = _registry.Registry(repo_root)
+    entry = registry.lookup(evidence_id=args.evidence_id, pmid=args.pmid, doi=args.doi,
+                            pmcid=args.pmcid)
+    result = {"schema_version": SCHEMA_VERSION, "status": "ok", "command": "reuse",
+              "repo": str(repo_root), "matched": entry is not None,
+              "extraction": None, "appraisal": None}
+    if entry is None:
+        emit(result)
+        return 1
+
+    if entry.get("extraction_path"):
+        src_path = repo_root / entry["extraction_path"]
+        if src_path.exists():
+            out_dir = dest_run_dir / "workspace" / "extractions"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = out_dir / src_path.name
+            dest_path.write_text(src_path.read_text(encoding="utf-8"), encoding="utf-8")
+            result["extraction"] = {"reused_from": "registry",
+                                    "path": str(dest_path.relative_to(dest_run_dir))}
+
+    if args.project:
+        appraisal_rel = (entry.get("appraisals") or {}).get(args.project)
+        if appraisal_rel:
+            src_path = repo_root / appraisal_rel
+            if src_path.exists():
+                out_dir = dest_run_dir / "workspace" / "appraisals"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                dest_path = out_dir / src_path.name
+                dest_path.write_text(src_path.read_text(encoding="utf-8"), encoding="utf-8")
+                result["appraisal"] = {"reused_from": f"registry:{args.project}",
+                                       "path": str(dest_path.relative_to(dest_run_dir))}
+    emit(result)
+    return 0
+
+
 def cmd_reuse(args) -> int:
     dest_run_dir = Path(args.run_dir).expanduser().resolve()
+    if args.repo:
+        return _cmd_reuse_repo(args, dest_run_dir)
     wiki = (Path(args.wiki).expanduser().resolve() if args.wiki
             else _library.wiki_root_for_run(dest_run_dir))
     pool = Pool(wiki)
@@ -450,6 +542,84 @@ def cmd_reuse(args) -> int:
             "snapshots_carried": carried, "snapshots_failed": failed,
         }
     emit(result)
+    return 0
+
+
+def cmd_migrate(args) -> int:
+    """`pool.py migrate --from-wiki <wiki-root> --repo <repo-root>`
+    (POOL_ARCHITECTURE_IMPLEMENTATION_PLAN.md "Backward Compatibility And Migration").
+
+    For every legacy pool record: register bibliographic metadata into the canonical
+    registry, then copy its freshest extraction/appraisal (`Pool.resolve_source` — the
+    same freshest-pointer-that-still-resolves-on-disk logic `cmd_reuse` uses) into
+    `data/papers/extractions/` / `data/papers/appraisals/<project>/`, carrying every
+    snapshot the extraction/appraisal cites into the global source store so spans still
+    verify with no `wiki-manager` involved (`_carry_snapshots` — unchanged from `reuse`,
+    since `store.global_sources_root()` is just another run_dir-shaped write target).
+    A pointer whose file has moved or vanished is reported under `stale_pointers`, never
+    silently dropped.
+    """
+    wiki = Path(args.from_wiki).expanduser().resolve()
+    registry = _registry.Registry(args.repo)
+    pool = Pool(wiki)
+    project = args.project
+
+    registered, extractions_copied, appraisals_copied = 0, 0, 0
+    stale_pointers: list[dict] = []
+    with _registry.advisory_lock(args.repo, "registry"):
+        for eid, entry in pool.records.items():
+            raw = {k: entry.get(k) for k in _registry.REGISTRY_FIELDS if entry.get(k)}
+            raw["evidence_id"] = eid
+            registry.register(raw)
+            registered += 1
+
+            for kind in ("extraction", "appraisal"):
+                src = pool.resolve_source(entry, kind)
+                declared = [s for s in (entry.get("sources") or []) if s.get(f"{kind}_path")]
+                if src is None:
+                    for s in declared:
+                        stale_pointers.append({
+                            "evidence_id": eid, "kind": kind, "run": s.get("run"),
+                            "path": s.get(f"{kind}_path"),
+                            "reason": "pointer file no longer resolves on disk",
+                        })
+                    continue
+                origin_run_dir = wiki / src["run_dir"]
+                src_path = origin_run_dir / src[f"{kind}_path"]
+                record = json.loads(src_path.read_text(encoding="utf-8"))
+                source_ids = _iter_source_ids(record)
+                carried, failed = _carry_snapshots(
+                    origin_run_dir, _store.global_sources_root(args.repo), source_ids,
+                    reused_from=src["run"])
+                for f in failed:
+                    stale_pointers.append({"evidence_id": eid, "kind": "snapshot",
+                                           "run": src["run"], **f})
+                record["migrated_from"] = src["run"]
+                if kind == "extraction":
+                    dest = registry.paths["extractions"] / f"{_registry.extraction_slug(eid)}.json"
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n",
+                                    encoding="utf-8")
+                    registry.set_extraction(eid, str(dest.relative_to(registry.repo_root)))
+                    extractions_copied += 1
+                else:
+                    dest = (registry.paths["appraisals"] / project
+                           / f"{_registry.extraction_slug(eid)}.json")
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_text(json.dumps(record, indent=2, ensure_ascii=False) + "\n",
+                                    encoding="utf-8")
+                    registry.set_appraisal(eid, project, str(dest.relative_to(registry.repo_root)))
+                    appraisals_copied += 1
+        registry.save()
+        registry.generate_pool()
+
+    emit({
+        "schema_version": SCHEMA_VERSION, "status": "ok", "command": "migrate",
+        "from_wiki": str(wiki), "repo": str(registry.repo_root), "project": project,
+        "pool_records_seen": len(pool.records), "registered": registered,
+        "extractions_copied": extractions_copied, "appraisals_copied": appraisals_copied,
+        "stale_pointers": stale_pointers,
+    })
     return 0
 
 
@@ -506,6 +676,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("seed", help="seed a run corpus from matching pooled papers")
     s.add_argument("--run-dir", required=True, dest="run_dir")
     s.add_argument("--wiki", help="wiki root (default: inferred from --run-dir)")
+    s.add_argument("--repo", help="standalone repo root; seeds from data/papers/registry.jsonl "
+                                  "instead of the legacy wiki pool")
     s.add_argument("--corpus", help="corpus.jsonl (default: <run-dir>/corpus.jsonl)")
     s.add_argument("--query", help="query text (default: config question/PICO/filters)")
     s.add_argument("--query-id", default=POOL_SEED_QUERY_ID)
@@ -519,7 +691,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_seed)
 
     s = sub.add_parser("lookup", help="find a paper already extracted/appraised in another run")
-    s.add_argument("--wiki", required=True)
+    s.add_argument("--wiki")
+    s.add_argument("--repo", help="standalone repo root; looks up data/papers/registry.jsonl "
+                                  "instead of the legacy wiki pool")
+    s.add_argument("--project", help="also resolve an appraisal under this project "
+                                     "(repo mode only, data/papers/appraisals/<project>/)")
     s.add_argument("--evidence-id", dest="evidence_id")
     s.add_argument("--pmid")
     s.add_argument("--doi")
@@ -530,11 +706,21 @@ def build_parser() -> argparse.ArgumentParser:
                                      "snapshots into a run (spans verify locally)")
     s.add_argument("--run-dir", required=True, dest="run_dir")
     s.add_argument("--wiki", help="wiki root (default: inferred from --run-dir)")
+    s.add_argument("--repo", help="standalone repo root; reuses the canonical extraction/"
+                                  "appraisal instead of the legacy wiki pool")
+    s.add_argument("--project", help="also reuse this project's appraisal (repo mode only)")
     s.add_argument("--evidence-id", dest="evidence_id")
     s.add_argument("--pmid")
     s.add_argument("--doi")
     s.add_argument("--pmcid")
     s.set_defaults(func=cmd_reuse)
+
+    s = sub.add_parser("migrate", help="migrate a legacy wiki pool into a standalone repo")
+    s.add_argument("--from-wiki", required=True, dest="from_wiki")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--project", default="migrated",
+                   help="project id migrated appraisals land under (default: migrated)")
+    s.set_defaults(func=cmd_migrate)
 
     s = sub.add_parser("bib", help="wiki-wide BibTeX from the pool")
     s.add_argument("--wiki", required=True)

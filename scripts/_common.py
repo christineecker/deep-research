@@ -67,7 +67,8 @@ import re
 import unicodedata
 from pathlib import Path
 
-__all__ = ["utcnow", "now_iso", "read_json", "slugify", "emit_json", "wiki_root_for_run"]
+__all__ = ["utcnow", "now_iso", "read_json", "slugify", "emit_json", "wiki_root_for_run",
+           "repo_root_for_run"]
 
 
 def utcnow() -> str:
@@ -90,6 +91,21 @@ def wiki_root_for_run(run_dir) -> Path:
     if len(parents) >= 3 and parents[0].name == "deep-research" and parents[1].name == "outputs":
         return parents[2]
     return run_dir
+
+
+def repo_root_for_run(run_dir) -> Path | None:
+    """`<repo>/runs/<slug>/` -> `<repo>` (POOL_ARCHITECTURE_IMPLEMENTATION_PLAN.md
+    "Target Repository Layout"). None when `run_dir` is not inside a standalone repo's
+    `runs/` directory — callers fall back to `wiki_root_for_run` or run-local behavior.
+
+    `repo_root` is the default storage root going forward; `wiki_root_for_run` remains for
+    legacy wiki-backed runs (`<wiki>/outputs/deep-research/<slug>/`) only.
+    """
+    run_dir = Path(run_dir).expanduser().resolve()
+    parents = run_dir.parents
+    if len(parents) >= 1 and parents[0].name == "runs":
+        return parents[1] if len(parents) >= 2 else None
+    return None
 
 
 def read_json(path: Path):

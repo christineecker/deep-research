@@ -22,6 +22,7 @@ Read this file, then read only the reference you need for the stage you are in.
 | Wiki bundle frontmatter, taxonomy, validation rules | `references/okf-bundle.md` |
 | Snapshots, spans, freshness, the assembler gate | `references/evidence-kernel.md` |
 | Subagent prompt blocks | `references/prompts/{screen,adjudicate,extract,appraise,digest}.md` |
+| Standalone repo (`repo_root`) mode: layout, registry, global source store | `references/pool-architecture.md` |
 
 ---
 
@@ -49,8 +50,9 @@ Set it to `5` to build the shared paper pool only — search → screen → retr
 halt: no appraisal, no synthesis, no report, no OKF promotion. Ask about this alongside the
 profile pick ("just build/extend the extracted-paper pool for this question, or run the full
 pipeline through appraisal and a report?"). A `stop_after_stage: 5` run still runs
-`pool.py sync` at the end (Stage 5's normal exit), so its extractions are immediately reusable
-by any later run, on this question or another, that hits the same papers. Resuming later with
+`pool.py sync` (wiki mode) or `registry.py promote` (repo mode) at the end (Stage 5's normal
+exit), so its extractions are immediately reusable by any later run, on this question or
+another, that hits the same papers. Resuming later with
 `stop_after_stage` cleared continues the *same* run into Stage 6 onward — it is a pause point,
 not a different pipeline.
 
@@ -131,9 +133,19 @@ a wrong assumption about scope, wiki, or criteria: Stage 0 is the only place the
 2. **Profile** — show the profile table above and ask the user to pick one (or set
    scope / rigor / gates individually). Say what the chosen profile implies: `max_articles`,
    whether gates apply, whether dual screening runs, whether it's report-only.
-3. **Target wiki** — needed *early*, because the run directory and PDF library live in it.
-   Enumerate the wikis directory at runtime; never hardcode the list. Missing wiki →
-   confirm creation and location with the user first.
+3. **Target root: wiki or standalone repo** — needed *early*, because the run directory,
+   PDF library, and shared paper pool all live under it. Two options, ask which:
+   - **Wiki** (default, and the only option this file's stage-by-stage prose below assumes).
+     Enumerate the wikis directory at runtime; never hardcode the list. Missing wiki → confirm
+     creation and location with the user first. `scripts/library.py init --wiki <root>` once.
+   - **Standalone repo** — no `wiki-manager` involved at all. `python3 scripts/research.py
+     init <path>` once to create it, then `python3 scripts/research.py project create <slug>
+     --repo <path>` for the manuscript project. The project `<slug>` becomes the `--project`
+     value passed to Stage 6/8's appraisal commands (appraisal is project-scoped — see below),
+     so settle it here alongside the repo path. Every `--wiki`-flagged command below has a
+     `--repo` equivalent; see `references/pool-architecture.md` for the full mapping and
+     directory layout. Pick this when the user does not want a generated wiki at all, or is
+     building a manuscript repo independent of one.
 4. **Study selection criteria** — ask explicitly, before Stage 1 turns the PICO/PECO into
    *numbered* inclusion/exclusion criteria: eligible study designs (RCT only? observational
    too? case reports?), population/sample bounds (age, condition, setting), comparator/exposure
@@ -167,12 +179,22 @@ what stage the run is in. Do not wait until the final report to surface stage pr
 ### Run directory
 
 ```
-<wiki>/outputs/deep-research/<slug>/
+<wiki>/outputs/deep-research/<slug>/          # wiki mode
+<repo>/runs/<slug>/                            # standalone repo mode
   config.json     engine.log     taskboard.jsonl
-  events.jsonl    sources/                        # evidence kernel
-  inputs/         workspace/     outputs/
-  missing.md      inbox/
+  events.jsonl    sources/                        # evidence kernel (run-local; repo mode
+  inputs/         workspace/     outputs/          #   also writes new snapshots globally,
+  missing.md      inbox/                           #   see references/pool-architecture.md)
 ```
+
+Everything below this point — reserved directories, stage pointer, resume, and the whole
+Pipeline section — is identical in shape between the two modes; only the root and which script
+handles pool/PDF intake differ: wiki mode uses `library.py --wiki` (PDF library) and
+`pool.py --wiki` (shared pool); repo mode uses `registry.py --repo` (registry, including PDF
+intake via `add-pdf`/`import-folder`) and `pool.py --repo` (seed/lookup/reuse against the
+registry). Where a stage below gives only the `--wiki` form, the `--repo` equivalent exists too
+— see `references/pool-architecture.md` "Commands" for the full mapping; this file is not
+duplicated per mode.
 
 **Reserved directories — scanned by the scripts, one record shape only.** `corpus.py` reads
 every `*.json` in these and treats each as a record of that stage's type:
@@ -224,12 +246,14 @@ these ids), limits, planned search — built from the Stage 0 "Study selection c
 If gates include `protocol+strategy`, show the protocol *and* the search strategy to the user
 and wait.
 
-**Stage 2 — search.** First seed from the wiki-wide paper pool:
-`python3 scripts/pool.py seed --run-dir <run_dir> --wiki <root>`. It scores
-`<wiki>/assets/papers/pool.jsonl` against the run question/PICO/filters and upserts likely
-papers into `corpus.jsonl` with `source: pool` and `first_seen_query: pool-seed`. These are only
-candidates: Stage 3 still screens them against the current protocol, and Stage 5/6 later use
-`pool.py reuse` to copy prior extraction/appraisal files instead of redoing subagent work.
+**Stage 2 — search.** First seed from the shared paper pool:
+`python3 scripts/pool.py seed --run-dir <run_dir> --wiki <root>` (wiki mode) or
+`--repo <path>` (standalone repo mode, scores against `data/papers/registry.jsonl` instead of
+`<wiki>/assets/papers/pool.jsonl` — same scoring, same upsert semantics). It scores the pool
+against the run question/PICO/filters and upserts likely papers into `corpus.jsonl` with
+`source: pool` and `first_seen_query: pool-seed`. These are only candidates: Stage 3 still
+screens them against the current protocol, and Stage 5/6 later use `pool.py reuse` to copy
+prior extraction/appraisal files instead of redoing subagent work.
 Then design 4–8 genuinely orthogonal queries per `references/search-strategy.md` — not eight
 near-duplicates. Execute via `scripts/eutils.py esearch`; log every query string, the
 NCBI-translated query, and the hit count. Citation chaining via `eutils.py elink`. At
@@ -263,22 +287,28 @@ Once acquisition has been attempted for every selected record, handle `missing.m
 "Quarantine → inbox → resume loop" section below — same gate, every profile.
 
 **Stage 5 — extract.** Before dispatching a subagent for a paper, try the shared pool:
-`python3 scripts/pool.py reuse --run-dir <run_dir> --wiki <root> --pmid <pmid>` (fall back to
-`--doi`/`--pmcid` when no PMID). A `matched: true` with a non-null `extraction` means another
-run already extracted this exact paper — `reuse` has already copied that file into this run's
-`workspace/extractions/pmid-*.json` (tagged `"reused_from": "<run-slug>"`) **and** re-registered
-every snapshot its spans cite into this run's own evidence-kernel store (same `source_id`,
-content-addressed, so it resolves byte-identically here — `references/evidence-kernel.md`), so
-its quotes/spans verify locally exactly like a freshly extracted paper's. Skip the subagent and
-log the reuse. Otherwise dispatch as normal: one subagent per paper, opus,
-`references/prompts/extract.md`. Design, N, population, I/C, outcomes with effect + CI +
-direction, funding/COI, limitations, quotes with anchors. `evidence_basis` is `abstract_only`
-whenever no full text was obtained. When the stage completes, run
-`python3 scripts/pool.py sync --run-dir <run_dir>` so this run's fresh extractions become
-reusable by every future run, then `python3 scripts/status.py <run_dir> --table` and post the
-table to the user (note which rows were reused vs. freshly extracted) — it shows which papers
-were downloaded, in what format (PDF/HTML/Text), and whether extraction ran, so the user can
-see corpus coverage before appraisal.
+`python3 scripts/pool.py reuse --run-dir <run_dir> --wiki <root> --pmid <pmid>` (wiki mode; fall
+back to `--doi`/`--pmcid` when no PMID) or `--repo <path>` (repo mode: pulls the canonical
+extraction straight from `data/papers/extractions/`, no snapshot-carrying step needed — see
+"Stage 4/5 write path under `--repo`" in `references/pool-architecture.md`). A `matched: true`
+with a non-null `extraction` means another run already extracted this exact paper — `reuse` has
+already copied that file into this run's `workspace/extractions/pmid-*.json` (tagged
+`"reused_from": "<run-slug>"` in wiki mode, `"reused_from": "registry"` in repo mode) **and**
+(wiki mode) re-registered every snapshot its spans cite into this run's own evidence-kernel
+store (same `source_id`, content-addressed, so it resolves byte-identically here —
+`references/evidence-kernel.md`), so its quotes/spans verify locally exactly like a freshly
+extracted paper's. Skip the subagent and log the reuse. Otherwise dispatch as normal: one
+subagent per paper, opus, `references/prompts/extract.md`. Design, N, population, I/C, outcomes
+with effect + CI + direction, funding/COI, limitations, quotes with anchors. `evidence_basis` is
+`abstract_only` whenever no full text was obtained. When the stage completes, run
+`python3 scripts/pool.py sync --run-dir <run_dir>` (wiki mode; makes this run's fresh
+extractions reusable by every future run) or `python3 scripts/registry.py promote --repo <path>
+--run-dir <run_dir>` (repo mode; copies extractions into the canonical store and repoints the
+corpus record at it — `references/pool-architecture.md` "Stage 5/6 promotion"), then
+`python3 scripts/status.py <run_dir> --table` and post the table to the user (note which rows
+were reused vs. freshly extracted) — it shows which papers were downloaded, in what format
+(PDF/HTML/Text), and whether extraction ran, so the user can see corpus coverage before
+appraisal.
 
 A reused snapshot carries a `register` event, never `fresh` (R22 — the text was not retrieved
 in this run). `verify.py`'s C-FRESH-FETCH reports it as non-fresh accordingly, exactly like any
@@ -299,13 +329,18 @@ and `standard` may proceed provisionally if the user says to continue without it
 
 **Stage 6 — appraise.** Same reuse gate as Stage 5: `pool.py reuse` (harmless to call again
 per paper even if Stage 5 already reused its extraction — it's idempotent and this time checks
-for a resolving `appraisal_path`). A hit copies `workspace/appraisals/pmid-*.json` with
-`"reused_from"` set, its snapshots re-registered the same way, and skips the subagent;
-otherwise dispatch as normal. One subagent per paper, opus, `references/prompts/appraise.md`.
-Tool by design (RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 / none), then GRADE domains.
-Abstract-only records are **not** appraised as if full text. Run
-`python3 scripts/pool.py sync --run-dir <run_dir>` again when the stage completes, so the
-appraisal pointer joins the extraction pointer already synced.
+for a resolving `appraisal_path`; in repo mode pass `--project <slug>`, since appraisal there is
+project-scoped, not universal — a paper appraised for one manuscript question is not
+automatically appraised for another, `references/pool-architecture.md` "Appraisal is
+project-scoped, on purpose"). A hit copies `workspace/appraisals/pmid-*.json` with
+`"reused_from"` set, its snapshots re-registered the same way (wiki mode), and skips the
+subagent; otherwise dispatch as normal. One subagent per paper, opus,
+`references/prompts/appraise.md`. Tool by design (RoB2 / ROBINS-I / Newcastle-Ottawa /
+AMSTAR-2 / none), then GRADE domains. Abstract-only records are **not** appraised as if full
+text. Run `python3 scripts/pool.py sync --run-dir <run_dir>` again (wiki mode) or
+`python3 scripts/registry.py appraise-promote --repo <path> --run-dir <run_dir> --project
+<slug>` (repo mode) when the stage completes, so the appraisal pointer joins the extraction
+pointer already synced/promoted.
 
 **Stage 7 — synthesize.** Main thread only. Effect-direction tabulation, agreement and
 conflict *with an explanation of why*, certainty, gaps, and a hard-walled hypotheses section.
@@ -320,7 +355,14 @@ separation as the source report. This is the body content `okf.py promote` write
 `research/reviews/<slug>.md`; the full report stays linked from it as the audit trail, it does
 not replace §0-§16 for methods/PRISMA/provenance detail.
 
-**Stage 8 — assemble, verify, publish.** Fixed order:
+**Stage 8 — assemble, verify, publish.** `assemble.py`/`verify.py`/`render.py`/`html_report.py`
+are root-agnostic (they work from `outputs/report.md` and the run's own files either way).
+`okf.py promote` is wiki-specific — it publishes into `<wiki>/research/reviews/<slug>.md` and
+has no repo-mode equivalent; in repo mode, `outputs/report.md`/`digest.md` and the project's
+`manuscript.qmd`/`refs.bib` under `<repo>/projects/<slug>/` are the deliverable, and
+`research.py export wiki` (`references/pool-architecture.md`) is available as a courtesy bundle
+copy into a wiki if the user later wants one — it is not a substitute for `okf.py promote`.
+Fixed order, wiki mode:
 
 ```
 assemble.py run  ->  verify.py run  ->  render.py / html_report.py  ->  okf.py promote --check  ->  okf.py promote
@@ -474,7 +516,9 @@ resolved blocks.
     PubMed bibliographic metadata in frontmatter.
 11. Per-claim attribution uses markdown footnotes keyed to `sources[].id`. A body-only
     citation list is not acceptable.
-12. `<wiki>/research/` is deep-research's bundle. **`<wiki>/wiki/` is never written to.**
+12. In wiki mode, `<wiki>/research/` is deep-research's bundle. **`<wiki>/wiki/` is never
+    written to.** In repo mode there is no wiki at all unless `export wiki` is explicitly
+    run — nothing else ever writes into one.
 13. Standard markdown links are the graph layer; Obsidian wikilinks are additive only.
 14. Unknown values are `null`. Never invent a bibliographic field, a number, or a citation.
 15. Whenever a PDF is handed to the user, its DOI is stated alongside the PMID (when a DOI
@@ -487,7 +531,9 @@ resolved blocks.
 | `scripts/eutils.py` | esearch / efetch / elink, throttle, retry, hit counts, translated query |
 | `scripts/fulltext.py` | acquisition ladder, resumable, truncation detector |
 | `scripts/library.py` | `<wiki>/assets/papers/` PDF index, matching, inbox ingestion |
-| `scripts/pool.py` | `<wiki>/assets/papers/pool.jsonl` shared extraction/appraisal pool (`seed` before search; `reuse` carries spans across runs via the evidence kernel) + wiki-wide BibTeX |
+| `scripts/pool.py` | shared extraction/appraisal pool, `--wiki` or `--repo` (`seed` before search; `reuse` carries spans across runs via the evidence kernel); `migrate --from-wiki` bridges a legacy wiki pool into a repo; wiki-wide BibTeX |
+| `scripts/research.py` | standalone repo (`repo_root`) mode: `init`, `project create/list`, `export wiki` adapter — see `references/pool-architecture.md` |
+| `scripts/registry.py` | `data/papers/registry.jsonl` canonical paper registry (repo mode's counterpart to `library.py`+`pool.py`): `add`/`add-pdf`/`import-bib`/`import-folder`, `lookup`, `promote`/`appraise-promote` |
 | `scripts/corpus.py` | corpus.jsonl, dedupe, PRISMA counters, `task` CLI, guards |
 | `scripts/okf.py` | bundle concept writer + validator |
 | `scripts/render.py` | report.md → .qmd + refs.bib → quarto render (pdf/docx) |

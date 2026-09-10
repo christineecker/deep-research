@@ -221,6 +221,22 @@ def snapshot_path(run_dir, source_id: str) -> Path:
     return sources_dir(run_dir) / (source_id + ".json")
 
 
+def global_sources_root(repo_root) -> Path:
+    """`<repo>/data/sources` treated as a logical `run_dir` for the global source store
+    (POOL_ARCHITECTURE_IMPLEMENTATION_PLAN.md "Source Storage").
+
+    Deliberate reuse, not a new path scheme: `sources_dir()`/`events_path()`/
+    `snapshot_path()` and every write/read/verify function above are already pure
+    functions of a `run_dir`-shaped directory (`<x>/sources/src-*.json`,
+    `<x>/events.jsonl`). Passing this path as that `run_dir` gets snapshots at
+    `data/sources/sources/src-*.json` and events at `data/sources/events.jsonl`
+    (the latter matches the plan exactly) through the same audited write-once/hash/
+    verify code, with zero new logic and zero risk to existing run-local behavior.
+    `data/sources/assets/` is separate: hash-named binary PDFs, not JSON snapshots.
+    """
+    return Path(repo_root).expanduser().resolve() / "data" / "sources"
+
+
 def run_created_at(run_dir) -> str | None:
     """The run's `created_at` from `config.json`, or None when absent/unreadable.
 
@@ -922,9 +938,10 @@ class Store:
     module-level function of the same name.
     """
 
-    def __init__(self, run_dir, wiki_root=None):
+    def __init__(self, run_dir, wiki_root=None, repo_root=None):
         self.run_dir = Path(run_dir).expanduser()
         self.wiki_root = Path(wiki_root).expanduser() if wiki_root else wiki_root_for_run(run_dir)
+        self.repo_root = Path(repo_root).expanduser().resolve() if repo_root else None
         self._snapshots: dict[str, dict] = {}
         self._errors: dict[str, StoreError] = {}
         self._events: list[dict] | None = None
@@ -932,12 +949,24 @@ class Store:
 
     # -- snapshots --
     def read_snapshot(self, source_id: str) -> dict:
+        """Run-local snapshot first, falling back to the global store when `repo_root`
+        is set and the run has no local copy (plan "Source Storage" compatibility
+        behavior 1-2). A run-local *integrity* failure is never swallowed by the
+        fallback — only "not found" falls through."""
         if source_id in self._errors:
             raise self._errors[source_id]
         snap = self._snapshots.get(source_id)
         if snap is None:
             try:
                 snap = read_snapshot(self.run_dir, source_id)
+            except UnknownSourceError:
+                if self.repo_root is None:
+                    raise
+                try:
+                    snap = read_snapshot(global_sources_root(self.repo_root), source_id)
+                except StoreError as exc:
+                    self._errors[source_id] = exc
+                    raise
             except StoreError as exc:
                 self._errors[source_id] = exc
                 raise
@@ -956,7 +985,11 @@ class Store:
                 "access": snap["access"], "origin": snap["origin"]}
 
     def list_snapshots(self) -> list[str]:
-        return list_snapshots(self.run_dir)
+        local = list_snapshots(self.run_dir)
+        if self.repo_root is None:
+            return local
+        glob = list_snapshots(global_sources_root(self.repo_root))
+        return sorted(set(local) | set(glob))
 
     def slice_span(self, source_id: str, start: int, end: int) -> str:
         return slice_text(self.read_snapshot(source_id)["text"], start, end)
@@ -998,11 +1031,17 @@ class Store:
         return has_fresh_retrieval(self.run_dir, source_id_or_url, wiki_root=self.wiki_root)
 
     # -- writes --
-    def write_snapshot(self, **kwargs) -> dict:
-        out = write_snapshot_result(self.run_dir, **kwargs)
+    def write_snapshot(self, *, local: bool = False, **kwargs) -> dict:
+        """Writes go to the global store when `repo_root` is set (plan "Source Storage":
+        "writes should go to the global source store unless explicitly requested
+        otherwise"); pass `local=True` to force a run-local write regardless."""
+        target = self.run_dir if (local or self.repo_root is None) \
+            else global_sources_root(self.repo_root)
+        out = write_snapshot_result(target, **kwargs)
         self._snapshots[out["source_id"]] = out["snapshot"]
         self._errors.pop(out["source_id"], None)
-        self._events = None
+        if target == self.run_dir:
+            self._events = None
         return out["snapshot"]
 
     def stats(self) -> dict:
