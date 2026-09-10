@@ -22,29 +22,35 @@
     </aside>
     <main class="content">
       <section class="hero">
-        <p class="eyebrow">Scripts</p>
-        <h1>Commands do deterministic state work; agents do extraction, appraisal, summary, and synthesis reasoning.</h1>
-        <p class="lead">Most commands emit JSON. Agent harnesses should read status fields and resume by rerunning the same command after required files are written.</p>
+        <p class="eyebrow">Slash commands</p>
+        <h1>Use the slash commands for the everyday cases; drop to the raw scripts for everything they don't cover.</h1>
+        <p class="lead">Each <code>/deep-research:*</code> command calls one script directly, with no Stage 0-8 negotiation, and prints the script's own JSON output. Agent harnesses should read status fields and resume by rerunning the same command after required files are written.</p>
       </section>
 
       <h2>Repo And Project</h2>
-      <pre><code>python3 scripts/research.py init &lt;path&gt;
-python3 scripts/research.py init &lt;path&gt; --from-wiki &lt;wiki-root&gt;
-python3 scripts/research.py project create &lt;slug&gt; --repo &lt;path&gt;
-python3 scripts/research.py project list --repo &lt;path&gt;
-python3 scripts/research.py export wiki --repo &lt;path&gt; --wiki &lt;wiki-root&gt; --project &lt;slug&gt;</code></pre>
+      <pre><code>/deep-research:init &lt;path&gt;
+/deep-research:init &lt;path&gt; --from-wiki &lt;wiki-root&gt;
+/deep-research:project create &lt;slug&gt; --repo &lt;path&gt;
+/deep-research:project list --repo &lt;path&gt;</code></pre>
+      <p>No wrapper for the wiki-export adapter — run it directly:</p>
+      <pre><code>python3 scripts/research.py export wiki --repo &lt;path&gt; --wiki &lt;wiki-root&gt; --project &lt;slug&gt;</code></pre>
 
       <h2>Registry Intake</h2>
-      <pre><code>python3 scripts/registry.py add --repo &lt;path&gt; --pmid &lt;pmid&gt;
-python3 scripts/registry.py add --repo &lt;path&gt; --doi &lt;doi&gt;
+      <pre><code>/deep-research:pool-add --repo &lt;path&gt; --pmid &lt;pmid&gt;
+/deep-research:pool-add --repo &lt;path&gt; --query "..." --n 10
+/deep-research:pdf-lookup --repo &lt;path&gt; --evidence-id pmid:12345678
+/deep-research:bib-export --repo &lt;path&gt; --out refs.bib --select all</code></pre>
+      <p>No wrapper for a DOI-only add, PDF/bulk-bib/folder import, or the raw registry list/pool
+      projection steps — run these directly:</p>
+      <pre><code>python3 scripts/registry.py add --repo &lt;path&gt; --doi &lt;doi&gt;
 python3 scripts/registry.py add-pdf --repo &lt;path&gt; --file &lt;pdf&gt;
 python3 scripts/registry.py import-bib --repo &lt;path&gt; --file refs.bib
 python3 scripts/registry.py import-folder --repo &lt;path&gt; --dir papers/ --recursive
-python3 scripts/registry.py lookup --repo &lt;path&gt; --evidence-id pmid:12345678
 python3 scripts/registry.py list --repo &lt;path&gt;
 python3 scripts/registry.py pool --repo &lt;path&gt;</code></pre>
 
       <h2>Pool Reuse</h2>
+      <p>No slash-command wrapper yet — this is internal run plumbing, not a standalone ask:</p>
       <pre><code>python3 scripts/pool.py seed --run-dir &lt;run&gt; --repo &lt;path&gt; --query "..."
 python3 scripts/pool.py lookup --repo &lt;path&gt; --pmid &lt;pmid&gt; --project &lt;slug&gt;
 python3 scripts/pool.py reuse --run-dir &lt;run&gt; --repo &lt;path&gt; --pmid &lt;pmid&gt; --project &lt;slug&gt;
@@ -52,19 +58,25 @@ python3 scripts/registry.py promote --repo &lt;path&gt; --run-dir &lt;run&gt;
 python3 scripts/registry.py appraise-promote --repo &lt;path&gt; --run-dir &lt;run&gt; --project &lt;slug&gt;</code></pre>
 
       <h2>Paper Summaries</h2>
-      <pre><code>python3 scripts/paper.py summarize --repo &lt;path&gt; --pmid &lt;pmid&gt; --project &lt;slug&gt; --format both
-python3 scripts/paper.py summarize --repo &lt;path&gt; --pdf paper.pdf --project &lt;slug&gt;
-python3 scripts/paper.py summarize-set --repo &lt;path&gt; --pmid 123 --pmid 456 --overview
-python3 scripts/paper.py summarize-set --repo &lt;path&gt; --topic "..." --limit 10 --select-only</code></pre>
+      <pre><code>/deep-research:summarize --repo &lt;path&gt; --pmid &lt;pmid&gt; --project &lt;slug&gt; --format both
+/deep-research:summarize --repo &lt;path&gt; --pdf paper.pdf --project &lt;slug&gt;
+/deep-research:summarize-set --repo &lt;path&gt; --pmid 123 --pmid 456 --overview
+/deep-research:summarize-set --repo &lt;path&gt; --topic "..." --limit 10 --select-only</code></pre>
+
+      <h2>Run Monitoring</h2>
+      <pre><code>/deep-research:status &lt;run&gt; --table
+/deep-research:status &lt;run&gt; --missing
+/deep-research:watch --run-dir &lt;run&gt; --once</code></pre>
 
       <h2>Verification And Rendering</h2>
-      <pre><code>python3 scripts/verify.py run --run-dir &lt;run&gt; --report &lt;run&gt;/outputs/report.md
-python3 scripts/verify.py single-paper-summary --summary &lt;run&gt;/workspace/summaries/pmid-123.json --run-dir &lt;run&gt;
-python3 scripts/verify.py paper-summary-set --summary-set &lt;run&gt;/workspace/summary-set.json --run-dir &lt;run&gt;
-python3 scripts/html_report.py build --run-dir &lt;run&gt; --out &lt;run&gt;/outputs/report.html
+      <pre><code>/deep-research:verify run --run-dir &lt;run&gt; --report &lt;run&gt;/outputs/report.md
+/deep-research:verify single-paper-summary --summary &lt;run&gt;/workspace/summaries/pmid-123.json --run-dir &lt;run&gt;
+/deep-research:verify paper-summary-set --summary-set &lt;run&gt;/workspace/summary-set.json --run-dir &lt;run&gt;</code></pre>
+      <p>No wrapper for HTML/PDF/docx rendering — run these directly:</p>
+      <pre><code>python3 scripts/html_report.py build --run-dir &lt;run&gt; --out &lt;run&gt;/outputs/report.html
 python3 scripts/render.py all --run-dir &lt;run&gt; --formats pdf,docx</code></pre>
 
-      <footer class="footer">Run <code>python3 scripts/&lt;name&gt;.py --help</code> for exact parser options.</footer>
+      <footer class="footer">Full flag reference for a command: <code>commands/&lt;name&gt;.md</code>, or <code>/deep-research:help</code>. For a raw script: <code>python3 scripts/&lt;name&gt;.py --help</code>.</footer>
     </main>
   </div>
 </body>

@@ -28,21 +28,21 @@
       </section>
 
       <h2>Single-Paper Summary</h2>
-      <pre><code>python3 scripts/paper.py summarize --repo &lt;repo&gt; --pmid &lt;pmid&gt;
-python3 scripts/paper.py summarize --repo &lt;repo&gt; --doi &lt;doi&gt;
-python3 scripts/paper.py summarize --repo &lt;repo&gt; --pmcid &lt;pmcid&gt;
-python3 scripts/paper.py summarize --repo &lt;repo&gt; --pdf paper.pdf
-python3 scripts/paper.py summarize --repo &lt;repo&gt; --evidence-id pmid:12345678</code></pre>
+      <pre><code>/deep-research:summarize --repo &lt;repo&gt; --pmid &lt;pmid&gt;
+/deep-research:summarize --repo &lt;repo&gt; --doi &lt;doi&gt;
+/deep-research:summarize --repo &lt;repo&gt; --pmcid &lt;pmcid&gt;
+/deep-research:summarize --repo &lt;repo&gt; --pdf paper.pdf
+/deep-research:summarize --repo &lt;repo&gt; --evidence-id pmid:12345678</code></pre>
       <p>Single-paper summaries include appraisal by default when full text is available and a supported framework applies. Use <code>--no-appraise</code> only for a deliberate extraction-only summary.</p>
 
       <h2>Selected-Paper Summary Set</h2>
-      <pre><code>python3 scripts/paper.py summarize-set --repo &lt;repo&gt; --pmid 123 --pmid 456
-python3 scripts/paper.py summarize-set --repo &lt;repo&gt; --ids-file papers.txt
-python3 scripts/paper.py summarize-set --repo &lt;repo&gt; --bib refs.bib
-python3 scripts/paper.py summarize-set --repo &lt;repo&gt; --folder papers/ --recursive
-python3 scripts/paper.py summarize-set --repo &lt;repo&gt; --question "..."
-python3 scripts/paper.py summarize-set --repo &lt;repo&gt; --topic "..."</code></pre>
-      <p>Set mode produces one verified paper summary per included paper, plus an optional bounded overview. Topic and question mode perform candidate discovery, not systematic retrieval.</p>
+      <pre><code>/deep-research:summarize-set --repo &lt;repo&gt; --pmid 123 --pmid 456
+/deep-research:summarize-set --repo &lt;repo&gt; --ids-file papers.txt
+/deep-research:summarize-set --repo &lt;repo&gt; --bib refs.bib
+/deep-research:summarize-set --repo &lt;repo&gt; --folder papers/ --recursive
+/deep-research:summarize-set --repo &lt;repo&gt; --question "..."
+/deep-research:summarize-set --repo &lt;repo&gt; --topic "..."</code></pre>
+      <p>Set mode produces one verified paper summary per included paper, plus an optional bounded overview. Topic and question mode perform candidate discovery, not systematic retrieval. Add <code>--select-only</code> to preview the picked set before paying for summaries.</p>
 
       <h2>Run Status</h2>
       <table>
@@ -63,7 +63,7 @@ python3 scripts/paper.py summarize-set --repo &lt;repo&gt; --topic "..."</code><
         Set overviews may compare descriptive attributes across included papers. They must not claim pooled effects, certainty of a body of evidence, or consensus unless a full review produced those artifacts.
       </div>
 
-      <footer class="footer">Source manual: <code>references/single-paper-summary.md</code>.</footer>
+      <footer class="footer">Slash commands: <code>commands/summarize.md</code>, <code>commands/summarize-set.md</code>. Source manual: <code>references/single-paper-summary.md</code>.</footer>
     </main>
   </div>
 </body>

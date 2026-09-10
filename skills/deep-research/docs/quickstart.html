@@ -28,18 +28,20 @@
       </section>
 
       <h2>Create A Repo</h2>
-      <pre><code>python3 scripts/research.py init ~/research/my-manuscript-repo
-python3 scripts/research.py project create adolescent-cbt --repo ~/research/my-manuscript-repo</code></pre>
+      <pre><code>/deep-research:init ~/research/my-manuscript-repo
+/deep-research:project create adolescent-cbt --repo ~/research/my-manuscript-repo</code></pre>
 
       <h2>Add Papers Manually</h2>
-      <pre><code>python3 scripts/registry.py add --repo ~/research/my-manuscript-repo --pmid 12345678
-python3 scripts/registry.py add --repo ~/research/my-manuscript-repo --doi 10.1000/example
+      <pre><code>/deep-research:pool-add --repo ~/research/my-manuscript-repo --pmid 12345678</code></pre>
+      <p>For a DOI, a PDF, a bulk <code>.bib</code>, or a folder of PDFs — none of which
+      <code>pool-add</code> covers — call the registry script directly:</p>
+      <pre><code>python3 scripts/registry.py add --repo ~/research/my-manuscript-repo --doi 10.1000/example
 python3 scripts/registry.py add-pdf --repo ~/research/my-manuscript-repo --file paper.pdf
 python3 scripts/registry.py import-bib --repo ~/research/my-manuscript-repo --file refs.bib
 python3 scripts/registry.py import-folder --repo ~/research/my-manuscript-repo --dir papers/ --recursive</code></pre>
 
       <h2>Summarize One Paper</h2>
-      <pre><code>python3 scripts/paper.py summarize \
+      <pre><code>/deep-research:summarize \
   --repo ~/research/my-manuscript-repo \
   --project adolescent-cbt \
   --pmid 12345678 \
@@ -48,7 +50,7 @@ python3 scripts/registry.py import-folder --repo ~/research/my-manuscript-repo -
       <p>Single-paper summaries appraise by default when full text and a supported appraisal framework are available.</p>
 
       <h2>Summarize Several Papers</h2>
-      <pre><code>python3 scripts/paper.py summarize-set \
+      <pre><code>/deep-research:summarize-set \
   --repo ~/research/my-manuscript-repo \
   --project adolescent-cbt \
   --pmid 12345678 \
