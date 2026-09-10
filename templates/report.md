@@ -104,7 +104,7 @@ Models used per stage: {{MODELS_PER_STAGE}}
 
 ### 4.5 Appraisal
 
-Appraisal tools by design: {{APPRAISAL_TOOLS_BY_DESIGN}} <!-- e.g. RCT: RoB2, cohort: ROBINS-I, "none": narrative/guideline -->
+Appraisal tools by design: {{APPRAISAL_TOOLS_BY_DESIGN}} <!-- e.g. RCT: RoB2, cohort: ROBINS-I, diagnostic accuracy: QUADAS-2 (risk of bias and applicability reported separately), "none": narrative/guideline -->
 
 ## 5. PRISMA flow and screening log
 

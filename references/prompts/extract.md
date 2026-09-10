@@ -107,6 +107,10 @@ pretty-printed JSON object, exactly this shape:
       ]
     }
   ],
+  "diagnostic_accuracy": [],
+  "prediction_model": [],
+  "qualitative_evidence": null,
+  "cross_sectional_evidence": null,
   "funding": "German Research Foundation, grant EX-1234",
   "coi": "Two authors report speaker fees from Example Pharma; others none declared.",
   "limitations": "Authors: no active comparator, single site. Extractor: 18% attrition at 24 weeks analysed complete-case, no sensitivity analysis.",
@@ -136,6 +140,10 @@ never write it.
 | `intervention` | what was delivered: content, dose, duration, format |
 | `comparator` | control condition; `null` for single-arm designs |
 | `outcomes` | one entry per outcome x timepoint pair; `[]` only if nothing extractable |
+| `diagnostic_accuracy` | **only for a diagnostic-accuracy study** (an index test compared against a reference standard). One entry per index test / threshold; `[]` for every other design — leave it `[]`, do not force an intervention trial's numbers into this shape |
+| `prediction_model` | **only for a prediction-model study** (development and/or validation of a model). One entry per model per study type (development and validation of the same model are two entries); `[]` for every other design |
+| `qualitative_evidence` | **only for a study with a qualitative component**. A single object, not an array — a mixed-methods paper gets one `qualitative_evidence` object for its qualitative arm and normal `outcomes`/etc. for its quantitative arm. `null` for every other design |
+| `cross_sectional_evidence` | **only for a cross-sectional or prevalence study**. A single object; `null` for every other design |
 | `funding` | funders + grant ids **as stated**. `null` = not stated, which is NOT the same as "none declared" — if the paper says "no funding", write that |
 | `coi` | COI statement as stated; same null/none distinction |
 | `limitations` | authors' own framing first, prefixed `Authors:`; then your own, prefixed `Extractor:`. Keep the two attributions visible |
@@ -159,6 +167,91 @@ never write it.
 
 Record null and negative results with the same care as positive ones. A study whose primary
 outcome is null is fully extracted; it is evidence, not noise.
+
+### `diagnostic_accuracy[]` entry — only when the paper IS a diagnostic-accuracy study
+
+Fill this in only when the design compares an index test against a reference standard. Every
+other design leaves `diagnostic_accuracy: []`. One entry per index test (or index-test/threshold
+pair) — two thresholds for the same assay is two entries, not one.
+
+| Field | Rule |
+|---|---|
+| `index_test` | the test being evaluated, incl. assay/instrument; keep the threshold in `threshold`, not folded into this string |
+| `reference_standard` | the standard the index test is compared against |
+| `target_condition` | the condition/diagnosis the index test is meant to detect |
+| `threshold` | positivity cutoff as reported; `null` if not threshold-based or not stated |
+| `prespecified_threshold` | `true`/`false` only if the paper states it; otherwise `null` — never infer from silence |
+| `n_total` | patients analysed for this index-test/reference-standard pair |
+| `tp` / `fp` / `fn` / `tn` | 2x2 counts as reported, or directly computable from a reported 2x2 table. **Never back-calculate from sensitivity/specificity + prevalence** — if the paper gives only proportions, leave these `null` |
+| `sensitivity` / `specificity` | as reported; note in `extractor_notes` whether proportion or percentage if ambiguous |
+| `sens_ci_low` / `sens_ci_high` / `spec_ci_low` / `spec_ci_high` | reported interval bounds; `null` if not reported |
+| `interval_index_reference` | time elapsed between the index test and the reference standard, as reported |
+| `verification` | `all_patients` \| `partial` \| `differential` \| `unclear` — whether every patient got the same reference standard. A different reference standard depending on the index-test result is `differential`, a QUADAS-2 flow-and-timing red flag |
+| `blinding` | whether index-test and reference-standard interpreters were blinded to each other's result, as stated |
+| `spans` | claim spans (see below). **Required whenever any of `index_test`, `reference_standard`, `target_condition`, `threshold`, `tp`, `fp`, `fn`, `tn`, `sensitivity`, `specificity` is non-null** |
+
+### `prediction_model[]` entry — only when the paper develops or validates a prediction model
+
+One entry per model per study type. A paper that both develops and externally validates the same
+model needs two entries — `study_type: "development"` and `study_type: "validation"` — because
+PROBAST appraises them separately.
+
+| Field | Rule |
+|---|---|
+| `model_name` | the model's name as given; a short descriptive name if unnamed |
+| `study_type` | `development` \| `validation` \| `development_and_validation` \| `unclear` |
+| `model_purpose` | what it predicts, for whom, diagnostic vs. prognostic, intended-use point |
+| `outcome_definition` | how the predicted outcome is defined and ascertained |
+| `prediction_horizon` | the time window predicted over; `null` if not time-bound |
+| `candidate_predictors` | full candidate predictor set considered, as reported; `null` if not stated (e.g. validation-only of a fixed published model) |
+| `final_predictors` | predictors retained in the final model |
+| `predictor_selection_method` | e.g. `"univariable p<0.05 screening"`, `"all candidate predictors retained"`, `"LASSO"`; `null` for a validation-only entry with no selection step of its own |
+| `n_participants` | participants analysed for this model (matching `study_type`) |
+| `n_events` | outcome events in that sample; `null` if not reported/not applicable |
+| `events_per_predictor` | **as stated by the paper only — never back-calculated.** Leave `null` if the paper does not report it |
+| `validation_approach` | internal validation method (bootstrap/cross-validation/none) or external-validation cohort description |
+| `missing_data_handling` | e.g. `"complete-case analysis"`, `"multiple imputation, 20 datasets"`; `null` if not stated |
+| `discrimination` | as reported, e.g. `"C-statistic 0.81 (95% CI 0.77-0.85)"` |
+| `calibration` | as reported; `null` if no calibration assessment is reported — say so in `extractor_notes` too, since its absence is a PROBAST analysis-domain concern |
+| `spans` | claim spans (see below). **Required whenever any of `model_name`, `outcome_definition`, `prediction_horizon`, `n_participants`, `n_events`, `events_per_predictor`, `discrimination`, `calibration` is non-null** |
+
+### `qualitative_evidence` object — only when the paper has a qualitative component
+
+A single object, not an array. A mixed-methods paper gets one of these for its qualitative arm;
+its quantitative arm uses `outcomes`/other fields normally.
+
+| Field | Rule |
+|---|---|
+| `research_question` | the qualitative research question or aim, as stated |
+| `methodology` | named approach, e.g. `"grounded theory"`, `"reflexive thematic analysis"`, `"ethnography"`; `null` if unnamed |
+| `theoretical_framework` | any stated theoretical/conceptual framework; `null` if none |
+| `sampling_strategy` | how participants were sampled/recruited |
+| `sample_size` | number of participants; note in `extractor_notes` if interview/focus-group count differs |
+| `data_collection_method` | e.g. `"semi-structured interviews, 45-60 min, audio-recorded and transcribed verbatim"` |
+| `setting` | where/when data collection took place |
+| `analysis_approach` | e.g. `"reflexive thematic analysis per Braun and Clarke"`, `"framework analysis"` |
+| `researcher_reflexivity` | what the paper states about researcher-participant relationship/positionality; `null` if not addressed — silence about reflexivity is absence of *reporting*, not evidence it was ignored |
+| `ethical_approval` | ethics approval/consent statement as reported |
+| `key_themes` | the paper's reported themes/findings, named — enough for a reader to check the report against them, not the full narrative |
+| `spans` | claim spans (see below). **Required whenever any of `research_question`, `methodology`, `sampling_strategy`, `sample_size`, `data_collection_method`, `analysis_approach`, `key_themes` is non-null** |
+
+### `cross_sectional_evidence` object — only for a cross-sectional or prevalence study
+
+A single object, not an array. Covers both a standalone prevalence estimate and an
+exposure-outcome association — fields not applicable to one stay `null`.
+
+| Field | Rule |
+|---|---|
+| `sample_frame` | the population/list the sample was drawn from |
+| `sampling_method` | how the sample was selected |
+| `sample_size` | participants analysed |
+| `response_rate` | response/participation rate as reported, and non-response handling if stated |
+| `condition_measurement_method` | how the condition/outcome was measured or ascertained |
+| `exposure_measurement_method` | how the exposure was measured; `null` for a pure prevalence study with no exposure |
+| `confounders_identified` | confounders the study identified as relevant, as stated; `null` if none identified (say so explicitly, don't leave ambiguous) |
+| `confounders_handling` | how identified confounders were addressed; `null` only when `confounders_identified` is also `null` |
+| `prevalence_estimate` | the headline estimate with denominator and interval, e.g. `"12.3% (95% CI 10.1-14.8), n=1204"`; `null` for an association-only study |
+| `spans` | claim spans (see below). **Required whenever any of `sample_frame`, `sampling_method`, `sample_size`, `response_rate`, `condition_measurement_method`, `exposure_measurement_method`, `prevalence_estimate` is non-null** |
 
 ### `spans[]` entry — the span is the anchor
 

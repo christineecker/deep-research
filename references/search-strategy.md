@@ -277,7 +277,7 @@ thorough. Orthogonality is a property of the **hit sets**, not of the strings.
 
 | Axis | Values | What varying it buys |
 |---|---|---|
-| **A — concept axis dropped** | drop P / drop I / drop C / drop O / drop setting / drop nothing | A 4-facet AND is massively over-specified; each dropped facet recovers records that facet's vocabulary failed on |
+| **A — concept axis dropped** | drop one framework facet (PICO: P/I/C/O; PECO: P/E/C/O; PEO: P/E/O; PCC: P/Concept/Context; SPIDER: Sample/Phenomenon/Design/Evaluation; SPICE: Setting/Perspective/Intervention/Comparison/Evaluation — see `references/question-frameworks.md` §5) / drop setting / drop nothing | An N-facet AND is massively over-specified; each dropped facet recovers records that facet's vocabulary failed on |
 | **B — vocabulary** | MeSH-only `[mh]`/`[majr]` · text-word `[tiab]`/`[ti]` · author keyword `[ot]`/`[nm]` · phrase-free (single broad `[tw]`) | Recovers records lost to indexing lag, descriptor drift, and non-standard terminology |
 | **C — design filter** | none · RCT hedge (3.1/3.2) · SR hedge (3.3) · observational hedge (3.4/3.5) · null-findings hedge · harms hedge | Different literatures index the same question under different designs |
 | **D — entry point** | de novo boolean · forward chaining · backward chaining · related-articles · journal/author-targeted · registry & grey | Escapes the vocabulary entirely |
@@ -286,6 +286,14 @@ thorough. Orthogonality is a property of the **hit sets**, not of the strings.
 their hit sets satisfy Jaccard `J < 0.6` with unique yield `≥ 15%` each (§5.4). A set of 4–8
 queries must cover **at least three values of axis A**, **at least three of axis B**, **at
 least two of axis C**, and **at least two of axis D**.
+
+The worked example below uses PICO because it is the most common shape; the same axis-A/B/C/D
+construction applies unchanged to PECO/PEO/PCC/SPIDER/SPICE — swap the facet blocks for the
+chosen framework's fields (`references/question-frameworks.md` §2, §5) and build q1..q8 the same
+way. A PCC (scoping) protocol drops the design-hedge (axis C) RCT/observational rows since scoping
+searches are not filtering by design the way an effectiveness review does; a SPIDER (qualitative)
+protocol's axis-C values are qualitative-method hedges (interview*, "focus group*", qualitative,
+ethnograph*) in place of RCT/SR/observational hedges.
 
 ### 5.2 Worked example
 

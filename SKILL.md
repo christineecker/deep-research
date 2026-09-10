@@ -129,7 +129,12 @@ means the built protocol and search strategy are not *shown back* for the user t
 Stage 2 — it does not excuse skipping any of these asks. `fast` has no later checkpoint to catch
 a wrong assumption about scope, wiki, or criteria: Stage 0 is the only place these get confirmed.
 
-1. **Question** — restate it back as a PICO/PECO before proceeding.
+1. **Question** — restate it back using the framework matching the question type before
+   proceeding: PICO/PECO for most effectiveness/etiology questions (the default — pick one of
+   these two unless the question genuinely does not fit either), PEO/PCC/SPIDER/SPICE for
+   comparator-free, scoping, qualitative, or service-evaluation questions respectively. Router
+   and per-framework required fields: `references/question-frameworks.md`. Record
+   `question_framework` + `framework_fields` in `config.json`.
 2. **Profile** — show the profile table above and ask the user to pick one (or set
    scope / rigor / gates individually). Say what the chosen profile implies: `max_articles`,
    whether gates apply, whether dual screening runs, whether it's report-only.
@@ -240,9 +245,11 @@ incomplete/failed tasks. Do not restart the stage. Do not re-prompt.
 | 7b | Digest | subagent, 1 | opus | `outputs/digest.md` |
 | 8 | Verify / report | main | main | `outputs/verification.json` |
 
-**Stage 1 — protocol.** PICO/PECO, *numbered* inclusion/exclusion criteria (screening cites
-these ids), limits, planned search — built from the Stage 0 "Study selection criteria" answers
-("Ask, if not already known" above), never invented fresh here. Template: `templates/protocol.md`.
+**Stage 1 — protocol.** Question framing per the chosen framework
+(`references/question-frameworks.md`; PICO/PECO/PEO/PCC/SPIDER/SPICE), *numbered*
+inclusion/exclusion criteria (screening cites these ids), limits, planned search — built from the
+Stage 0 "Study selection criteria" answers ("Ask, if not already known" above), never invented
+fresh here. Template: `templates/protocol.md`.
 If gates include `protocol+strategy`, show the protocol *and* the search strategy to the user
 and wait.
 

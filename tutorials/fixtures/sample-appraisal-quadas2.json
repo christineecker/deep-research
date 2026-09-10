@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "pmid": "12345678",
+  "evidence_id": "pmid:12345678",
+  "tool": "QUADAS-2",
+  "tool_variant": null,
+  "appraisal_target": {
+    "target_type": "index_test",
+    "target_id": "hs-troponin-i-99th-percentile",
+    "population": "Adults presenting to the emergency department with suspected acute coronary syndrome.",
+    "intervention_or_exposure": null,
+    "comparator": null,
+    "outcome": null,
+    "index_test": "High-sensitivity troponin I",
+    "reference_standard": "Adjudicated myocardial infarction diagnosis",
+    "prediction_horizon": null
+  },
+  "domains": [
+    {
+      "domain": "Patient selection",
+      "domain_group": "risk_of_bias",
+      "judgement": "low",
+      "rationale": "Consecutive ED enrollment; no case-control enrichment in the fixture.",
+      "spans": []
+    },
+    {
+      "domain": "Index test",
+      "domain_group": "risk_of_bias",
+      "judgement": "low",
+      "rationale": "Threshold was prespecified in the extraction fixture.",
+      "spans": []
+    },
+    {
+      "domain": "Reference standard",
+      "domain_group": "risk_of_bias",
+      "judgement": "low",
+      "rationale": "Adjudicated diagnosis used as the reference standard.",
+      "spans": []
+    },
+    {
+      "domain": "Flow and timing",
+      "domain_group": "risk_of_bias",
+      "judgement": "low",
+      "rationale": "All patients received the same reference standard in the same encounter.",
+      "spans": []
+    },
+    {
+      "domain": "Patient selection",
+      "domain_group": "applicability",
+      "judgement": "low",
+      "rationale": "Population matches the tutorial diagnostic question.",
+      "spans": []
+    },
+    {
+      "domain": "Index test",
+      "domain_group": "applicability",
+      "judgement": "low",
+      "rationale": "Index test and threshold match the tutorial protocol.",
+      "spans": []
+    },
+    {
+      "domain": "Reference standard",
+      "domain_group": "applicability",
+      "judgement": "low",
+      "rationale": "Reference standard matches the tutorial target condition.",
+      "spans": []
+    }
+  ],
+  "overall_judgement": "low",
+  "grade": null,
+  "evidence_basis": "fulltext"
+}

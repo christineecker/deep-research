@@ -20,7 +20,10 @@ status: draft
 
 <!-- The user's question restated as an answerable one. One paragraph max. -->
 
-## 2. PICO / PECO
+## 2. {{QUESTION_FRAMEWORK}} <!-- PICO (default) / PECO / PEO / PCC / SPIDER / SPICE — pick per
+     references/question-frameworks.md §1; swap the row labels below for the chosen framework's
+     fields (§2 there). Shown here in its PICO/PECO shape, the two frameworks every prior run
+     used. -->
 
 | Element | Definition |
 |---|---|
@@ -33,7 +36,9 @@ status: draft
 | Study designs eligible | {{DESIGNS}} |
 
 <!-- If the question is aetiological/prognostic, use PECO and say so. If no comparator exists,
-     write "none (single-arm / descriptive)" rather than inventing one. -->
+     write "none (single-arm / descriptive)" rather than inventing one. For PEO/PCC/SPIDER/SPICE,
+     replace this table's rows with that framework's fields (references/question-frameworks.md
+     §2) instead of leaving Intervention/Comparator blank. -->
 
 ## 3. Inclusion criteria
 
@@ -102,7 +107,7 @@ Budgets: `max_articles` = {{MAX_ARTICLES}}; `max_parallel` = {{MAX_PARALLEL}};
 - Screening: {{SCREENING_MODE}} <!-- single screener, or dual (screener-a/screener-b) + adjudicator at systematic/max -->
 - Full text: acquisition ladder rungs 0-6; unobtainable -> quarantine in `missing.md`, run continues, synthesis marked provisional. No paywall circumvention.
 - Extraction: one subagent per paper, schema.md §7.
-- Appraisal tools: {{APPRAISAL_TOOLS}} <!-- RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 by design; none for narrative or abstract-only -->
+- Appraisal tools: {{APPRAISAL_TOOLS}} <!-- RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 / QUADAS-2 / PROBAST / CASP-qualitative / JBI-prevalence / JBI-cross-sectional by design; none for narrative or abstract-only -->
 - Certainty: GRADE per outcome.
 
 ## 8. Analysis plan

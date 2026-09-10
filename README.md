@@ -24,7 +24,7 @@ run's `config.json`:
 
 | Asked | Detail |
 |---|---|
-| Question | Restated back as PICO/PECO before anything runs |
+| Question | Restated back using the matching framework before anything runs — PICO/PECO by default, or PEO/PCC/SPIDER/SPICE for comparator-free, scoping, qualitative, or service-evaluation questions (`references/question-frameworks.md`) |
 | Profile | `fast` / `standard` / `systematic` / `max` (table below), or scope/rigor/gates individually |
 | Target: wiki or standalone repo | Run directory, PDF/paper store, and shared pool all live inside it; see "Two ways to run this" below |
 | Filters | Years, authors, journals, article types, species/age, language, OA-only |
@@ -50,6 +50,13 @@ project's bundle into a wiki afterwards if you change your mind — a one-way co
 migration. `pool.py migrate --from-wiki <wiki> --repo <path>` goes the other way: pulls an
 existing wiki's pool (papers, extractions, appraisals) into a new standalone repo. Full layout
 and command mapping: `references/pool-architecture.md`.
+
+For a hands-on walkthrough with local fixtures, start with
+[`tutorials/README.md`](tutorials/README.md). The tutorial covers standalone repo setup, manual
+paper intake, pool reuse, framework-specific appraisal, and manuscript export without requiring a
+generated wiki. You can also run the guided local tutorial with
+`python3 scripts/tutorial.py quickstart --repo /tmp/deep-research-tutorial-demo`, or build static
+HTML tutorials for online hosting with `python3 scripts/tutorial.py build-site --out exports/html/tutorials`.
 
 ## Profiles
 
@@ -78,7 +85,7 @@ Every run walks the same nine stages; the profile only changes scope and where i
 3 Screen      → dedupe, then title/abstract triage against the numbered criteria
 4 Retrieve    → walk the open-access ladder for full text; quarantine what it can't get
 5 Extract     → one subagent per paper: design, N, I/C, outcomes, funding/COI, quotes
-6 Appraise    → one subagent per paper: RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 → GRADE
+6 Appraise    → one subagent per paper: RoB2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 / QUADAS-2 / PROBAST / CASP-qualitative / JBI-prevalence / JBI-cross-sectional → GRADE
 7 Synthesize  → main thread: effect-direction tabulation, agreement/conflict, gaps, hypotheses
 7b Digest     → compress the report into a short summary
 8 Publish     → assemble → verify → render → promote to the wiki, or leave as the repo's project deliverable
@@ -101,22 +108,34 @@ Stage 6 appraises each paper with the tool matching its design — never one-siz
 | Non-randomized/observational study of an intervention | ROBINS-I |
 | Cohort / case-control | Newcastle-Ottawa Scale (NOS) |
 | Systematic review | AMSTAR-2 |
+| Diagnostic accuracy (index test vs. reference standard) | QUADAS-2 |
+| Prediction model (development, validation, or both) | PROBAST |
+| Qualitative study | CASP qualitative checklist |
+| Prevalence/burden estimate (no comparator) | JBI prevalence checklist |
+| Cross-sectional exposure-outcome association | JBI analytical cross-sectional checklist |
 
 The appraisal is result-specific, not a whole-paper quality grade. The appraiser first fixes the
 outcome, effect of interest, follow-up window, comparator, and evidence basis, then works the
 tool's canonical domains from source spans. Mixed-design reviews stay stratified in synthesis:
-RCTs, ROBINS-I studies, NOS studies, and AMSTAR-2 reviews are not averaged into a single quality
-bucket. Designs without an in-scope instrument, such as diagnostic accuracy, descriptive
-cross-sectional, guidelines, and narrative reviews, are recorded as `tool: "none"` and reported as
-unappraised by this skill rather than forced into the wrong checklist.
+RCTs, ROBINS-I studies, NOS studies, AMSTAR-2 reviews, QUADAS-2 accuracy studies, PROBAST
+prediction-model appraisals, CASP qualitative appraisals, and JBI cross-sectional/prevalence
+appraisals are not averaged into a single quality bucket. QUADAS-2 and PROBAST additionally
+separate risk of bias from applicability per domain — a low risk-of-bias rating never implies low
+applicability concern. CASP and both JBI checklists report a count of items, never a
+risk-of-bias label. Designs without an in-scope instrument, such as case reports/series,
+guidelines, and narrative reviews, are recorded as `tool: "none"` and reported as unappraised by
+this skill rather than forced into the wrong checklist.
 
 Per-outcome certainty is then rated with **GRADE** (High/Moderate/Low/Very low), which can
 downgrade for risk of bias, inconsistency, indirectness, imprecision, or publication bias.
 
 ## Scientific frameworks and further reading
 
-The skill currently uses PICO/PECO, PRISMA-style flow reporting, RoB2, ROBINS-I,
-Newcastle-Ottawa, AMSTAR-2, and GRADE. Additional frameworks under consideration are tracked in
+The skill routes the question to one of PICO/PECO/PEO/PCC/SPIDER/SPICE
+(`references/question-frameworks.md`), and uses PRISMA-style flow reporting, RoB2, ROBINS-I,
+Newcastle-Ottawa, AMSTAR-2, QUADAS-2, PROBAST, the CASP qualitative checklist, the JBI
+prevalence and analytical cross-sectional checklists, and GRADE.
+Additional frameworks under consideration are tracked in
 [`SCIENTIFIC_FRAMEWORKS_OPTIMIZATION_PLAN.md`](SCIENTIFIC_FRAMEWORKS_OPTIMIZATION_PLAN.md).
 
 | Framework | Purpose | Reference |
@@ -132,9 +151,11 @@ Newcastle-Ottawa, AMSTAR-2, and GRADE. Additional frameworks under consideration
 | ROBINS-I | Risk of bias in non-randomized studies of interventions | [Cochrane ROBINS-I](https://methods.cochrane.org/robins-i) |
 | Newcastle-Ottawa Scale | Cohort and case-control study appraisal | [Ottawa Hospital Research Institute: NOS](https://www.ohri.ca/programs/clinical_epidemiology/oxford.asp) |
 | AMSTAR-2 | Appraisal of systematic reviews | [AMSTAR website](https://amstar.ca/Amstar-2.php) |
-| QUADAS | Diagnostic accuracy risk of bias and applicability | [University of Bristol QUADAS resources](https://www.bristol.ac.uk/population-health-sciences/projects/quadas/) |
-| PROBAST | Prediction model risk of bias and applicability | [Moons et al. 2019, *Annals of Internal Medicine*](https://doi.org/10.7326/M18-1377) |
-| CASP qualitative checklist | Qualitative study appraisal | [CASP checklists](https://casp-uk.net/casp-tools-checklists/) |
+| QUADAS-2 | Diagnostic accuracy risk of bias and applicability, per index test | [University of Bristol QUADAS resources](https://www.bristol.ac.uk/population-health-sciences/projects/quadas/) |
+| PROBAST | Prediction model risk of bias and applicability, per model | [Moons et al. 2019, *Annals of Internal Medicine*](https://doi.org/10.7326/M18-1377) |
+| CASP qualitative checklist | Qualitative study appraisal, 10-item count | [CASP checklists](https://casp-uk.net/casp-tools-checklists/) |
+| JBI prevalence checklist | Prevalence/burden study appraisal, 9-item count | [JBI critical appraisal tools](https://jbi.global/critical-appraisal-tools) |
+| JBI analytical cross-sectional checklist | Cross-sectional exposure-outcome study appraisal, 8-item count | [JBI critical appraisal tools](https://jbi.global/critical-appraisal-tools) |
 | GRADE | Certainty of evidence by outcome | [GRADE Working Group](https://www.gradeworkinggroup.org/) |
 | PRISMA 2020 | Systematic review reporting | [PRISMA statement](https://www.prisma-statement.org/) |
 | SWiM | Reporting synthesis without meta-analysis | [Campbell et al. 2020, *BMJ*](https://www.bmj.com/content/368/bmj.l6890) |
@@ -309,6 +330,7 @@ All under `scripts/`, all `python3`.
 | `pool.py` | Shared extraction/appraisal pool, `--wiki` or `--repo`: `seed`, `lookup`, `reuse` (carries spans across runs); `sync`/`bib`/`list` are wiki-mode only; `migrate --from-wiki` bridges a wiki pool into a repo |
 | `research.py` | Standalone repo (repo mode) lifecycle: `init`, `project create`/`list`, `export wiki` adapter |
 | `registry.py` | `data/papers/registry.jsonl` canonical registry (repo mode's counterpart to `library.py`+`pool.py`): `add`/`add-pdf`/`import-bib`/`import-folder`, `lookup`/`list`/`pool`, `promote`/`appraise-promote` (verified by default — `--strict`/`--no-verify`), `bib` (repo-mode BibTeX export) |
+| `tutorial.py` | Guided onboarding and static tutorial docs: `quickstart`, `build-site` |
 | `corpus.py` | `corpus.jsonl` store, dedupe, PRISMA counters, screening ingestion, taskboard CLI |
 | `okf.py` | OKF bundle writer/validator for `<wiki>/research/`: `init`, `write`, `promote`, `validate` |
 | `render.py` | `report.md` → `refs.bib` + `report.qmd` → `quarto render` (`pdf`, `docx`, `html`, `all`) |

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "pmid": "55501234",
+  "evidence_id": "pmid:55501234",
+  "tool": "CASP-qualitative",
+  "tool_variant": null,
+  "appraisal_target": null,
+  "domains": [
+    { "domain": "1. Clear statement of aims", "domain_group": null, "judgement": "yes", "rationale": "Aims are explicit in the synthetic fixture.", "spans": [] },
+    { "domain": "2. Qualitative methodology appropriate", "domain_group": null, "judgement": "yes", "rationale": "Qualitative design fits the experience question.", "spans": [] },
+    { "domain": "3. Research design appropriate", "domain_group": null, "judgement": "yes", "rationale": "Interview design matches the stated aim.", "spans": [] },
+    { "domain": "4. Recruitment strategy appropriate", "domain_group": null, "judgement": "partial_yes", "rationale": "Purposive sampling is named but recruitment detail is limited.", "spans": [] },
+    { "domain": "5. Data collection addressed research issue", "domain_group": null, "judgement": "yes", "rationale": "Semi-structured interviews address the experience question.", "spans": [] },
+    { "domain": "6. Researcher-participant relationship considered", "domain_group": null, "judgement": "unclear", "rationale": "No reflexivity statement in the synthetic fixture.", "spans": [] },
+    { "domain": "7. Ethical issues considered", "domain_group": null, "judgement": "yes", "rationale": "Ethics and consent are represented in the fixture.", "spans": [] },
+    { "domain": "8. Data analysis sufficiently rigorous", "domain_group": null, "judgement": "partial_yes", "rationale": "Coding approach is described but audit detail is limited.", "spans": [] },
+    { "domain": "9. Clear statement of findings", "domain_group": null, "judgement": "yes", "rationale": "Themes are clearly named.", "spans": [] },
+    { "domain": "10. Value of the research", "domain_group": null, "judgement": "yes", "rationale": "Contribution is stated in the discussion fixture.", "spans": [] }
+  ],
+  "overall_judgement": "7/10",
+  "grade": null,
+  "evidence_basis": "fulltext"
+}
