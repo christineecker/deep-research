@@ -156,8 +156,16 @@ class Registry:
         "Manual adds should register papers without forcing extraction")."""
         norm = _corpus.normalize_record(raw, allow_extra=allow_extra)
         eid = norm["evidence_id"]
-        existing = self.records.get(eid)
+        existing = self.records.get(eid) or self.lookup(
+            pmid=norm.get("pmid"), doi=norm.get("doi"), pmcid=norm.get("pmcid"))
         is_new = existing is None
+        if existing is not None:
+            current_eid = existing.get("evidence_id")
+            # If the new registration supplies a stronger canonical id (PMID > DOI >
+            # PMCID > URL), re-key the existing record instead of creating a duplicate.
+            if current_eid != eid and _corpus.id_precedence(eid) < _corpus.id_precedence(current_eid):
+                self.records.pop(current_eid, None)
+                existing["evidence_id"] = eid
         target = existing or {
             "schema_version": SCHEMA_VERSION,
             "evidence_id": eid,
@@ -183,7 +191,7 @@ class Registry:
             else "partial" if has_title else "pending"
         )
         target["updated_at"] = utcnow()
-        self.records[eid] = target
+        self.records[target["evidence_id"]] = target
         return target, is_new
 
     def set_asset(self, evidence_id: str, asset: dict) -> dict:

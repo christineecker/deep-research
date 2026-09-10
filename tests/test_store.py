@@ -153,6 +153,26 @@ class StoreArchitectureTest(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertEqual(result["excerpt"], "trial enrolled 42 adults")
 
+    def test_store_verify_span_preserves_global_snapshot_integrity_error(self):
+        with TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            _wiki, run = make_run(Path(td))
+            result = store.global_write_snapshot_result(
+                repo, url="https://example.org/corrupt", text="original text",
+                title="Global", access="web", origin="web", paper=None,
+                event_type="fetch", fresh=True, actor="test")
+            source_id = result["source_id"]
+            path = store.global_snapshot_path(repo, source_id)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["text"] = "tampered text"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            verdict = store.Store(run, repo_root=repo).verify_span({
+                "source_id": source_id, "start": 0, "end": 4,
+            })
+            self.assertFalse(verdict["ok"])
+            self.assertEqual(verdict["reason_code"], "SNAPSHOT_HASH_MISMATCH")
+
 
 if __name__ == "__main__":
     unittest.main()

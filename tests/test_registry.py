@@ -78,6 +78,24 @@ class RegistryCoreTest(unittest.TestCase):
             self.assertIsNotNone(by_pmcid)
             self.assertEqual(by_pmcid["evidence_id"], "pmid:111")
 
+    def test_register_merges_alias_identifiers_and_rekeys_to_stronger_id(self):
+        with TemporaryDirectory() as tmp:
+            reg = registry.Registry(Path(tmp) / "repo")
+            doi_rec, doi_new = reg.register({"doi": "10.1000/alias-merge",
+                                             "title": "Alias merge paper"})
+            self.assertTrue(doi_new)
+            self.assertEqual(doi_rec["evidence_id"], "doi:10.1000/alias-merge")
+
+            pmid_rec, pmid_new = reg.register({
+                "pmid": "222", "doi": "10.1000/alias-merge",
+                "title": "Alias merge paper", "journal": "J Merge",
+            })
+            self.assertFalse(pmid_new)
+            self.assertEqual(pmid_rec["evidence_id"], "pmid:222")
+            self.assertEqual(len(reg.records), 1)
+            self.assertNotIn("doi:10.1000/alias-merge", reg.records)
+            self.assertIs(reg.lookup(doi="10.1000/alias-merge"), pmid_rec)
+
     def test_extraction_slug_matches_plan_examples(self):
         self.assertEqual(registry.extraction_slug("pmid:12345678"), "pmid-12345678")
         self.assertEqual(registry.extraction_slug("doi:10.1000/example"),
@@ -454,6 +472,20 @@ class GlobalSourceStoreTest(unittest.TestCase):
 
 
 class RepoModeCliTest(unittest.TestCase):
+    def test_pool_repo_and_wiki_flags_are_mutually_exclusive(self):
+        with TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            repo = tmp / "repo"
+            wiki = tmp / "wiki"
+            run_dir = repo / "runs" / "newrun"
+            run_dir.mkdir(parents=True)
+            result = run_py([
+                "scripts/pool.py", "seed", "--run-dir", str(run_dir),
+                "--repo", str(repo), "--wiki", str(wiki), "--query", "x",
+            ])
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("not allowed with argument", result.stderr)
+
     def test_seed_and_lookup_work_against_a_standalone_repo(self):
         with TemporaryDirectory() as tmp:
             tmp = Path(tmp)

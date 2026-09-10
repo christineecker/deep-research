@@ -1046,8 +1046,21 @@ class Store:
         if isinstance(source_id, str):
             try:
                 snapshot = self.read_snapshot(source_id)
-            except StoreError:
-                snapshot = None
+            except StoreError as exc:
+                start = span_record.get("start") if isinstance(span_record, dict) else None
+                end = span_record.get("end") if isinstance(span_record, dict) else None
+                return {
+                    "ok": False,
+                    "reason_code": exc.reason_code or "SCHEMA_ERROR",
+                    "detail": exc.message,
+                    "source_id": source_id,
+                    "start": start if isinstance(start, int) and not isinstance(start, bool) else None,
+                    "end": end if isinstance(end, int) and not isinstance(end, bool) else None,
+                    "length": None,
+                    "excerpt": None,
+                    "access": None,
+                    "warnings": [],
+                }
         return verify_span(self.run_dir, span_record, excerpt=excerpt,
                            strict_access=strict_access, snapshot=snapshot)
 

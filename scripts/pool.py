@@ -675,9 +675,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("seed", help="seed a run corpus from matching pooled papers")
     s.add_argument("--run-dir", required=True, dest="run_dir")
-    s.add_argument("--wiki", help="wiki root (default: inferred from --run-dir)")
-    s.add_argument("--repo", help="standalone repo root; seeds from data/papers/registry.jsonl "
-                                  "instead of the legacy wiki pool")
+    root = s.add_mutually_exclusive_group()
+    root.add_argument("--wiki", help="wiki root (default: inferred from --run-dir)")
+    root.add_argument("--repo", help="standalone repo root; seeds from data/papers/registry.jsonl "
+                                      "instead of the legacy wiki pool")
     s.add_argument("--corpus", help="corpus.jsonl (default: <run-dir>/corpus.jsonl)")
     s.add_argument("--query", help="query text (default: config question/PICO/filters)")
     s.add_argument("--query-id", default=POOL_SEED_QUERY_ID)
@@ -691,9 +692,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_seed)
 
     s = sub.add_parser("lookup", help="find a paper already extracted/appraised in another run")
-    s.add_argument("--wiki")
-    s.add_argument("--repo", help="standalone repo root; looks up data/papers/registry.jsonl "
-                                  "instead of the legacy wiki pool")
+    root = s.add_mutually_exclusive_group()
+    root.add_argument("--wiki")
+    root.add_argument("--repo", help="standalone repo root; looks up data/papers/registry.jsonl "
+                                      "instead of the legacy wiki pool")
     s.add_argument("--project", help="also resolve an appraisal under this project "
                                      "(repo mode only, data/papers/appraisals/<project>/)")
     s.add_argument("--evidence-id", dest="evidence_id")
@@ -705,9 +707,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("reuse", help="copy a pooled paper's extraction/appraisal + "
                                      "snapshots into a run (spans verify locally)")
     s.add_argument("--run-dir", required=True, dest="run_dir")
-    s.add_argument("--wiki", help="wiki root (default: inferred from --run-dir)")
-    s.add_argument("--repo", help="standalone repo root; reuses the canonical extraction/"
-                                  "appraisal instead of the legacy wiki pool")
+    root = s.add_mutually_exclusive_group()
+    root.add_argument("--wiki", help="wiki root (default: inferred from --run-dir)")
+    root.add_argument("--repo", help="standalone repo root; reuses the canonical extraction/"
+                                      "appraisal instead of the legacy wiki pool")
     s.add_argument("--project", help="also reuse this project's appraisal (repo mode only)")
     s.add_argument("--evidence-id", dest="evidence_id")
     s.add_argument("--pmid")
