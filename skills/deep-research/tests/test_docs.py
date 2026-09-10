@@ -22,8 +22,11 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# README.md lives at the plugin repo root, one level above ROOT (ROOT is
+# skills/deep-research/, where the skill itself — SKILL.md, scripts/, references/ — lives).
+REPO_ROOT = ROOT.parent.parent
 SCRIPTS_DIR = ROOT / "scripts"
-DOC_FILES = [ROOT / "README.md", ROOT / "SKILL.md", *sorted((ROOT / "references").glob("*.md"))]
+DOC_FILES = [REPO_ROOT / "README.md", ROOT / "SKILL.md", *sorted((ROOT / "references").glob("*.md"))]
 
 sys.path.insert(0, str(ROOT / "tests"))
 from helpers import load_script  # noqa: E402  (sibling test module)

@@ -1,0 +1,7 @@
+{
+  "name": "deep-research",
+  "owner": { "name": "Christine Ecker" },
+  "plugins": [
+    { "name": "deep-research", "source": "./" }
+  ]
+}

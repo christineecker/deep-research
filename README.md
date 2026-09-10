@@ -14,8 +14,8 @@ proxies, no scraping around access — unobtainable text is quarantined and hand
 or general web research.
 
 Summarising one paper, or a small user-specified/bounded-discovery set of papers, is supported as
-a separate lightweight profile — `scripts/paper.py summarize` / `summarize-set`
-(`references/single-paper-summary.md`) — not the full review pipeline below.
+a separate lightweight profile — `skills/deep-research/scripts/paper.py summarize` / `summarize-set`
+(`skills/deep-research/references/single-paper-summary.md`) — not the full review pipeline below.
 
 ## Invoking it
 
@@ -28,7 +28,7 @@ run's `config.json`:
 
 | Asked | Detail |
 |---|---|
-| Question | Restated back using the matching framework before anything runs — PICO/PECO by default, or PEO/PCC/SPIDER/SPICE for comparator-free, scoping, qualitative, or service-evaluation questions (`references/question-frameworks.md`) |
+| Question | Restated back using the matching framework before anything runs — PICO/PECO by default, or PEO/PCC/SPIDER/SPICE for comparator-free, scoping, qualitative, or service-evaluation questions (`skills/deep-research/references/question-frameworks.md`) |
 | Profile | `fast` / `standard` / `systematic` / `max` (table below), or scope/rigor/gates individually |
 | Target: wiki or standalone repo | Run directory, PDF/paper store, and shared pool all live inside it; see "Two ways to run this" below |
 | Filters | Years, authors, journals, article types, species/age, language, OA-only |
@@ -41,7 +41,7 @@ report. Only where the run, PDF/paper store, and shared cross-run pool live diff
 
 | | **Wiki mode** (default) | **Standalone repo mode** |
 |---|---|---|
-| Setup | A wiki-manager wiki must exist or be created | `python3 scripts/research.py init <path>` once |
+| Setup | A wiki-manager wiki must exist or be created | `python3 skills/deep-research/scripts/research.py init <path>` once |
 | Run lives at | `<wiki>/outputs/deep-research/<slug>/` | `<repo>/runs/<slug>/` |
 | Shared pool | `<wiki>/assets/papers/pool.jsonl` | `<repo>/data/papers/registry.jsonl` (`pool.jsonl` is a regenerated view of it) |
 | PDF/paper intake | `library.py` | `registry.py add` / `add-pdf` / `import-bib` / `import-folder` |
@@ -53,14 +53,13 @@ manuscript that lives in its own repo. `research.py export wiki` can copy a repo
 project's bundle into a wiki afterwards if you change your mind — a one-way courtesy copy, not a
 migration. `pool.py migrate --from-wiki <wiki> --repo <path>` goes the other way: pulls an
 existing wiki's pool (papers, extractions, appraisals) into a new standalone repo. Full layout
-and command mapping: `references/pool-architecture.md`.
+and command mapping: `skills/deep-research/references/pool-architecture.md`.
 
-For a hands-on walkthrough with local fixtures, start with
-[`tutorials/README.md`](tutorials/README.md). The tutorial covers standalone repo setup, manual
-paper intake, pool reuse, framework-specific appraisal, and manuscript export without requiring a
-generated wiki. You can also run the guided local tutorial with
-`python3 scripts/tutorial.py quickstart --repo /tmp/deep-research-tutorial-demo`, or build static
-HTML tutorials for online hosting with `python3 scripts/tutorial.py build-site --out exports/html/tutorials`.
+For a hands-on walkthrough, start with [`docs/quickstart.html`](docs/quickstart.html). It covers
+standalone repo setup, manual paper intake, pool reuse, framework-specific appraisal, and
+manuscript export without requiring a generated wiki. You can also run the guided local tutorial
+with `python3 skills/deep-research/scripts/tutorial.py quickstart --repo /tmp/deep-research-tutorial-demo`, which
+builds a demo repo from the fixtures in `skills/deep-research/scripts/fixtures/`.
 
 ## Profiles
 
@@ -136,7 +135,7 @@ downgrade for risk of bias, inconsistency, indirectness, imprecision, or publica
 ## Scientific frameworks and further reading
 
 The skill routes the question to one of PICO/PECO/PEO/PCC/SPIDER/SPICE
-(`references/question-frameworks.md`), and uses PRISMA-style flow reporting, RoB2, ROBINS-I,
+(`skills/deep-research/references/question-frameworks.md`), and uses PRISMA-style flow reporting, RoB2, ROBINS-I,
 Newcastle-Ottawa, AMSTAR-2, QUADAS-2, PROBAST, the CASP qualitative checklist, the JBI
 prevalence and analytical cross-sectional checklists, and GRADE.
 Additional frameworks under consideration are tracked in
@@ -183,11 +182,11 @@ Additional frameworks under consideration are tracked in
 
 The skill directory stays code-only; data lives in the wiki. **`<wiki>/wiki/` is never written
 to** — that belongs to wiki-manager (OKF 0.1). deep-research owns `<wiki>/research/` only
-(spec in `references/okf-bundle.md`); cross-links from `wiki/` into `research/` are yours to make.
+(spec in `skills/deep-research/references/okf-bundle.md`); cross-links from `wiki/` into `research/` are yours to make.
 
-Run `python3 scripts/library.py init --wiki <root>` once per wiki to set up `assets/papers/`.
+Run `python3 skills/deep-research/scripts/library.py init --wiki <root>` once per wiki to set up `assets/papers/`.
 
-**Standalone repo mode** (no wiki, no wiki-manager — `references/pool-architecture.md` for the
+**Standalone repo mode** (no wiki, no wiki-manager — `skills/deep-research/references/pool-architecture.md` for the
 full layout):
 
 ```
@@ -199,7 +198,7 @@ full layout):
   exports/         wiki / bib / html / docx / pdf
 ```
 
-Run `python3 scripts/research.py init <path>` once per repo, then `research.py project create
+Run `python3 skills/deep-research/scripts/research.py init <path>` once per repo, then `research.py project create
 <slug> --repo <path>` per manuscript project.
 
 ## Outputs
@@ -241,7 +240,7 @@ surfaces the result once acquisition has been attempted for **all** selected rec
    arrived by manual supply. Unmatched PDFs stay in `inbox/`, listed with a reason.
 
 Full policy — block format, abstract-only vs. true quarantine, matching thresholds, the
-step-by-step resume loop — is in `references/acquisition.md` §5–6.
+step-by-step resume loop — is in `skills/deep-research/references/acquisition.md` §5–6.
 
 ## Shared paper pool — never extract the same paper twice
 
@@ -267,7 +266,7 @@ Everything below applies to both, with `--wiki <root>` swapped for `--repo <path
   `appraise-promote` (repo) when Stage 5 (and again Stage 6) finishes — no separate step to
   remember.
 - **Seed before external search.** At the start of Stage 2, run
-  `python3 scripts/pool.py seed --run-dir <dir> --wiki <root>` (or `--repo <path>`) to add
+  `python3 skills/deep-research/scripts/pool.py seed --run-dir <dir> --wiki <root>` (or `--repo <path>`) to add
   matching pooled papers to the new run's `corpus.jsonl` with `source: pool` and
   `first_seen_query: pool-seed`. They are candidates only: Stage 3 still screens them against
   the new question before retrieval or reuse.
@@ -281,7 +280,7 @@ Everything below applies to both, with `--wiki <root>` swapped for `--repo <path
   constructed against the same `repo_root` already resolves them. Either way, a paper researched
   once is never re-extracted by a later run on a different question, and its citations stay
   fully auditable.
-- **BibTeX.** `python3 scripts/pool.py bib --wiki <root> --out refs.bib` emits one consolidated
+- **BibTeX.** `python3 skills/deep-research/scripts/pool.py bib --wiki <root> --out refs.bib` emits one consolidated
   `.bib` covering every paper ever pooled in that wiki — not just one run's included set — ready
   to cite in a manuscript. `--select appraised` narrows it to papers that also have an appraisal.
   (Repo mode: build a project's `refs.bib` from its own `manuscript.qmd` citations via
@@ -314,17 +313,17 @@ re-asks anything already in `config.json`. Just point the skill at the same ques
 say "resume".
 
 ```bash
-python3 scripts/corpus.py task stats  --run-dir <dir>
-python3 scripts/fulltext.py status    --run-dir <dir>
-python3 scripts/status.py <run-dir> --table     # PMID/title/authors/PDF status/screen/extract/appraise
-python3 scripts/status.py <run-dir> --missing   # records with no full text
+python3 skills/deep-research/scripts/corpus.py task stats  --run-dir <dir>
+python3 skills/deep-research/scripts/fulltext.py status    --run-dir <dir>
+python3 skills/deep-research/scripts/status.py <run-dir> --table     # PMID/title/authors/PDF status/screen/extract/appraise
+python3 skills/deep-research/scripts/status.py <run-dir> --missing   # records with no full text
 ```
 
 Never hand-edit `taskboard.jsonl` — `corpus.py task` is its only writer.
 
 ## Script reference
 
-All under `scripts/`, all `python3`.
+All under `skills/deep-research/scripts/`, all `python3`.
 
 | Script | Purpose |
 |---|---|
@@ -334,7 +333,7 @@ All under `scripts/`, all `python3`.
 | `pool.py` | Shared extraction/appraisal pool, `--wiki` or `--repo`: `seed`, `lookup`, `reuse` (carries spans across runs); `sync`/`bib`/`list` are wiki-mode only; `migrate --from-wiki` bridges a wiki pool into a repo |
 | `research.py` | Standalone repo (repo mode) lifecycle: `init`, `project create`/`list`, `export wiki` adapter |
 | `registry.py` | `data/papers/registry.jsonl` canonical registry (repo mode's counterpart to `library.py`+`pool.py`): `add`/`add-pdf`/`import-bib`/`import-folder`, `lookup`/`list`/`pool`, `promote`/`appraise-promote` (verified by default — `--strict`/`--no-verify`), `bib` (repo-mode BibTeX export) |
-| `tutorial.py` | Guided onboarding and static tutorial docs: `quickstart`, `build-site` |
+| `tutorial.py` | Guided onboarding: `quickstart` (demo repo from `skills/deep-research/scripts/fixtures/`) |
 | `corpus.py` | `corpus.jsonl` store, dedupe, PRISMA counters, screening ingestion, taskboard CLI |
 | `okf.py` | OKF bundle writer/validator for `<wiki>/research/`: `init`, `write`, `promote`, `validate` |
 | `render.py` | `report.md` → `refs.bib` + `report.qmd` → `quarto render` (`pdf`, `docx`, `html`, `all`) |
@@ -368,12 +367,12 @@ All under `scripts/`, all `python3`.
 
 ## Testing
 
-`scripts/eval.py` runs fixture-backed evals offline by default (`--live` opts into real PubMed).
+`skills/deep-research/scripts/eval.py` runs fixture-backed evals offline by default (`--live` opts into real PubMed).
 `python3 -m unittest discover -s tests` runs the unit suite. Neither needs credentials or network.
 
 ```bash
-DEEP_RESEARCH_FIXTURES=<dir> python3 scripts/eutils.py esearch --query '...'   # replay
-python3 scripts/fulltext.py acquire --run-dir <dir> --corpus <path> --offline  # local rungs only
-python3 scripts/okf.py selftest
-python3 scripts/verify.py run --run-dir <dir> --wiki <root> --json
+DEEP_RESEARCH_FIXTURES=<dir> python3 skills/deep-research/scripts/eutils.py esearch --query '...'   # replay
+python3 skills/deep-research/scripts/fulltext.py acquire --run-dir <dir> --corpus <path> --offline  # local rungs only
+python3 skills/deep-research/scripts/okf.py selftest
+python3 skills/deep-research/scripts/verify.py run --run-dir <dir> --wiki <root> --json
 ```
