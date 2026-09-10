@@ -120,7 +120,7 @@ import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _common import read_json, slugify  # noqa: E402  (sibling module, stdlib-only)
+from _common import read_json, slugify, repo_root_for_run  # noqa: E402  (sibling module, stdlib-only)
 
 SCHEMA_VERSION = 1
 HERE = Path(__file__).resolve().parent
@@ -580,10 +580,11 @@ PRISMA_LABEL_MAP: list[tuple[re.Pattern, tuple[str, ...]]] = [
 
 class Verifier:
     def __init__(self, run: RunData, report: Report, wiki: Path | None,
-                 gate: bool = False, gate_source: str = "default"):
+                 repo: Path | None = None, gate: bool = False, gate_source: str = "default"):
         self.run = run
         self.report = report
         self.wiki = wiki
+        self.repo = repo
         self.gate = bool(gate)
         self.gate_source = gate_source
         self.kernel: dict = {}
@@ -1460,7 +1461,8 @@ class Verifier:
                            "store_unavailable": True}
             return
         try:
-            self.store = store_mod.Store(self.run.run_dir, wiki_root=self.wiki)
+            self.store = store_mod.Store(self.run.run_dir, wiki_root=self.wiki,
+                                         repo_root=self.repo)
             self._collect_kernel_inputs()
         except Exception as exc:  # noqa: BLE001 - a broken store must not abort the other checks
             for check_id in KERNEL_CHECKS:
@@ -1778,8 +1780,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     data = RunData(run_dir)
     report = Report(report_path)
     wiki = Path(args.wiki).expanduser() if args.wiki else None
+    repo = Path(args.repo).expanduser() if args.repo else repo_root_for_run(run_dir)
     gate, gate_source = resolve_gate(run_dir, args.gate)
-    verifier = Verifier(data, report, wiki, gate=gate, gate_source=gate_source)
+    verifier = Verifier(data, report, wiki, repo=repo, gate=gate, gate_source=gate_source)
     result = verifier.run_all()
 
     out_path = run_dir / "outputs" / "verification.json"
@@ -1820,6 +1823,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--run-dir", required=True,
                    help="run directory <wiki>/outputs/deep-research/<slug>/")
     r.add_argument("--wiki", help="wiki root; enables C-OKF via okf.py validate")
+    r.add_argument("--repo", help="standalone repo root for global source fallback "
+                        "(default: inferred from --run-dir under <repo>/runs/<slug>)")
     r.add_argument("--report", help="report path (default: <run-dir>/outputs/report.md)")
     r.add_argument("--json", action="store_true", help="print the verification JSON to stdout")
     r.add_argument("--markdown", help="also write a human-readable summary here")

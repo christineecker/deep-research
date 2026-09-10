@@ -131,6 +131,28 @@ class StoreArchitectureTest(unittest.TestCase):
             self.assertFalse(stale["fresh"])
             self.assertEqual(stale["reason_code"], "ASSET_HASH_MISMATCH")
 
+    def test_store_verify_span_resolves_global_snapshot_cold(self):
+        with TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            _wiki, run = make_run(Path(td))
+            text = "Methods. The trial enrolled 42 adults and followed them for 12 weeks."
+            global_result = store.write_snapshot_result(
+                store.global_sources_root(repo),
+                url="https://example.org/global", text=text, title="Global",
+                access="full_text", origin="web", paper=None,
+                event_type="fetch", fresh=True, actor="test")
+            source_id = global_result["source_id"]
+            start = text.index("trial enrolled")
+            end = text.index(" and followed")
+
+            fresh_store = store.Store(run, repo_root=repo)
+            result = fresh_store.verify_span({
+                "source_id": source_id, "start": start, "end": end,
+                "text": text[start:end],
+            })
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["excerpt"], "trial enrolled 42 adults")
+
 
 if __name__ == "__main__":
     unittest.main()

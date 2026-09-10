@@ -308,7 +308,7 @@ All under `scripts/`, all `python3`.
 | `library.py` | Shared PDF library at `<wiki>/assets/papers/` (wiki mode): `init`, `lookup`, `add`, `ingest-inbox`, `list` |
 | `pool.py` | Shared extraction/appraisal pool, `--wiki` or `--repo`: `seed`, `lookup`, `reuse` (carries spans across runs); `sync`/`bib`/`list` are wiki-mode only; `migrate --from-wiki` bridges a wiki pool into a repo |
 | `research.py` | Standalone repo (repo mode) lifecycle: `init`, `project create`/`list`, `export wiki` adapter |
-| `registry.py` | `data/papers/registry.jsonl` canonical registry (repo mode's counterpart to `library.py`+`pool.py`): `add`/`add-pdf`/`import-bib`/`import-folder`, `lookup`/`list`/`pool`, `promote`/`appraise-promote` |
+| `registry.py` | `data/papers/registry.jsonl` canonical registry (repo mode's counterpart to `library.py`+`pool.py`): `add`/`add-pdf`/`import-bib`/`import-folder`, `lookup`/`list`/`pool`, `promote`/`appraise-promote` (verified by default — `--strict`/`--no-verify`), `bib` (repo-mode BibTeX export) |
 | `corpus.py` | `corpus.jsonl` store, dedupe, PRISMA counters, screening ingestion, taskboard CLI |
 | `okf.py` | OKF bundle writer/validator for `<wiki>/research/`: `init`, `write`, `promote`, `validate` |
 | `render.py` | `report.md` → `refs.bib` + `report.qmd` → `quarto render` (`pdf`, `docx`, `html`, `all`) |

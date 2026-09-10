@@ -427,7 +427,7 @@ def _iter_source_ids(obj) -> list[str]:
 
 
 def _carry_snapshots(origin_run_dir: Path, dest_run_dir: Path, source_ids: list[str],
-                     *, reused_from: str) -> tuple[list[str], list[dict]]:
+                     *, reused_from: str, dirname: str = "sources") -> tuple[list[str], list[dict]]:
     """Re-register each snapshot into `dest_run_dir` so its spans verify there too.
 
     Snapshots are content-addressed (`source_id = sha256(url + text)`, store.py R11):
@@ -448,7 +448,7 @@ def _carry_snapshots(origin_run_dir: Path, dest_run_dir: Path, source_ids: list[
             _store.register_text(
                 dest_run_dir, url=snap["url"], text=snap["text"], title=snap["title"],
                 access=snap["access"], origin=snap["origin"], paper=snap["paper"],
-                asset=snap.get("asset"),
+                asset=snap.get("asset"), dirname=dirname,
                 detail="reused from pool: originally retrieved in %s" % reused_from,
             )
         except _store.StoreError as exc:
@@ -554,8 +554,8 @@ def cmd_migrate(args) -> int:
     same freshest-pointer-that-still-resolves-on-disk logic `cmd_reuse` uses) into
     `data/papers/extractions/` / `data/papers/appraisals/<project>/`, carrying every
     snapshot the extraction/appraisal cites into the global source store so spans still
-    verify with no `wiki-manager` involved (`_carry_snapshots` — unchanged from `reuse`,
-    since `store.global_sources_root()` is just another run_dir-shaped write target).
+    verify with no `wiki-manager` involved (`_carry_snapshots`, same as `reuse`, but with
+    `dirname=store.GLOBAL_SNAPSHOT_DIRNAME` so writes land under `data/sources/snapshots/`).
     A pointer whose file has moved or vanished is reported under `stale_pointers`, never
     silently dropped.
     """
@@ -590,7 +590,7 @@ def cmd_migrate(args) -> int:
                 source_ids = _iter_source_ids(record)
                 carried, failed = _carry_snapshots(
                     origin_run_dir, _store.global_sources_root(args.repo), source_ids,
-                    reused_from=src["run"])
+                    reused_from=src["run"], dirname=_store.GLOBAL_SNAPSHOT_DIRNAME)
                 for f in failed:
                     stale_pointers.append({"evidence_id": eid, "kind": "snapshot",
                                            "run": src["run"], **f})

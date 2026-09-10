@@ -95,6 +95,7 @@ if __package__ in (None, ""):                      # sibling import when run as 
 
 import store                                        # noqa: E402
 from store import Store, StoreError                 # noqa: E402
+from _common import repo_root_for_run               # noqa: E402
 
 SCHEMA_VERSION = 1
 VERSION = "deep-research/0.1"
@@ -464,11 +465,12 @@ class Assembler:
     """One pass over one run directory. Instantiates exactly one `store.Store`."""
 
     def __init__(self, run_dir: Path, *, wiki_root: Path | None = None,
-                 strict: bool = False):
+                 repo_root: Path | None = None, strict: bool = False):
         self.run_dir = Path(run_dir).expanduser().resolve()
         if not self.run_dir.is_dir():
             raise FatalError("no such run directory: %s" % self.run_dir)
-        self.store = Store(self.run_dir, wiki_root)      # D5: hashed once, not per span
+        repo_root = repo_root or repo_root_for_run(self.run_dir)
+        self.store = Store(self.run_dir, wiki_root, repo_root=repo_root)  # D5: hashed once, not per span
         self.corpus = Corpus(_read_jsonl(self.run_dir / "corpus.jsonl"))
         self.strict = strict
         self.accepted: list[dict] = []
@@ -949,6 +951,7 @@ def _summary(result: dict, out_path: Path) -> str:
 def cmd_run(args) -> int:
     run_dir = Path(args.run_dir).expanduser()
     asm = Assembler(run_dir, wiki_root=Path(args.wiki).expanduser() if args.wiki else None,
+                    repo_root=Path(args.repo).expanduser() if args.repo else None,
                     strict=bool(args.strict))
     result = asm.run()
     out = Path(args.out).expanduser()
@@ -970,6 +973,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--run-dir", required=True, dest="run_dir",
                    help="<wiki>/outputs/deep-research/<slug>/")
     s.add_argument("--wiki", help="wiki root for asset paths (default: inferred from --run-dir)")
+    s.add_argument("--repo", help="standalone repo root for global source fallback "
+                        "(default: inferred from --run-dir under <repo>/runs/<slug>)")
     s.add_argument("--out", default="outputs/result.json",
                    help="output path, absolute or run-relative (default: outputs/result.json)")
     s.add_argument("--json", action="store_true", help="print the full result to stdout")

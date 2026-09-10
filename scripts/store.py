@@ -206,35 +206,80 @@ def parse_ts(value: str | None) -> _dt.datetime | None:
 # ---------------------------------------------------------------------- paths --
 
 
-def sources_dir(run_dir) -> Path:
-    return Path(run_dir).expanduser() / "sources"
+def sources_dir(run_dir, *, dirname: str = "sources") -> Path:
+    return Path(run_dir).expanduser() / dirname
 
 
 def events_path(run_dir) -> Path:
     return Path(run_dir).expanduser() / "events.jsonl"
 
 
-def snapshot_path(run_dir, source_id: str) -> Path:
+def snapshot_path(run_dir, source_id: str, *, dirname: str = "sources") -> Path:
     if not SOURCE_ID_RE.match(source_id or ""):
         raise SchemaError("malformed source_id: %r (want src-<64 lowercase hex>)" % (source_id,),
                           reason_code="UNKNOWN_SOURCE")
-    return sources_dir(run_dir) / (source_id + ".json")
+    return sources_dir(run_dir, dirname=dirname) / (source_id + ".json")
+
+
+#: The legacy global snapshot dirname (kept only for backward-compatible reads).
+_LEGACY_GLOBAL_SNAPSHOT_DIRNAME = "sources"
+
+#: The current global snapshot dirname (POOL_ARCHITECTURE_OPTIMIZATION_PLAN.md priority 3).
+GLOBAL_SNAPSHOT_DIRNAME = "snapshots"
 
 
 def global_sources_root(repo_root) -> Path:
     """`<repo>/data/sources` treated as a logical `run_dir` for the global source store
     (POOL_ARCHITECTURE_IMPLEMENTATION_PLAN.md "Source Storage").
 
-    Deliberate reuse, not a new path scheme: `sources_dir()`/`events_path()`/
-    `snapshot_path()` and every write/read/verify function above are already pure
-    functions of a `run_dir`-shaped directory (`<x>/sources/src-*.json`,
-    `<x>/events.jsonl`). Passing this path as that `run_dir` gets snapshots at
-    `data/sources/sources/src-*.json` and events at `data/sources/events.jsonl`
-    (the latter matches the plan exactly) through the same audited write-once/hash/
-    verify code, with zero new logic and zero risk to existing run-local behavior.
+    Reuse, not a new path scheme: `sources_dir()`/`events_path()`/`snapshot_path()` and
+    every write/read/verify function above are pure functions of a `run_dir`-shaped
+    directory, parameterized by `dirname` for the snapshot subdirectory. Passing this path
+    as that `run_dir` with `dirname=GLOBAL_SNAPSHOT_DIRNAME` gets snapshots at
+    `data/sources/snapshots/src-*.json` and events at `data/sources/events.jsonl`, through
+    the same audited write-once/hash/verify code, with zero risk to existing run-local
+    behavior (which always uses the `dirname="sources"` default).
     `data/sources/assets/` is separate: hash-named binary PDFs, not JSON snapshots.
+    `data/sources/sources/` is the legacy snapshot dirname; global reads fall back to it
+    for compatibility, global writes never use it (see `global_read_snapshot`).
     """
     return Path(repo_root).expanduser().resolve() / "data" / "sources"
+
+
+def global_snapshot_path(repo_root, source_id: str) -> Path:
+    """`data/sources/snapshots/<source_id>.json` — the current global snapshot location."""
+    return snapshot_path(global_sources_root(repo_root), source_id, dirname=GLOBAL_SNAPSHOT_DIRNAME)
+
+
+def global_events_path(repo_root) -> Path:
+    """`data/sources/events.jsonl` — shared regardless of snapshot dirname."""
+    return events_path(global_sources_root(repo_root))
+
+
+def global_read_snapshot(repo_root, source_id: str) -> dict:
+    """Read a global snapshot: `data/sources/snapshots/` first, then the legacy
+    `data/sources/sources/` dirname for compatibility with runs written before priority 3
+    of POOL_ARCHITECTURE_OPTIMIZATION_PLAN.md. Writes never use the legacy dirname."""
+    root = global_sources_root(repo_root)
+    try:
+        return read_snapshot(root, source_id, dirname=GLOBAL_SNAPSHOT_DIRNAME)
+    except UnknownSourceError:
+        return read_snapshot(root, source_id, dirname=_LEGACY_GLOBAL_SNAPSHOT_DIRNAME)
+
+
+def global_list_snapshots(repo_root) -> list[str]:
+    """Every global `source_id`, from both the current and legacy snapshot dirnames."""
+    root = global_sources_root(repo_root)
+    current = list_snapshots(root, dirname=GLOBAL_SNAPSHOT_DIRNAME)
+    legacy = list_snapshots(root, dirname=_LEGACY_GLOBAL_SNAPSHOT_DIRNAME)
+    return sorted(set(current) | set(legacy))
+
+
+def global_write_snapshot_result(repo_root, **kwargs) -> dict:
+    """Write a snapshot to the global store. Always writes to `data/sources/snapshots/`,
+    never to the legacy `data/sources/sources/` dirname (compatibility is read-only)."""
+    return write_snapshot_result(global_sources_root(repo_root), dirname=GLOBAL_SNAPSHOT_DIRNAME,
+                                 **kwargs)
 
 
 def run_created_at(run_dir) -> str | None:
@@ -255,10 +300,10 @@ def run_created_at(run_dir) -> str | None:
     return None
 
 
-def ensure_run(run_dir) -> Path:
-    """Create `<run>/sources/` if missing. Never touches anything else."""
+def ensure_run(run_dir, *, dirname: str = "sources") -> Path:
+    """Create `<run>/<dirname>/` if missing. Never touches anything else."""
     run = Path(run_dir).expanduser()
-    (run / "sources").mkdir(parents=True, exist_ok=True)
+    (run / dirname).mkdir(parents=True, exist_ok=True)
     return run
 
 
@@ -420,7 +465,7 @@ def write_snapshot_result(run_dir, *, url: str, text: str, title: str | None,
                           asset: dict | None = None, retrieved_at: str | None = None,
                           event_type: str = "fetch", fresh: bool = False,
                           actor: str = "main", detail: str | None = None,
-                          write_event: bool = True) -> dict:
+                          write_event: bool = True, dirname: str = "sources") -> dict:
     """Write a snapshot write-once and append its event. Returns the full write result.
 
     Returns ``{"snapshot": dict, "created": bool, "event": dict | None,
@@ -462,8 +507,8 @@ def write_snapshot_result(run_dir, *, url: str, text: str, title: str | None,
     snapshot = validate_snapshot(snapshot)
     check_snapshot_integrity(snapshot)
 
-    ensure_run(run_dir)
-    path = snapshot_path(run_dir, snapshot["source_id"])
+    ensure_run(run_dir, dirname=dirname)
+    path = snapshot_path(run_dir, snapshot["source_id"], dirname=dirname)
     payload = json.dumps(_ordered(snapshot, SNAPSHOT_FIELDS),
                          indent=2, ensure_ascii=False) + "\n"
     created = True
@@ -473,7 +518,7 @@ def write_snapshot_result(run_dir, *, url: str, text: str, title: str | None,
         if exc.errno != errno.EEXIST:
             raise StoreError("cannot create snapshot %s: %s" % (path, exc)) from exc
         created = False
-        existing = read_snapshot(run_dir, snapshot["source_id"])
+        existing = read_snapshot(run_dir, snapshot["source_id"], dirname=dirname)
         diff = [k for k in SNAPSHOT_FIELDS
                 if k != "retrieved_at" and existing.get(k) != snapshot.get(k)]
         if diff:
@@ -499,7 +544,7 @@ def write_snapshot_result(run_dir, *, url: str, text: str, title: str | None,
                        else sha256_text(snapshot["text"])),
             "actor": actor,
             "detail": detail,
-        })
+        }, dirname=dirname)
     return {"snapshot": snapshot, "created": created, "event": event,
             "path": str(path), "source_id": snapshot["source_id"]}
 
@@ -520,7 +565,7 @@ def write_snapshot(run_dir, *, url: str, text: str, title: str | None,
 def register_text(run_dir, *, url: str, text: str, title: str | None, access: str,
                   origin: str, paper: dict | None, asset: dict | None = None,
                   actor: str = "main", detail: str | None = None,
-                  retrieved_at: str | None = None) -> dict:
+                  retrieved_at: str | None = None, dirname: str = "sources") -> dict:
     """Fold text obtained elsewhere in the pipeline into the store (R22).
 
     For `eutils.py` abstracts, `fulltext.py` acquisitions and `library.py` cache hits from
@@ -531,11 +576,11 @@ def register_text(run_dir, *, url: str, text: str, title: str | None, access: st
     return write_snapshot(run_dir, url=url, text=text, title=title, access=access,
                           origin=origin, paper=paper, asset=asset,
                           retrieved_at=retrieved_at, event_type="register", fresh=False,
-                          actor=actor,
+                          actor=actor, dirname=dirname,
                           detail=detail or "registered from pipeline, not re-retrieved")
 
 
-def read_snapshot(run_dir, source_id: str) -> dict:
+def read_snapshot(run_dir, source_id: str, *, dirname: str = "sources") -> dict:
     """Load a snapshot and verify it. Raises on anything short of intact.
 
     Recomputes `content_hash` and `source_id` from the file's own `url` and `text` on
@@ -544,12 +589,12 @@ def read_snapshot(run_dir, source_id: str) -> dict:
     Raises `UnknownSourceError` (UNKNOWN_SOURCE), `SnapshotIntegrityError`
     (SNAPSHOT_HASH_MISMATCH) or `SchemaError`.
     """
-    path = snapshot_path(run_dir, source_id)
+    path = snapshot_path(run_dir, source_id, dirname=dirname)
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise UnknownSourceError("no snapshot %s under %s"
-                                 % (source_id, sources_dir(run_dir)),
+                                 % (source_id, sources_dir(run_dir, dirname=dirname)),
                                  source_id=source_id) from exc
     except OSError as exc:
         raise StoreError("cannot read snapshot %s: %s" % (path, exc)) from exc
@@ -584,9 +629,9 @@ def verify_snapshot(run_dir, source_id: str) -> dict:
             "access": snap["access"], "origin": snap["origin"]}
 
 
-def list_snapshots(run_dir) -> list[str]:
-    """Every `source_id` with a file under `<run>/sources/`, sorted. Does not verify."""
-    d = sources_dir(run_dir)
+def list_snapshots(run_dir, *, dirname: str = "sources") -> list[str]:
+    """Every `source_id` with a file under `<run>/<dirname>/`, sorted. Does not verify."""
+    d = sources_dir(run_dir, dirname=dirname)
     if not d.is_dir():
         return []
     return sorted(p.stem for p in d.glob("src-*.json") if SOURCE_ID_RE.match(p.stem))
@@ -756,7 +801,7 @@ def _next_event_id(events: list[dict]) -> str:
 _EVENT_LOCK = threading.RLock()
 
 
-def append_event(run_dir, event: dict) -> dict:
+def append_event(run_dir, event: dict, *, dirname: str = "sources") -> dict:
     """Append one line to `<run>/events.jsonl`. Append is the only mutation (§11).
 
     Allocates `event_id` when absent (R23: `ev-` + a zero-padded counter of at least four
@@ -769,7 +814,7 @@ def append_event(run_dir, event: dict) -> dict:
     partial line. Threads within one process are ordered by the lock; separate processes
     writing the same run concurrently are not, and never were.
     """
-    ensure_run(run_dir)
+    ensure_run(run_dir, dirname=dirname)
     rec = dict(event)
     rec.setdefault("schema_version", SCHEMA_VERSION)
     rec.setdefault("at", utcnow())
@@ -783,7 +828,7 @@ def append_event(run_dir, event: dict) -> dict:
         rec = validate_event(rec)
         if rec["type"] in ("fetch", "local_pdf", "register"):
             # R23: the snapshot exists before its event names it.
-            read_snapshot(run_dir, rec["source_id"])
+            read_snapshot(run_dir, rec["source_id"], dirname=dirname)
         seen = {e.get("event_id") for e in existing}
         if rec["event_id"] in seen:
             raise SchemaError("duplicate event_id %s in this run (R23)" % rec["event_id"])
@@ -963,7 +1008,7 @@ class Store:
                 if self.repo_root is None:
                     raise
                 try:
-                    snap = read_snapshot(global_sources_root(self.repo_root), source_id)
+                    snap = global_read_snapshot(self.repo_root, source_id)
                 except StoreError as exc:
                     self._errors[source_id] = exc
                     raise
@@ -988,7 +1033,7 @@ class Store:
         local = list_snapshots(self.run_dir)
         if self.repo_root is None:
             return local
-        glob = list_snapshots(global_sources_root(self.repo_root))
+        glob = global_list_snapshots(self.repo_root)
         return sorted(set(local) | set(glob))
 
     def slice_span(self, source_id: str, start: int, end: int) -> str:
@@ -998,8 +1043,11 @@ class Store:
                     strict_access: bool = False) -> dict:
         source_id = span_record.get("source_id") if isinstance(span_record, dict) else None
         snapshot = None
-        if isinstance(source_id, str) and source_id in self._snapshots:
-            snapshot = self._snapshots[source_id]
+        if isinstance(source_id, str):
+            try:
+                snapshot = self.read_snapshot(source_id)
+            except StoreError:
+                snapshot = None
         return verify_span(self.run_dir, span_record, excerpt=excerpt,
                            strict_access=strict_access, snapshot=snapshot)
 
@@ -1022,8 +1070,27 @@ class Store:
         return self._created_at
 
     def freshness(self, source_id: str) -> dict:
-        return freshness(self.run_dir, source_id, wiki_root=self.wiki_root,
-                         events=self.events, created_at=self.created_at)
+        """R15 freshness is inherently per-run (a source is fresh only if *this* run fetched
+        it), so a source reused from another run/the global store is correctly never fresh —
+        that is not a bug. But the module-level check below only ever looks the snapshot up
+        run-locally to pick a reason_code, so a source that resolves fine through the global
+        store (just not freshly, here) would misreport as UNKNOWN_SOURCE instead of
+        NO_FRESH_FETCH. Downgrade that specific case; a source that is genuinely missing or
+        tampered (self.read_snapshot also fails) still reports UNKNOWN_SOURCE/
+        SNAPSHOT_HASH_MISMATCH untouched."""
+        result = freshness(self.run_dir, source_id, wiki_root=self.wiki_root,
+                           events=self.events, created_at=self.created_at)
+        if not result["fresh"] and result["reason_code"] == "UNKNOWN_SOURCE":
+            try:
+                self.read_snapshot(source_id)
+            except StoreError:
+                pass
+            else:
+                result = dict(result, reason_code="NO_FRESH_FETCH",
+                             detail="resolves via the global source store, but no fetch/"
+                                    "local_pdf event in this run satisfies all five "
+                                    "conditions (R15)")
+        return result
 
     def has_fresh_retrieval(self, source_id_or_url: str) -> bool:
         if SOURCE_ID_RE.match(source_id_or_url or ""):
@@ -1034,14 +1101,15 @@ class Store:
     def write_snapshot(self, *, local: bool = False, **kwargs) -> dict:
         """Writes go to the global store when `repo_root` is set (plan "Source Storage":
         "writes should go to the global source store unless explicitly requested
-        otherwise"); pass `local=True` to force a run-local write regardless."""
-        target = self.run_dir if (local or self.repo_root is None) \
-            else global_sources_root(self.repo_root)
-        out = write_snapshot_result(target, **kwargs)
+        otherwise"); pass `local=True` to force a run-local write regardless. Global writes
+        always land under `data/sources/snapshots/` (never the legacy dirname)."""
+        if local or self.repo_root is None:
+            out = write_snapshot_result(self.run_dir, **kwargs)
+            self._events = None
+        else:
+            out = global_write_snapshot_result(self.repo_root, **kwargs)
         self._snapshots[out["source_id"]] = out["snapshot"]
         self._errors.pop(out["source_id"], None)
-        if target == self.run_dir:
-            self._events = None
         return out["snapshot"]
 
     def stats(self) -> dict:

@@ -533,7 +533,7 @@ resolved blocks.
 | `scripts/library.py` | `<wiki>/assets/papers/` PDF index, matching, inbox ingestion |
 | `scripts/pool.py` | shared extraction/appraisal pool, `--wiki` or `--repo` (`seed` before search; `reuse` carries spans across runs via the evidence kernel); `migrate --from-wiki` bridges a legacy wiki pool into a repo; wiki-wide BibTeX |
 | `scripts/research.py` | standalone repo (`repo_root`) mode: `init`, `project create/list`, `export wiki` adapter — see `references/pool-architecture.md` |
-| `scripts/registry.py` | `data/papers/registry.jsonl` canonical paper registry (repo mode's counterpart to `library.py`+`pool.py`): `add`/`add-pdf`/`import-bib`/`import-folder`, `lookup`, `promote`/`appraise-promote` |
+| `scripts/registry.py` | `data/papers/registry.jsonl` canonical paper registry (repo mode's counterpart to `library.py`+`pool.py`): `add`/`add-pdf`/`import-bib`/`import-folder`, `lookup`, `promote`/`appraise-promote` (span-verified by default), `bib` (repo-mode BibTeX export) |
 | `scripts/corpus.py` | corpus.jsonl, dedupe, PRISMA counters, `task` CLI, guards |
 | `scripts/okf.py` | bundle concept writer + validator |
 | `scripts/render.py` | report.md → .qmd + refs.bib → quarto render (pdf/docx) |

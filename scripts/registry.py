@@ -17,6 +17,8 @@ Subcommands
   lookup   --repo (--pmid|--doi|--pmcid|--evidence-id)   find a registry record
   list     --repo                                dump registry entries
   pool     --repo                                regenerate data/papers/pool.jsonl from the registry
+  promote  --repo --run-dir [--strict|--no-verify]  promote a run's extractions into the canonical store
+  bib      --repo --out [--select all|extracted|appraised] [--project]   export BibTeX
 
 Environment: python3, stdlib only. No pip installs.
 """
@@ -33,6 +35,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import utcnow  # noqa: E402  (sibling module, stdlib-only)
 import corpus as _corpus  # noqa: E402  (derive_evidence_id, norm_pmid/doi/pmcid, normalize_record)
+import store as _store  # noqa: E402  (Store, StoreError: promotion span verification)
+import render as _render  # noqa: E402  (build_entry, bib_key, atomic_write: repo-mode bib export)
 
 SCHEMA_VERSION = 1
 
@@ -134,6 +138,17 @@ class Registry:
         npmcid = _corpus.norm_pmcid(pmcid)
         if npmcid and f"pmcid:{npmcid}" in self.records:
             return self.records[f"pmcid:{npmcid}"]
+        # Primary-key lookup misses a record keyed by a *different* identifier that
+        # also carries this one (e.g. keyed pmid:123, looked up by its DOI): scan the
+        # normalized identifier fields instead of giving up.
+        if npmid or ndoi or npmcid:
+            for rec in self.records.values():
+                if npmid and _corpus.norm_pmid(rec.get("pmid")) == npmid:
+                    return rec
+                if ndoi and _corpus.norm_doi(rec.get("doi")) == ndoi:
+                    return rec
+                if npmcid and _corpus.norm_pmcid(rec.get("pmcid")) == npmcid:
+                    return rec
         return None
 
     def register(self, raw: dict, *, allow_extra: bool = True) -> tuple[dict, bool]:
@@ -496,6 +511,49 @@ def extraction_slug(evidence_id: str) -> str:
     return (evidence_id or "").replace(":", "-", 1).replace("/", "-")
 
 
+def _extraction_spans(rec: dict) -> list[dict]:
+    """Every claim-span record in an extraction (schema.md §7): top-level `spans` and
+    each `outcomes[].spans`. Mirrors `assemble.py _spans_of`, scoped to what promotion
+    needs to verify — not a full re-implementation of the assembler's artifact model."""
+    spans: list[dict] = []
+    top = rec.get("spans")
+    if isinstance(top, list):
+        spans.extend(s for s in top if isinstance(s, dict))
+    for outcome in rec.get("outcomes") or []:
+        if not isinstance(outcome, dict):
+            continue
+        osp = outcome.get("spans")
+        if isinstance(osp, list):
+            spans.extend(s for s in osp if isinstance(s, dict))
+    return spans
+
+
+def _verify_extraction_for_promotion(
+        eid: str, src_path: Path, span_store: "_store.Store") -> tuple[dict | None, str | None]:
+    """Priority 6 (POOL_ARCHITECTURE_OPTIMIZATION_PLAN.md): before promotion, confirm the
+    extraction's own `evidence_id` matches the corpus record and every span verifies.
+
+    Returns `(extraction, None)` on success — `extraction` has a missing `evidence_id`
+    filled in (the only correction ever made) — or `(None, reason)` to skip promotion.
+    """
+    try:
+        extraction = json.loads(src_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"unreadable extraction JSON: {exc}"
+    if not isinstance(extraction, dict):
+        return None, "extraction is not a JSON object"
+    rec_eid = extraction.get("evidence_id")
+    if rec_eid is None:
+        extraction["evidence_id"] = eid
+    elif rec_eid != eid:
+        return None, f"extraction evidence_id {rec_eid!r} disagrees with corpus evidence_id {eid!r}"
+    for i, span in enumerate(_extraction_spans(extraction)):
+        result = span_store.verify_span(span)
+        if not result["ok"]:
+            return None, f"span[{i}] {result['reason_code']}: {result['detail']}"
+    return extraction, None
+
+
 def cmd_promote(args) -> int:
     """Stage 5 completion: copy a run's workspace extractions into the canonical
     `data/papers/extractions/` store and update the registry (plan "Stage 5 Promotion").
@@ -503,11 +561,21 @@ def cmd_promote(args) -> int:
     The run keeps its workspace copy for auditability; only the corpus record's
     `extraction_path` is repointed at the canonical, repo-relative path so later reuse
     (this run or any other) prefers the canonical copy over a run-local pointer.
+
+    By default (Priority 6, POOL_ARCHITECTURE_OPTIMIZATION_PLAN.md), each extraction is
+    verified before promotion: its `evidence_id` must match the corpus record, and every
+    span it carries must verify against the run-local or global source store. A record
+    that fails either check is skipped, never silently promoted. `--no-verify` restores
+    the old copy-only behavior (migration/debugging). `--strict` makes any skip a hard
+    failure (exit 1) instead of a best-effort partial promotion.
     """
     run_dir = Path(args.run_dir).expanduser().resolve()
     corpus_path = Path(args.corpus) if args.corpus else run_dir / "corpus.jsonl"
-    registry = Registry(args.repo)
+    repo_root = Path(args.repo).expanduser().resolve()
+    registry = Registry(repo_root)
     extractions_dir = registry.paths["extractions"]
+    verify = not args.no_verify
+    span_store = _store.Store(run_dir, repo_root=repo_root) if verify else None
 
     promoted, skipped = [], []
     with advisory_lock(args.repo, "registry"), _corpus.advisory_lock(run_dir, "corpus"):
@@ -523,10 +591,20 @@ def cmd_promote(args) -> int:
             if not src_path.exists():
                 skipped.append({"evidence_id": eid, "reason": f"missing file: {src_path}"})
                 continue
+
+            extraction = None
+            if verify:
+                extraction, reason = _verify_extraction_for_promotion(eid, src_path, span_store)
+                if reason is not None:
+                    skipped.append({"evidence_id": eid, "reason": reason})
+                    continue
+
             dest_path = extractions_dir / f"{extraction_slug(eid)}.json"
             if not args.dry_run:
                 extractions_dir.mkdir(parents=True, exist_ok=True)
-                dest_path.write_text(src_path.read_text(encoding="utf-8"), encoding="utf-8")
+                payload = (json.dumps(extraction, indent=2, ensure_ascii=False) + "\n"
+                          if extraction is not None else src_path.read_text(encoding="utf-8"))
+                dest_path.write_text(payload, encoding="utf-8")
                 canonical_rel = str(dest_path.relative_to(registry.repo_root))
                 registry.register({k: rec.get(k) for k in REGISTRY_FIELDS if rec.get(k)}
                                   | {"evidence_id": eid})
@@ -539,10 +617,11 @@ def cmd_promote(args) -> int:
             corpus.save()
 
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "promote",
-          "dry_run": args.dry_run, "repo": str(registry.repo_root), "run_dir": str(run_dir),
+          "dry_run": args.dry_run, "verify": verify, "strict": bool(args.strict),
+          "repo": str(registry.repo_root), "run_dir": str(run_dir),
           "promoted": len(promoted), "skipped": len(skipped),
           "records": promoted, "skipped_records": skipped})
-    return 0
+    return 1 if (args.strict and skipped) else 0
 
 
 def cmd_appraise_promote(args) -> int:
@@ -598,6 +677,47 @@ def cmd_pool(args) -> int:
     return 0
 
 
+def cmd_bib(args) -> int:
+    """Priority 7 (POOL_ARCHITECTURE_OPTIMIZATION_PLAN.md): repo-mode BibTeX export,
+    parallel to the legacy wiki-mode `pool.py bib` but reading the registry instead of the
+    wiki pool. `--select appraised` requires `--project` — appraisal is project-scoped
+    (`set_appraisal`), never a universal paper property."""
+    registry = Registry(args.repo)
+    records = list(registry.records.values())
+    if args.select == "extracted":
+        records = [r for r in records if r.get("extraction_path")]
+    elif args.select == "appraised":
+        if not args.project:
+            emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "bib",
+                  "error": "--select appraised requires --project"})
+            return 2
+        records = [r for r in records if (r.get("appraisals") or {}).get(args.project)]
+    elif args.project:
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "bib",
+              "error": "--project only applies to --select appraised"})
+        return 2
+
+    by_key = {}
+    for rec in records:
+        by_key[_render.bib_key(rec["evidence_id"])] = rec
+    header = (
+        "% refs.bib — GENERATED by scripts/registry.py bib. Do not hand-edit; "
+        "regenerating overwrites.\n"
+        f"% source: {registry.path}  entries: {len(by_key)}  selection: {args.select}"
+        f"{' project=' + args.project if args.project else ''}\n"
+        "% citation key = evidence_id with all non-alphanumerics stripped "
+        "(references/schema.md R6)\n\n"
+    )
+    entries = [_render.build_entry(by_key[key]) for key in sorted(by_key)]
+    out_path = Path(args.out)
+    _render.atomic_write(out_path, header + "\n".join(entries))
+    emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "bib",
+          "repo": str(registry.repo_root), "out": str(out_path),
+          "registry_size": len(registry.records), "entries_written": len(entries),
+          "selection": args.select, "project": args.project})
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="registry.py", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -648,11 +768,25 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--repo", required=True)
     s.set_defaults(func=cmd_pool)
 
+    s = sub.add_parser("bib", help="export repo-wide or scoped BibTeX from the registry")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--out", required=True, help="output .bib path")
+    s.add_argument("--select", choices=("all", "extracted", "appraised"), default="all")
+    s.add_argument("--project", help="restrict to this project's appraised records "
+                                     "(required with --select appraised)")
+    s.set_defaults(func=cmd_bib)
+
     s = sub.add_parser("promote", help="promote a run's extractions into the canonical store")
     s.add_argument("--repo", required=True)
     s.add_argument("--run-dir", required=True, dest="run_dir")
     s.add_argument("--corpus", help="corpus.jsonl (default: <run-dir>/corpus.jsonl)")
     s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--strict", action="store_true",
+                   help="exit 1 if any extraction is skipped (missing file, evidence_id "
+                        "mismatch, or an unverifiable span); default is best-effort")
+    s.add_argument("--no-verify", action="store_true",
+                   help="skip evidence_id/span verification and copy extractions as-is "
+                        "(the pre-priority-6 behavior; for migration/debugging)")
     s.set_defaults(func=cmd_promote)
 
     s = sub.add_parser("appraise-promote",
