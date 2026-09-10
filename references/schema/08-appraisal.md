@@ -55,7 +55,7 @@ Shared rules: `references/schema/00-shared.md`. Index: `references/schema.md`.
 | `pmid` | string \| null | yes | PMID as string; `null` for non-PubMed evidence. |
 | `evidence_id` | string | yes | Links back to the corpus record. |
 | `tool` | enum | yes | `RoB2` \| `ROBINS-I` \| `Newcastle-Ottawa` \| `AMSTAR-2` \| `none`. `none` = no in-scope instrument applies (narrative review, guideline, editorial, abstract-only record, cross-sectional/diagnostic/qualitative/animal/modelling design). |
-| `domains` | object[] | yes | Tool-specific domains in the tool's canonical order. **Exactly `[]` when `tool == "none"`** — the reason then lives in `overall_judgement` and is recorded as a pipeline limitation, not a quality verdict. See `references/appraisal.md`. |
+| `domains` | object[] | yes | Tool-specific domains in the tool's canonical order. **Exactly `[]` when `tool == "none"`** — the reason is recorded in the appraiser receipt summary and report limitations, not as a domain or quality verdict. See `references/appraisal.md`. |
 | `overall_judgement` | string | yes | Tool-appropriate overall rating: RoB2/ROBINS-I `low` \| `some_concerns` \| `moderate` \| `serious` \| `critical` \| `high` \| `unclear`; NOS a star count string (`"7/9"`); AMSTAR-2 `high` \| `moderate` \| `low` \| `critically_low`. |
 | `grade` | object \| null | yes | GRADE domains for the body of evidence this study contributes to. `null` when GRADE is applied only at outcome level elsewhere. |
 | `evidence_basis` | enum | yes | `fulltext` \| `abstract_only`. An `abstract_only` appraisal must set every domain not assessable from an abstract to `unclear` with rationale `"not assessable from abstract"`. |

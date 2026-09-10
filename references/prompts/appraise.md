@@ -69,8 +69,8 @@ Read this twice. Your judgements are only as good as what you can point at.
 `tool` is a closed enum: `RoB2` | `ROBINS-I` | `Newcastle-Ottawa` | `AMSTAR-2` | `none`.
 If the design is ambiguous, pick the tool that matches what the paper actually did (as
 described in Methods), not what it calls itself, and record the reasoning in the first domain's
-`rationale`. `tool: "none"` REQUIRES at least one domain entry whose `rationale` states why no
-instrument applies.
+`rationale`. `tool: "none"` REQUIRES `domains: []`; state why no instrument applies in the
+receipt summary so the coordinator can carry it into the report, not as a fabricated domain.
 
 ## Step 2 — domain judgements
 
@@ -139,7 +139,7 @@ pretty-printed JSON object, exactly this shape:
 | `pmid` | string; `null` for non-PubMed evidence |
 | `evidence_id` | exactly `{{EVIDENCE_ID}}` |
 | `tool` | closed enum, chosen in step 1 |
-| `domains` | tool's canonical domains, canonical order; `[]` only when `tool == "none"` and even then prefer one explanatory entry |
+| `domains` | tool's canonical domains, canonical order; exactly `[]` when `tool == "none"` |
 | `domains[].rationale` | <=300 chars, states the evidence for the judgement. Never empty — `unclear` still needs a reason |
 | `domains[].spans` | one or more claim spans locating the reported method the judgement rests on. **Required for every judgement that is not `unclear`.** An `unclear` grounded in absent reporting takes `spans: []` — there is nothing to point at, and that is the honest record |
 | `overall_judgement` | RoB2/ROBINS-I: `low` \| `some_concerns` \| `moderate` \| `serious` \| `critical` \| `high` \| `unclear`. NOS: star string, e.g. `"7/9"`. AMSTAR-2: `high` \| `moderate` \| `low` \| `critically_low` |
@@ -188,8 +188,8 @@ If `{{EVIDENCE_BASIS}}` is `abstract_only`, an abstract cannot support a conduct
   `rationale: "not assessable from abstract"` and `spans: []`.
 - `overall_judgement` is `unclear` unless a tool convention says otherwise. Never assign a
   favourable overall rating to an abstract-only record.
-- Prefer `tool: "none"` with one explanatory domain when even domain names would imply access
-  you do not have.
+- Prefer `tool: "none"` with `domains: []` when even domain names would imply access you do not
+  have; put the reason in the receipt summary.
 - GRADE `risk_of_bias` for such a record is at least `serious`.
 
 ## Honesty rules

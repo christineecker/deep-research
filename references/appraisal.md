@@ -13,6 +13,71 @@ Governing invariants (`SKILL.md` "Invariants"):
 
 ---
 
+## Appraisal strategy
+
+Appraisal is not a generic quality score. It is a structured judgement about whether the design,
+conduct, analysis, and reporting let the review use a result for the question at hand.
+
+Use this order every time:
+
+1. Identify the **review question and result being appraised**: population, intervention/exposure,
+   comparator, outcome, effect measure, follow-up window, and whether the question is about
+   assignment to an intervention or adherence to it.
+2. Pick the **instrument from the study design**, not from the paper's self-description. A paper
+   can call itself "prospective" or "real-world" without changing the bias tool it needs.
+3. Appraise the **specific result**, not the article's general polish. Risk can differ across
+   outcomes inside the same paper.
+4. Anchor every non-`unclear` judgement to a span in the retrieved source. A domain rationale
+   without source offsets is reasoning without auditability.
+5. Convert domain judgements to the tool's overall judgement using the tool algorithm. Do not
+   average, vote, or compensate a serious domain with several reassuring ones.
+6. Carry the appraisal into synthesis as a **constraint on claims**. High-risk or abstract-only
+   studies can still be described, but they should not support strong effect language.
+
+### Strategy by evidence question
+
+| Question type | Typical eligible designs | Primary appraisal strategy | Synthesis consequence |
+|---|---|---|---|
+| Intervention efficacy/effectiveness | Randomized trials; non-randomized intervention studies | RoB 2 for randomized results; ROBINS-I for non-randomized intervention results against a target trial | Separate randomized and non-randomized bodies unless the protocol pre-specifies combining them |
+| Intervention harms/safety | RCT harms, cohorts, case-control studies, registries | RoB 2 if harms were measured as trial outcomes; ROBINS-I/NOS when harms come from observational follow-up | Harms often drive indirectness and imprecision; state follow-up and ascertainment limits |
+| Etiology/risk factors/prognosis | Cohort or case-control studies | Newcastle-Ottawa, with principal confounders declared before awarding comparability stars | Report star counts and lost domains; do not translate NOS stars into "low risk" |
+| Diagnostic accuracy | Cross-sectional or case-control diagnostic studies | `tool: "none"` in this pipeline; QUADAS-2 is out of scope | Treat as unappraised by this skill and name the missing instrument as a limitation |
+| Prevalence/burden/descriptive epidemiology | Cross-sectional surveys, registries, surveillance | `tool: "none"` in this pipeline unless a comparator/exposure design triggers another tool | Summarize descriptively; do not attach RoB 2/ROBINS-I/NOS labels |
+| Systematic reviews | Systematic review +/- meta-analysis | AMSTAR-2 for confidence in the review's results | Avoid double-counting included primary studies already present in the corpus |
+| Guidelines, editorials, narrative reviews | Non-systematic secondary or opinion sources | `tool: "none"` | Use as background only, never as appraised effect evidence |
+
+### Mixed-design bodies
+
+When a review includes multiple design families, appraise each study with its own tool and keep
+the synthesis stratified until the evidence is stable enough to compare:
+
+- Randomized and non-randomized intervention evidence answer different versions of the same
+  causal question unless the non-randomized studies explicitly emulate a target trial.
+- Primary studies and systematic reviews should not be counted as independent evidence for the
+  same effect when the review includes those same primary studies. Use systematic reviews for
+  context, search leads, and consistency checks, then privilege the freshest primary extraction
+  when both are available.
+- A single paper can contribute appraised evidence for one outcome and only descriptive context
+  for another. Name the outcome appraised in the rationale.
+- When all usable records are abstract-only or `tool: "none"`, synthesis must say the body was
+  not critically appraised by an in-scope instrument. Do not write certainty language that implies
+  a completed risk-of-bias assessment.
+
+### Downgrading claim strength
+
+Appraisal changes the verbs the report is allowed to use:
+
+| Appraisal pattern | Report language |
+|---|---|
+| Mostly low RoB 2, consistent direction, no serious GRADE downgrades | Direct effect language allowed, matched to GRADE certainty |
+| Some concerns / moderate ROBINS-I / missing protocol details | Use qualified language ("probably", "may") and name the limitation |
+| Serious or high risk in domains central to the outcome | Present as weak support or hypothesis-generating, not a firm effect |
+| Critical ROBINS-I domain | Do not include in effect synthesis; describe only as methodologically unusable for that effect |
+| Abstract-only appraisal | Label at point of use; no low-risk or high-certainty language |
+| `tool: "none"` because no in-scope instrument applies | Describe design and limitation; do not imply the study was appraised |
+
+---
+
 ## 1. Tool selection
 
 Driven by `extraction record.design` (schema §7) plus `corpus record.article_types`.
@@ -36,9 +101,9 @@ Pick exactly one tool. Record it in `appraisal record.tool`.
 ### The `none` case
 
 `tool: "none"` is a legitimate, common outcome, not a failure. Schema §8 requires `domains: []`
-and an `overall_judgement` — use `"unclear"` — and the reason must be stated. Because `domains`
-must be empty for `tool: "none"`, put the reason in the record's rationale slot the prompt
-provides; never leave it implicit.
+and an `overall_judgement` — use `"unclear"`. State the reason in the appraiser receipt summary
+and carry it into the report's risk-of-bias / quality section as a pipeline limitation; never
+invent a pseudo-domain just to hold an explanation.
 
 ```json
 {
