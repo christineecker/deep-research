@@ -5,6 +5,12 @@ Stage 8 of `SKILL.md` "Pipeline". Runs in **main**. Produces `outputs/report.md`
 via `scripts/okf.py`. Verified by `scripts/verify.py` → `outputs/verification.json`
 (schema §9) before delivery.
 
+This is the full multi-paper manuscript report. A single-paper or selected-paper summary
+(`references/single-paper-summary.md`) is a different, shorter deliverable — `outputs/
+single-paper-summary.md` / `outputs/paper-summary-set.md`, rendered from `templates/
+single-paper-summary.md` / `templates/paper-summary-set.md` and verified by `scripts/verify.py
+single-paper-summary` / `paper-summary-set`, not this stage's report skeleton or `C-SECTIONS`.
+
 Governing invariants (`SKILL.md` "Invariants"):
 
 - No claim without an `evidence_id` retrieved this run.

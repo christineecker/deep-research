@@ -1,6 +1,6 @@
 ---
 name: deep-research
-description: Thorough PubMed-centred literature research — gather evidence for a scientific question, critically appraise it, synthesise it, and surface gaps and hypotheses. Use when the user asks for a literature review, systematic review, evidence synthesis, "what does the evidence say about X", "deep research on X", a PubMed search, critical appraisal of a body of literature, or wants papers screened, extracted, appraised (RoB2/ROBINS-I/GRADE) and written up with citations. Not for single-paper summaries or general web research.
+description: Thorough PubMed-centred literature research — gather evidence for a scientific question, critically appraise it, synthesise it, and surface gaps and hypotheses. Use when the user asks for a literature review, systematic review, evidence synthesis, "what does the evidence say about X", "deep research on X", a PubMed search, critical appraisal of a body of literature, or wants papers screened, extracted, appraised (RoB2/ROBINS-I/GRADE) and written up with citations. Not for general web research. For summarizing one paper or a small user-specified/bounded-discovery set of papers, use the lightweight `scripts/paper.py summarize`/`summarize-set` profile (`references/single-paper-summary.md`) instead of this full pipeline.
 ---
 
 # deep-research

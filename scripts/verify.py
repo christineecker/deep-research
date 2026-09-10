@@ -125,6 +125,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import read_json, slugify, repo_root_for_run  # noqa: E402  (sibling module, stdlib-only)
+import paper_summary as _ps  # noqa: E402  (single-paper/set summary structural checks)
 
 SCHEMA_VERSION = 1
 HERE = Path(__file__).resolve().parent
@@ -2005,6 +2006,233 @@ def atomic_write(path: Path, text: str) -> None:
     tmp.replace(path)
 
 
+# --------------------------------------------------------------------------- single-paper /
+# selected-paper summary verification (`references/single-paper-summary.md` "Verification")
+
+
+def _load_or_fatal(path: Path, what: str) -> dict:
+    if not path.exists():
+        raise FatalError(f"{what} not found: {path}")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise FatalError(f"{what} is not valid JSON: {exc}")
+
+
+def _resolve_record_path(run_dir: Path, repo: Path | None, rel: str | None) -> Path | None:
+    if not rel:
+        return None
+    p = Path(rel)
+    if p.is_absolute():
+        return p
+    run_local = run_dir / p
+    if run_local.exists():
+        return run_local
+    if repo is not None:
+        return repo / p
+    return run_local
+
+
+def check_single_paper_summary(summary: dict, run_dir: Path, repo: Path | None) -> list[dict]:
+    checks: list[dict] = []
+
+    def add(check_id: str, status: str, detail: str) -> None:
+        checks.append({"check_id": check_id, "status": status, "detail": detail})
+
+    errors = _ps.validate_summary_shape(summary)
+    add("C-SPS-SCHEMA", FAIL if errors else PASS,
+        "; ".join(errors) if errors else "schema §14 shape OK")
+
+    extraction_path = _resolve_record_path(run_dir, repo, summary.get("extraction_path"))
+    extraction = None
+    if extraction_path is None or not extraction_path.exists():
+        add("C-SPS-EXTRACTION-LINK", FAIL,
+            f"extraction_path does not resolve: {summary.get('extraction_path')!r}")
+    else:
+        extraction = json.loads(extraction_path.read_text(encoding="utf-8"))
+        if extraction.get("evidence_id") != summary.get("evidence_id"):
+            add("C-SPS-EXTRACTION-LINK", FAIL,
+                f"extraction evidence_id {extraction.get('evidence_id')!r} != "
+                f"summary evidence_id {summary.get('evidence_id')!r}")
+        else:
+            add("C-SPS-EXTRACTION-LINK", PASS, "extraction evidence_id matches")
+
+    appraisal = None
+    appraisal_path = _resolve_record_path(run_dir, repo, summary.get("appraisal_path"))
+    if summary.get("appraisal_path"):
+        if appraisal_path is None or not appraisal_path.exists():
+            add("C-SPS-APPRAISAL", FAIL,
+                f"appraisal_path does not resolve: {summary.get('appraisal_path')!r}")
+        else:
+            appraisal = json.loads(appraisal_path.read_text(encoding="utf-8"))
+            add("C-SPS-APPRAISAL", PASS, "appraisal linked")
+    elif summary.get("appraisal_skipped_reason") in _ps.APPRAISAL_SKIP_REASONS:
+        add("C-SPS-APPRAISAL", PASS,
+            f"appraisal skipped: {summary['appraisal_skipped_reason']}")
+    else:
+        add("C-SPS-APPRAISAL", FAIL,
+            "no appraisal_path and no valid appraisal_skipped_reason")
+
+    span_errors = []
+    for sec in summary.get("sections") or []:
+        for claim in sec.get("claims") or []:
+            for ref in claim.get("span_refs") or []:
+                reason = _ps.resolve_span_ref(ref, extraction, appraisal)
+                if reason:
+                    span_errors.append(f"{sec.get('name')}: {reason}")
+    add("C-SPS-SPAN-REFS", FAIL if span_errors else PASS,
+        "; ".join(span_errors) if span_errors else "every span_ref resolves")
+
+    evidence_id = summary.get("evidence_id")
+    mismatched = [
+        f"{sec.get('name')}: claim evidence_id {c.get('evidence_id')!r}"
+        for sec in summary.get("sections") or [] for c in sec.get("claims") or []
+        if c.get("evidence_id") not in (None, evidence_id)
+    ]
+    add("C-SPS-SINGLE-PAPER", FAIL if mismatched else PASS,
+        "; ".join(mismatched) if mismatched else "every claim cites the target paper only")
+
+    forbidden = []
+    for sec in summary.get("sections") or []:
+        if sec.get("name") == "provenance":
+            continue
+        for claim in sec.get("claims") or []:
+            phrase = _ps.find_forbidden_phrase(claim.get("text") or "")
+            if phrase:
+                forbidden.append(f"{sec.get('name')}: {phrase!r}")
+    add("C-SPS-NO-CROSS-STUDY", FAIL if forbidden else PASS,
+        "; ".join(forbidden) if forbidden else "no pooled/consensus/certainty wording")
+
+    if summary.get("source_basis") == "abstract_only":
+        design_text = " ".join(
+            c.get("text", "") for sec in summary.get("sections") or []
+            if sec.get("name") == "study_design_and_basis" for c in sec.get("claims") or [])
+        add("C-SPS-ABSTRACT-LABEL",
+            PASS if "abstract" in design_text.lower() else WARN,
+            "abstract-only basis labelled in study_design_and_basis"
+            if "abstract" in design_text.lower()
+            else "abstract-only basis not explicitly labelled in study_design_and_basis")
+    else:
+        add("C-SPS-ABSTRACT-LABEL", SKIPPED, "source_basis is fulltext")
+
+    return checks
+
+
+def cmd_single_paper_summary(args: argparse.Namespace) -> int:
+    run_dir = Path(args.run_dir).expanduser()
+    if not run_dir.is_dir():
+        raise FatalError(f"run directory not found: {run_dir}")
+    repo = Path(args.repo).expanduser() if args.repo else repo_root_for_run(run_dir)
+    summary_path = Path(args.summary).expanduser()
+    summary = _load_or_fatal(summary_path, "single-paper summary")
+
+    checks = check_single_paper_summary(summary, run_dir, repo)
+    failed = [c for c in checks if c["status"] == FAIL]
+    result = {
+        "schema_version": SCHEMA_VERSION, "kind": "single-paper-summary",
+        "summary_path": str(summary_path), "evidence_id": summary.get("evidence_id"),
+        "checks": checks, "status": FAIL if failed else PASS,
+    }
+    out_path = run_dir / "outputs" / "verification.json"
+    atomic_write(out_path, json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        for c in checks:
+            print(f"{c['status'].upper():5} {c['check_id']:20} {c['detail']}")
+        print(f"verification -> {out_path}")
+    return 1 if failed else 0
+
+
+def cmd_paper_summary_set(args: argparse.Namespace) -> int:
+    run_dir = Path(args.run_dir).expanduser()
+    if not run_dir.is_dir():
+        raise FatalError(f"run directory not found: {run_dir}")
+    repo = Path(args.repo).expanduser() if args.repo else repo_root_for_run(run_dir)
+    set_path = Path(args.summary_set).expanduser()
+    doc = _load_or_fatal(set_path, "paper summary set")
+
+    checks: list[dict] = []
+
+    def add(check_id: str, status: str, detail: str) -> None:
+        checks.append({"check_id": check_id, "status": status, "detail": detail})
+
+    required = ("schema_version", "set_id", "selection_mode", "selection_basis",
+               "included_evidence_ids", "failed_identifiers", "summary_paths", "overview",
+               "created_at")
+    missing = [f for f in required if f not in doc]
+    add("C-SPSET-SCHEMA", FAIL if missing else PASS,
+        f"missing fields: {missing}" if missing else "schema §15 shape OK")
+
+    included = doc.get("included_evidence_ids") or []
+    paths = doc.get("summary_paths") or []
+    if len(included) != len(paths):
+        add("C-SPSET-INCLUDED-VERIFIED", FAIL,
+            f"included_evidence_ids ({len(included)}) != summary_paths ({len(paths)})")
+    else:
+        per_paper_fail = []
+        for eid, rel in zip(included, paths):
+            p = _resolve_record_path(run_dir, repo, rel)
+            if p is None or not p.exists():
+                per_paper_fail.append(f"{eid}: summary_path does not resolve")
+                continue
+            summary = json.loads(p.read_text(encoding="utf-8"))
+            sub_checks = check_single_paper_summary(summary, run_dir, repo)
+            failed_sub = [c for c in sub_checks if c["status"] == FAIL]
+            if failed_sub:
+                per_paper_fail.append(
+                    f"{eid}: " + "; ".join(c["check_id"] for c in failed_sub))
+        add("C-SPSET-INCLUDED-VERIFIED", FAIL if per_paper_fail else PASS,
+            "; ".join(per_paper_fail) if per_paper_fail else
+            f"{len(included)} included summaries verified")
+
+    overview = doc.get("overview") or {}
+    if overview.get("enabled"):
+        bad_evidence = []
+        bad_wording = []
+        for claim in overview.get("claims") or []:
+            extra = set(claim.get("evidence_ids") or []) - set(included)
+            if extra:
+                bad_evidence.append(f"{claim.get('text', '')[:40]!r} cites {sorted(extra)}")
+            phrase = _ps.find_forbidden_phrase(claim.get("text") or "")
+            if phrase:
+                bad_wording.append(f"{claim.get('text', '')[:40]!r}: {phrase!r}")
+        add("C-SPSET-OVERVIEW-EVIDENCE", FAIL if bad_evidence else PASS,
+            "; ".join(bad_evidence) if bad_evidence else "overview cites only included papers")
+        add("C-SPSET-OVERVIEW-WORDING", FAIL if bad_wording else PASS,
+            "; ".join(bad_wording) if bad_wording else "no pooled/consensus wording in overview")
+    else:
+        add("C-SPSET-OVERVIEW-EVIDENCE", SKIPPED, "overview not enabled")
+        add("C-SPSET-OVERVIEW-WORDING", SKIPPED, "overview not enabled")
+
+    selection_mode = doc.get("selection_mode")
+    basis = doc.get("selection_basis") or {}
+    if selection_mode in ("question", "topic"):
+        needed = ("database", "retrieved_at", "limit")
+        missing_basis = [f for f in needed if not basis.get(f)]
+        add("C-SPSET-DISCOVERY-METADATA", FAIL if missing_basis else PASS,
+            f"selection_basis missing: {missing_basis}" if missing_basis
+            else "discovery metadata present")
+    else:
+        add("C-SPSET-DISCOVERY-METADATA", SKIPPED, f"selection_mode is {selection_mode!r}")
+
+    failed = [c for c in checks if c["status"] == FAIL]
+    result = {
+        "schema_version": SCHEMA_VERSION, "kind": "paper-summary-set",
+        "summary_set_path": str(set_path), "set_id": doc.get("set_id"),
+        "checks": checks, "status": FAIL if failed else PASS,
+    }
+    out_path = run_dir / "outputs" / "verification.json"
+    atomic_write(out_path, json.dumps(result, indent=2, ensure_ascii=False) + "\n")
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        for c in checks:
+            print(f"{c['status'].upper():5} {c['check_id']:20} {c['detail']}")
+        print(f"verification -> {out_path}")
+    return 1 if failed else 0
+
+
 # --------------------------------------------------------------------------- cli
 
 
@@ -2076,6 +2304,23 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-gate", dest="gate", action="store_false",
                    help="force the gate off even if config.json enables it")
     r.set_defaults(func=cmd_run)
+
+    s = sub.add_parser("single-paper-summary",
+                       help="verify one schema §14 single-paper summary record")
+    s.add_argument("--summary", required=True, help="workspace/summaries/<slug>.json")
+    s.add_argument("--run-dir", required=True, dest="run_dir")
+    s.add_argument("--repo", help="standalone repo root (default: inferred from --run-dir)")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_single_paper_summary)
+
+    s = sub.add_parser("paper-summary-set",
+                       help="verify one schema §15 paper summary set manifest")
+    s.add_argument("--summary-set", required=True, dest="summary_set",
+                   help="workspace/summary-set.json")
+    s.add_argument("--run-dir", required=True, dest="run_dir")
+    s.add_argument("--repo", help="standalone repo root (default: inferred from --run-dir)")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_paper_summary_set)
     return p
 
 

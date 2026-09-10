@@ -11,7 +11,11 @@ acquisition → extraction → appraisal → synthesis → verified report, prom
 **Not**: a meta-analysis (no pooled effects, no I², no forest plots — synthesis is
 effect-direction tabulation plus explained conflict), a paywall bypass (no credentials, no
 proxies, no scraping around access — unobtainable text is quarantined and handed back to you),
-or a tool for summarising a single paper / general web research.
+or general web research.
+
+Summarising one paper, or a small user-specified/bounded-discovery set of papers, is supported as
+a separate lightweight profile — `scripts/paper.py summarize` / `summarize-set`
+(`references/single-paper-summary.md`) — not the full review pipeline below.
 
 ## Invoking it
 

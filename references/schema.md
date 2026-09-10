@@ -24,6 +24,8 @@ reader who needs one record does not load the other thirteen. A reference of the
 | §11 | `event record` | `references/schema/11-event.md` |
 | §12 | `claim span record` | `references/schema/12-span.md` |
 | §13 | `assembler result` | `references/schema/13-assembler.md` |
+| §14 | `single-paper summary record` | `references/schema/14-single-paper-summary.md` |
+| §15 | `paper summary set record` | `references/schema/15-paper-summary-set.md` |
 | R1-R24 | Resolutions (contract addenda) | `references/schema/99-resolutions.md` |
 
 ## Which file do I actually need?
@@ -35,6 +37,7 @@ reader who needs one record does not load the other thirteen. A reference of the
 | Writing or debugging `corpus.py` | §4, §2, §0 |
 | Working on the evidence kernel | §10, §11, §12, §13, plus `references/evidence-kernel.md` |
 | Working on `verify.py` | §9, §13, §0 |
+| Single-paper or selected-paper summaries | §14, §15, plus `references/single-paper-summary.md` |
 | Promoting an OKF bundle | §13, §99, plus `references/okf-bundle.md` |
 
 Subagent prompt blocks in `references/prompts/` are complete, verified transcriptions of the

@@ -8,6 +8,12 @@ Hard rule for this stage: **every executed query logs its hit count and NCBI-tra
 query** into a `search result record` (`references/schema.md` §3). A query with
 `hit_count_logged: false` fails verifier check `C-SEARCH-LOG` and blocks the PRISMA flow.
 
+**Not this stage:** `scripts/paper.py summarize-set --question/--topic`
+(`references/single-paper-summary.md`) runs one bounded, `--limit`-capped PubMed query to propose
+candidate papers for a summary set. That is candidate discovery, not systematic retrieval — it
+never claims PRISMA-flow completeness and is recorded as `selection_basis` in the §15 set
+manifest, not as this stage's `search result record`.
+
 ---
 
 ## 1. Controlled vocabulary vs free text

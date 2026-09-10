@@ -122,6 +122,13 @@ store, carrying every snapshot it cites into the global source store so spans ke
 with no wiki involved. A pointer whose file has moved or vanished is reported under
 `stale_pointers` in the command's JSON output, never silently dropped.
 
+## Other consumers of the canonical registry
+
+`scripts/paper.py` (`references/single-paper-summary.md`) reads and writes this same registry,
+extraction, and appraisal store for its single-paper and selected-paper summary profiles — there
+is no separate summary-only store. A paper registered/extracted/appraised by a full review run is
+reused as-is by a later single-paper summary request, and vice versa.
+
 ## What is not yet wired
 
 - `SKILL.md`'s Stage 2-8 narrative still documents the wiki-backed path only; nothing above
