@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 1 — What is deep-research?</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<p class="kicker">Lesson 1 of the deep-research course</p>
+<h1>What is deep-research, and when do I reach for it?</h1>
+<p class="lede">Before touching any stage mechanics: what this tool is, what it refuses to be, and the one sentence that should make you say "yes, use deep-research."</p>
+
+<h2>What it does</h2>
+<p>
+<code>deep-research</code> is a Claude Code skill that runs a full PubMed-centred literature
+research pipeline, end to end: <strong>protocol → search → screen → full-text acquisition →
+extraction → appraisal → synthesis → verified report</strong>, optionally promoted into a wiki.
+You (the coordinator, "main thread") configure the run and write the synthesis; scripts do
+network/state work; subagents do per-paper screening, extraction, and appraisal.
+</p>
+
+<h2>What it is <em>not</em></h2>
+<ul>
+<li><strong>Not a meta-analysis.</strong> No pooled effects, no I², no forest plots — synthesis
+is effect-direction tabulation plus explained conflict.</li>
+<li><strong>Not a paywall bypass.</strong> No credentials, no proxies, no scraping around
+access. Unobtainable text is <em>quarantined</em> and handed back to you, never faked.</li>
+<li><strong>Not the full pipeline for a single paper.</strong> Summarizing one PDF, one PMID, or
+a small user-supplied set doesn't need Stage 0&ndash;8 at all &mdash; a separate lightweight
+profile handles that case (see <a href="0006-paper-summary-profile.html">Lesson 6</a>).</li>
+</ul>
+
+<h2>The trigger phrase</h2>
+<p>
+It fires on requests shaped like: "literature review," "systematic review," "evidence
+synthesis," "what does the evidence say about X," "deep research on X," "PubMed search,"
+"critical appraisal," or "screen/extract/appraise these papers with citations."
+</p>
+<blockquote>
+Rule of thumb: if the honest answer requires <em>reading several papers and weighing them
+against each other</em>, it's a deep-research job. If it requires reading one paper, it isn't.
+</blockquote>
+
+<h2>The one thing every run needs before it starts</h2>
+<p>
+Stage 0 always asks the same handful of setup questions — it never guesses a profile or a
+target from how the question "sounds." The two decisions worth knowing cold:
+</p>
+<h3>1. Profile — how thorough?</h3>
+<table>
+<tr><th>Profile</th><th>For</th></tr>
+<tr><td><code>fast</code></td><td>Quick read of the field. 10 articles, no gates.</td></tr>
+<tr><td><code>standard</code> (default)</td><td>The normal case. 25 articles.</td></tr>
+<tr><td><code>systematic</code></td><td>Defensible review — dual screening, PRISMA log. 60 articles.</td></tr>
+<tr><td><code>max</code></td><td>Widest sweep — + guidelines/grey-lit/web. 100 articles.</td></tr>
+</table>
+<p>Full stage-by-stage table: <a href="../reference/pipeline-cheat-sheet.html">Pipeline Cheat Sheet</a>.</p>
+
+<h3>2. Target — wiki or standalone repo?</h3>
+<p>
+Where the run, the PDF/paper store, and the cross-run shared pool live. <strong>Wiki mode</strong>
+is the default — needs a wiki-manager wiki. <strong>Standalone repo mode</strong> needs no wiki
+at all and is the right pick when the deliverable is a manuscript project, not a wiki page.
+</p>
+
+<div class="win">
+<p><strong>The tangible win for this lesson:</strong> given any research request, you can now
+say in one breath whether it's a deep-research job, and if so, which profile you'd start with
+and why — before the tool has asked you anything.</p>
+</div>
+
+<h2>Check yourself</h2>
+<div class="quiz" id="q1">
+<p class="q">A colleague asks: "Summarize this one PDF for me." Which tool fits?</p>
+<label><input type="radio" name="q1" value="wrong"> Full pipeline, systematic profile setting</label>
+<label><input type="radio" name="q1" value="right"> Lightweight paper.py summarize profile instead</label>
+<label><input type="radio" name="q1" value="wrong2"> Standalone repo mode, fast profile</label>
+<div class="feedback"></div>
+</div>
+
+<div class="quiz" id="q2">
+<p class="q">You want a quick sense of a field, 10 papers, no need to show protocol first. Which profile?</p>
+<label><input type="radio" name="q2" value="wrong"> systematic scope, wide breadth</label>
+<label><input type="radio" name="q2" value="right"> fast profile, narrow scope</label>
+<label><input type="radio" name="q2" value="wrong2"> max profile, full breadth</label>
+<div class="feedback"></div>
+</div>
+
+<div class="quiz" id="q3">
+<p class="q">You're building a manuscript project with no interest in a generated wiki. Which target?</p>
+<label><input type="radio" name="q3" value="wrong"> wiki mode, default setup</label>
+<label><input type="radio" name="q3" value="right"> standalone repo mode</label>
+<label><input type="radio" name="q3" value="wrong2"> narrow scope, fast profile</label>
+<div class="feedback"></div>
+</div>
+
+<h2>Primary source</h2>
+<p class="source">
+Recommended reading: <code>README.md</code> in the deep-research skill directory — the
+human-facing operator manual (short, written for exactly this purpose). Section "Invoking it"
+and "Profiles" map directly onto this lesson.
+</p>
+
+<div class="ask-teacher">
+Stuck, or curious about a stage this lesson didn't cover? Ask me directly — I'm your teacher
+here, not just the author of this page.
+</div>
+
+<div class="nav">
+<span>&larr; start of course</span>
+<span>Next: <a href="0002-stage-0-configure.html">Lesson 2: Stage 0 in detail</a></span>
+</div>
+
+<script>
+document.querySelectorAll('.quiz').forEach(function (quiz) {
+  quiz.querySelectorAll('input[type=radio]').forEach(function (input) {
+    input.addEventListener('change', function () {
+      var fb = quiz.querySelector('.feedback');
+      var correct = input.value === 'right';
+      fb.textContent = correct ? 'Correct.' : 'Not quite — reread the section above and try again.';
+      fb.className = 'feedback show ' + (correct ? 'correct' : 'incorrect');
+    });
+  });
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>deep-research — Pipeline Cheat Sheet</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<p class="kicker">Reference</p>
+<h1>deep-research — pipeline cheat sheet</h1>
+<p class="lede">Quick lookup: the 8 stages, the 4 profiles, and the two run targets. Not a tutorial — see <a href="../lessons/0001-what-is-deep-research.html">Lesson 1</a> for that.</p>
+
+<h2>Pipeline stages</h2>
+<table>
+<tr><th>#</th><th>Stage</th><th>Runs in</th><th>Writes</th></tr>
+<tr><td>1</td><td>Protocol</td><td>main</td><td><code>outputs/protocol.md</code></td></tr>
+<tr><td>2</td><td>Search</td><td>main + scripts</td><td><code>workspace/search/*.json</code>, corpus records</td></tr>
+<tr><td>3</td><td>Screen</td><td>subagents (batched)</td><td><code>workspace/screening/*/pmid-*.json</code></td></tr>
+<tr><td>4</td><td>Retrieve</td><td>main + <code>fulltext.py</code></td><td>corpus <code>fulltext</code> block, <code>missing.md</code></td></tr>
+<tr><td>5</td><td>Extract</td><td>subagents (1/paper)</td><td><code>workspace/extractions/pmid-*.json</code> — <strong>halts here if <code>stop_after_stage: 5</code></strong></td></tr>
+<tr><td>6</td><td>Appraise</td><td>subagents (1/paper)</td><td><code>workspace/appraisals/pmid-*.json</code></td></tr>
+<tr><td>7</td><td>Synthesize</td><td>main only</td><td><code>outputs/report.md</code></td></tr>
+<tr><td>7b</td><td>Digest</td><td>subagent (1)</td><td><code>outputs/digest.md</code></td></tr>
+<tr><td>8</td><td>Assemble / verify / publish</td><td>main</td><td><code>outputs/verification.json</code>, wiki promotion</td></tr>
+</table>
+<p><em>Every profile — including <code>fast</code> — walks every stage. Profile changes breadth and gates, never which stages run.</em></p>
+
+<h2>Profiles</h2>
+<table>
+<tr><th>Profile</th><th>Scope</th><th>Gates</th><th>Max articles</th><th>For</th></tr>
+<tr><td><code>fast</code></td><td>narrow</td><td>none</td><td>10</td><td>Quick read of the field</td></tr>
+<tr><td><code>standard</code> (default)</td><td>medium</td><td>protocol+strategy</td><td>25</td><td>The normal case</td></tr>
+<tr><td><code>systematic</code></td><td>wide</td><td>both</td><td>60</td><td>Defensible review — dual screening, PRISMA log</td></tr>
+<tr><td><code>max</code></td><td>max</td><td>both</td><td>100</td><td>Widest sweep — + guidelines/grey-lit/web</td></tr>
+</table>
+
+<h2>Scope tiers (what sources unlock)</h2>
+<table>
+<tr><th>Scope</th><th>Adds</th></tr>
+<tr><td>narrow</td><td>PubMed MCP only</td></tr>
+<tr><td>medium</td><td>+ <code>eutils.py</code> (exact boolean/MeSH, hit counts)</td></tr>
+<tr><td>wide</td><td>+ Europe PMC (bioRxiv/medRxiv/Research Square, tagged as preprints)</td></tr>
+<tr><td>max</td><td>+ web: guidelines, grey literature, Scholar Gateway / Consensus connectors</td></tr>
+</table>
+
+<h2>Two run targets</h2>
+<table>
+<tr><th></th><th>Wiki mode (default)</th><th>Standalone repo mode</th></tr>
+<tr><td>Setup</td><td>wiki-manager wiki must exist</td><td><code>research.py init &lt;path&gt;</code> once</td></tr>
+<tr><td>Run lives at</td><td><code>&lt;wiki&gt;/outputs/deep-research/&lt;slug&gt;/</code></td><td><code>&lt;repo&gt;/runs/&lt;slug&gt;/</code></td></tr>
+<tr><td>Shared pool</td><td><code>&lt;wiki&gt;/assets/papers/pool.jsonl</code></td><td><code>&lt;repo&gt;/data/papers/registry.jsonl</code></td></tr>
+<tr><td>Manuscript output</td><td>promoted into <code>&lt;wiki&gt;/research/</code></td><td><code>&lt;repo&gt;/projects/&lt;slug&gt;/</code></td></tr>
+<tr><td>Needs wiki-manager?</td><td>yes</td><td>no, ever</td></tr>
+</table>
+
+<h2>Glossary</h2>
+<table>
+<tr><td><strong>Gate</strong></td><td>A checkpoint where the pipeline shows work back to the user and waits for approval before continuing (e.g. protocol+strategy gate before Stage 2).</td></tr>
+<tr><td><strong>Pool</strong></td><td>Cross-run shared store of already-extracted/appraised papers, so later runs reuse instead of re-processing (<code>pool.py reuse</code>/<code>sync</code>).</td></tr>
+<tr><td><strong><code>stop_after_stage</code></strong></td><td>Config field to halt a run after Stage 5 (pool-building only, no appraisal/report). Resumable later.</td></tr>
+<tr><td><strong>Quarantine</strong></td><td>Papers whose full text couldn't be acquired through the retrieval ladder; logged to <code>missing.md</code>, handed back to the user.</td></tr>
+<tr><td><strong>Framework</strong></td><td>PICO/PECO (default) or PEO/PCC/SPIDER/SPICE — the structure used to restate the question before anything runs.</td></tr>
+</table>
+
+<p class="source">Source: <code>SKILL.md</code> (Pipeline table, Profiles table, Scope tiers) and <code>README.md</code> — deep-research skill, read 2026-09-10.</p>
+</body>
+</html>

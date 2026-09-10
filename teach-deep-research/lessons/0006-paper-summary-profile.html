@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 6 — The lightweight paper-summary profile</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<p class="kicker">Lesson 6 of the deep-research course</p>
+<h1>When the ask is one paper (or a handful), not a review</h1>
+<p class="lede">Lesson 1 drew the line: full pipeline is for multi-paper synthesis. This lesson
+covers what's now on the other side of that line &mdash; <code>scripts/paper.py</code>'s two
+lightweight profiles, added after the earlier lessons were written.</p>
+
+<h2>Two commands, two shapes of ask</h2>
+<table>
+<tr><th>Ask</th><th>Command</th></tr>
+<tr><td>"Summarize this paper" &mdash; one PMID/DOI/PMCID/PDF</td><td><code>paper.py summarize</code></td></tr>
+<tr><td>"Summarize these three papers," a user-supplied set, or a bounded topic/question scan</td><td><code>paper.py summarize-set</code></td></tr>
+<tr><td>"Literature review," "what does the evidence say about X"</td><td>Full pipeline (<code>SKILL.md</code>) &mdash; never these profiles</td></tr>
+</table>
+<p>
+Both profiles reuse the <strong>standalone-repo pool</strong> (registry, extractions,
+appraisals) instead of running Stage 0&ndash;8. If a paper was already extracted or appraised in
+a full review, a summary of it reuses that work instead of redoing it &mdash; and the reverse
+holds too: a paper summarized standalone today feeds a full review later without re-extraction.
+</p>
+
+<h2>What a summary is <em>not</em></h2>
+<div class="win" style="border-color:#b33">
+<p>No PRISMA flow. No effect-direction synthesis across papers. No GRADE table. No
+meta-analysis. <code>verify.py</code> hard-fails a summary that contains cross-study, pooled, or
+consensus wording &mdash; that vocabulary belongs to the full pipeline only.</p>
+</div>
+
+<h2>The single-paper workflow</h2>
+<p>
+Same shape as Stage 5/6 of the full pipeline, just for one paper: registry lookup/registration
+&rarr; acquisition (same ladder) &rarr; extraction (reuse or new, one subagent) &rarr; appraisal
+(reuse or new, on by default for fulltext) &rarr; summary assembly (one subagent, schema
+&sect;14) &rarr; <code>verify.py single-paper-summary</code> &rarr; export. The CLI never
+dispatches a subagent itself &mdash; same rule as everywhere else in this skill: it reports a
+<code>status</code> (<code>pending_extraction</code>, <code>pending_appraisal</code>,
+<code>pending_summary</code>, <code>completed</code>) and the orchestrating agent (you) decides
+what to run next.
+</p>
+
+<h2>The selected-paper workflow</h2>
+<p>
+Runs the single-paper path once per identifier, with partial failures recorded rather than
+fatal (<code>failed_identifiers</code>, schema &sect;15). Two entry modes:
+</p>
+<ul>
+<li><strong>Explicit</strong> &mdash; you already know the papers: <code>--pmid</code>
+(repeatable), <code>--ids-file</code>, <code>--bib</code>, or <code>--folder --recursive</code>.</li>
+<li><strong>Question/topic</strong> &mdash; a bounded search produces the candidate list
+(<code>--question</code> or <code>--topic</code>, capped by <code>--limit</code> or a hard
+default). The query, database, timestamp, and limit are all recorded in
+<code>selection_basis</code>. <code>--select-only</code> stops after the candidate list, before
+any summarizing runs.</li>
+</ul>
+<p>
+Optional <code>--overview</code> adds a bounded cross-paper orientation section &mdash; but only
+from already-verified &sect;14 descriptive fields (design, population, intervention, outcomes
+measured). It still never infers a pooled effect, a certainty rating, or a consensus. That
+restraint is the same invariant as the "not a meta-analysis" line from Lesson 1, just enforced
+one layer down.
+</p>
+
+<h2>Check yourself</h2>
+<div class="quiz" id="q1">
+<p class="q">A run's <code>verify.py</code> check flags "pooled effect" language in a paper summary. What does that mean?</p>
+<label><input type="radio" name="q1" value="wrong"> Verification passed, ready to publish</label>
+<label><input type="radio" name="q1" value="right"> Hard failure, wrong vocabulary for a summary</label>
+<label><input type="radio" name="q1" value="wrong2"> A warning only, summary still exports</label>
+<div class="feedback"></div>
+</div>
+
+<div class="quiz" id="q2">
+<p class="q">A paper was already extracted during a prior full review. You now ask for a standalone summary of it. What happens?</p>
+<label><input type="radio" name="q2" value="wrong"> Extraction reruns from scratch, unrelated store</label>
+<label><input type="radio" name="q2" value="right"> Existing extraction reused, same pool store</label>
+<label><input type="radio" name="q2" value="wrong2"> Request refused, already covered elsewhere</label>
+<div class="feedback"></div>
+</div>
+
+<div class="quiz" id="q3">
+<p class="q">You want just the candidate list from a topic scan, no summaries yet. Which flag?</p>
+<label><input type="radio" name="q3" value="wrong"> --overview, bounded orientation section</label>
+<label><input type="radio" name="q3" value="right"> --select-only, stop after candidates</label>
+<label><input type="radio" name="q3" value="wrong2"> --limit, cap the search results</label>
+<div class="feedback"></div>
+</div>
+
+<h2>Primary source</h2>
+<p class="source">
+Recommended reading: <code>references/single-paper-summary.md</code> (command reference,
+workflow, verification) and <code>docs/paper-summaries.html</code> in the skill repo &mdash; the
+newer human-facing static docs site. Schema: <code>references/schema/14-single-paper-summary.md</code>
+and <code>15-paper-summary-set.md</code>.
+</p>
+
+<div class="ask-teacher">
+Stuck, or want to trace a real <code>paper.py summarize</code> status transition together? Ask
+me directly &mdash; I'm your teacher here, not just the author of this page.
+</div>
+
+<div class="nav">
+<span>&larr; <a href="0005-stages-7-8-synthesize-publish.html">Lesson 5: Stages 7&ndash;8</a></span>
+<span>Course complete &mdash; ask me for a practice run to try it end to end</span>
+</div>
+
+<script>
+document.querySelectorAll('.quiz').forEach(function (quiz) {
+  quiz.querySelectorAll('input[type=radio]').forEach(function (input) {
+    input.addEventListener('change', function () {
+      var fb = quiz.querySelector('.feedback');
+      var correct = input.value === 'right';
+      fb.textContent = correct ? 'Correct.' : 'Not quite — reread the section above and try again.';
+      fb.className = 'feedback show ' + (correct ? 'correct' : 'incorrect');
+    });
+  });
+});
+</script>
+</body>
+</html>

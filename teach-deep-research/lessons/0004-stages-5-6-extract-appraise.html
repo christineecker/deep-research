@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 4 — Stages 5–6: Extract &amp; Appraise</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<p class="kicker">Lesson 4 of the deep-research course</p>
+<h1>Stages 5&ndash;6: one subagent per paper, and the pool that saves you the work</h1>
+<p class="lede">This is the expensive part of the pipeline &mdash; per-paper extraction and appraisal, done by dedicated subagents. It's also where the shared pool starts paying for itself, and where <code>status.py --table</code> becomes your checkpoint between the two stages.</p>
+
+<h2>Stage 5 &mdash; Extract</h2>
+<p>
+Before spending a subagent on a paper, the run checks the shared pool first
+(<code>pool.py reuse</code>). A hit means another run already extracted this exact paper &mdash;
+that extraction gets copied straight into this run, spans and all, and the subagent is skipped
+entirely. Only a miss dispatches fresh work: <strong>one opus subagent per paper</strong>,
+pulling design, sample size, population, intervention/comparator, outcomes (with effect, CI, and
+direction), funding/COI, limitations, and quoted spans with anchors.
+</p>
+<p>
+One tag matters more than it looks: <code>evidence_basis</code> is set to
+<code>abstract_only</code> whenever full text wasn't obtained in Stage 4. That's not a footnote
+&mdash; Stage 6 refuses to appraise an abstract-only record as if it had full text, so a gap you
+waved through at the Stage 4 quarantine gate (Lesson 3) resurfaces here as a labeled limitation,
+not a silently degraded appraisal.
+</p>
+<p>
+Recall from Lesson 2: if <code>config.json</code> has <code>pipeline.stop_after_stage: 5</code>,
+the run halts right here &mdash; no appraisal, no report. That's the "build the pool, decide
+later" move. Otherwise, once every paper is extracted, the pool gets synced (so future runs can
+reuse this run's fresh work) and the run posts a <code>status.py --table</code> summary.
+</p>
+
+<h3>Reading <code>status.py --table</code></h3>
+<p>
+This is your coverage checkpoint before appraisal starts. It shows, per paper: what was
+downloaded and in what format (PDF / HTML / abstract-only text), and whether extraction actually
+ran &mdash; including which rows were <strong>reused</strong> from the pool versus
+<strong>freshly extracted</strong> this run. A run with several "reused" rows on a well-trodden
+topic is doing exactly what the pool is for; seeing everything come back fresh on a first pass
+through a topic is also expected and fine.
+</p>
+
+<h2>Stage 6 &mdash; Appraise</h2>
+<p>
+Same reuse gate, same idempotent check &mdash; safe to run even on a paper Stage 5 already
+reused, since it separately checks for a resolving appraisal. In standalone repo mode, appraisal
+is scoped to your specific project/manuscript (<code>--project &lt;slug&gt;</code>): a paper
+appraised for one question is not automatically treated as appraised for a different one, because
+"risk of bias" is evaluated against a specific outcome and comparator, not the paper in the
+abstract.
+</p>
+<p>
+A miss dispatches, again, <strong>one opus subagent per paper</strong>. It first picks the
+appraisal tool that matches the study design &mdash; RoB2, ROBINS-I, Newcastle-Ottawa, AMSTAR-2,
+QUADAS-2, PROBAST, CASP, JBI prevalence/cross-sectional, or <code>none</code> for designs with no
+in-scope instrument (case reports, guidelines, narrative reviews) &mdash; then works that tool's
+domains, and finally rates per-outcome certainty with GRADE. (Full design&rarr;tool mapping:
+<a href="../reference/pipeline-cheat-sheet.html">Pipeline Cheat Sheet</a> and README's
+"Selection &amp; appraisal criteria".)
+</p>
+
+<div class="win">
+<p><strong>The tangible win for this lesson:</strong> you can read a <code>status.py --table</code>
+output between Stages 5 and 6 and correctly say which papers are reused vs. fresh, which came
+back abstract-only (and therefore will get a lighter appraisal), and whether the run is actually
+ready to move into appraisal.</p>
+</div>
+
+<h2>Check yourself</h2>
+<div class="quiz" id="q1">
+<p class="q">Stage 5 finds this exact paper already extracted by a prior run via <code>pool.py reuse</code>. What happens?</p>
+<label><input type="radio" name="q1" value="wrong"> An opus subagent re-extracts it anyway, to be safe</label>
+<label><input type="radio" name="q1" value="right"> The subagent is skipped; the prior extraction is copied in and logged as reused</label>
+<label><input type="radio" name="q1" value="wrong2"> The paper is dropped from the corpus</label>
+<div class="feedback"></div>
+</div>
+
+<div class="quiz" id="q2">
+<p class="q">A record came back abstract-only from Stage 4. What does Stage 6 do with it?</p>
+<label><input type="radio" name="q2" value="wrong"> Appraises it exactly like a full-text record</label>
+<label><input type="radio" name="q2" value="right"> Does not appraise it as if it were full text</label>
+<label><input type="radio" name="q2" value="wrong2"> Excludes it from the run entirely</label>
+<div class="feedback"></div>
+</div>
+
+<div class="quiz" id="q3">
+<p class="q">In standalone repo mode, a paper was already appraised for Project A. Is it automatically appraised for Project B's different question?</p>
+<label><input type="radio" name="q3" value="wrong"> Yes, appraisal is universal per paper</label>
+<label><input type="radio" name="q3" value="right"> No, appraisal is project-scoped</label>
+<label><input type="radio" name="q3" value="wrong2"> Only if both projects use the same profile</label>
+<div class="feedback"></div>
+</div>
+
+<h2>Primary source</h2>
+<p class="source">
+Recommended reading: <code>SKILL.md</code>, Stages 5&ndash;6 narrative in the "Pipeline"
+section; <code>references/pool-architecture.md</code> for "Appraisal is project-scoped, on
+purpose" and the Stage 4/5 write path; <code>references/appraisal.md</code> for the per-tool
+domain mechanics.
+</p>
+
+<div class="ask-teacher">
+Stuck, or want to walk through a real <code>status.py --table</code> output together? Ask me
+directly &mdash; I'm your teacher here, not just the author of this page.
+</div>
+
+<div class="nav">
+<span>&larr; <a href="0003-stages-1-4-protocol-to-retrieve.html">Lesson 3: Stages 1&ndash;4</a></span>
+<span>Next: <a href="0005-stages-7-8-synthesize-publish.html">Lesson 5: Stages 7&ndash;8 &mdash; synthesize &amp; publish</a></span>
+</div>
+
+<script>
+document.querySelectorAll('.quiz').forEach(function (quiz) {
+  quiz.querySelectorAll('input[type=radio]').forEach(function (input) {
+    input.addEventListener('change', function () {
+      var fb = quiz.querySelector('.feedback');
+      var correct = input.value === 'right';
+      fb.textContent = correct ? 'Correct.' : 'Not quite — reread the section above and try again.';
+      fb.className = 'feedback show ' + (correct ? 'correct' : 'incorrect');
+    });
+  });
+});
+</script>
+</body>
+</html>

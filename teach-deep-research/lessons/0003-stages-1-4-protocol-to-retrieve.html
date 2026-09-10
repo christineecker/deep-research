@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 3 — Stages 1–4: Protocol to Retrieve</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<p class="kicker">Lesson 3 of the deep-research course</p>
+<h1>Stages 1–4: the part that runs without asking you anything &mdash; until it does</h1>
+<p class="lede">After Stage 0, four stages run largely on autopilot: protocol, search, screen, retrieve. This lesson is about knowing what's happening while you wait, and recognizing the one moment this stretch <em>does</em> stop and ask &mdash; so you're not surprised by it.</p>
+
+<h2>Stage 1 &mdash; Protocol</h2>
+<p>
+The framework restatement you checked in Stage 0 becomes numbered inclusion/exclusion criteria
+here &mdash; built from your Stage 0 answers, never invented fresh at this point. Screening in
+Stage 3 will cite these criteria by number, so this is the last easy place to catch a wrong
+boundary. If your profile's gate includes <code>protocol+strategy</code>
+(<code>standard</code> and up), the protocol <em>and</em> the search strategy are shown to you
+and the run waits &mdash; your one editorial checkpoint before search starts spending queries.
+</p>
+
+<h2>Stage 2 &mdash; Search</h2>
+<p>
+Before writing a single new PubMed query, the run seeds from the <strong>shared pool</strong>
+&mdash; prior runs' papers scored against this run's question and filters. That's candidates
+only; Stage 3 still screens them fresh against the current protocol. Then it designs
+4&ndash;8 genuinely orthogonal queries (not near-duplicates &mdash; see
+<code>references/search-strategy.md</code>) and logs every query string, its NCBI-translated
+form, and the hit count. At <code>wide</code>/<code>max</code> scope it adds Europe PMC and web
+sources on top of PubMed.
+</p>
+
+<h2>Stage 3 &mdash; Screen</h2>
+<p>
+Dedupe first (PMID &rarr; DOI &rarr; normalized title, in that priority order), then
+title/abstract triage against the numbered criteria from Stage 1. Every record gets
+include/exclude/unclear plus, on exclude, the first criterion it failed &mdash; so a screening
+decision is always traceable back to a specific rule, not a vibe. Retracted papers and
+Expressions of Concern are flagged here, not silently dropped.
+</p>
+<p>
+At <code>systematic</code>/<code>max</code>, two independent screeners run plus an adjudicator
+on disagreement, and the agreement rate gets logged into the PRISMA flow. The included set is
+capped at your profile's <code>max_articles</code>, chosen by protocol relevance &mdash; the
+report states how the cap was applied, so "why isn't paper X in here" is always answerable.
+</p>
+
+<h2>Stage 4 &mdash; Retrieve, and the one interrupt</h2>
+<p>
+Every profile, <code>fast</code> included, walks the full open-access ladder for full text
+&mdash; there's no "narrow scope" shortcut that skips retrieval. What it can't get, it
+quarantines rather than guessing or faking. Once every selected record has been attempted, this
+is the moment the run <strong>stops and talks to you</strong>: a consolidated table in
+<code>missing.md</code>, covering both fully-quarantined records and abstract-only fallbacks (a
+stored abstract is not treated as good enough to skip this ask).
+</p>
+<table>
+<tr><th>Profile</th><th>What happens at the halt</th></tr>
+<tr><td><code>systematic</code> / <code>max</code></td><td>Hard gate &mdash; extraction does not start until you resolve or explicitly wave it through</td></tr>
+<tr><td><code>fast</code> / <code>standard</code></td><td>May proceed <em>provisional</em> on your say-so, gaps noted in the report</td></tr>
+</table>
+<p>
+Your options at that prompt: drop a PDF into the run's <code>inbox/</code> and let
+<code>library.py ingest-inbox</code> plus a rerun of <code>acquire</code> clear the block, or
+tell it to proceed provisionally (profile permitting) and accept the gap. What it will
+<strong>never</strong> do on your behalf: use saved credentials, an institutional proxy, a
+captcha solve, or a pirate mirror to get around a paywall &mdash; that's a hard invariant, not a
+setting.
+</p>
+
+<div class="win">
+<p><strong>The tangible win for this lesson:</strong> when a run pauses mid-flight showing you a
+<code>missing.md</code> table, you immediately know why it stopped, whether your profile lets
+you wave it through, and the two legitimate ways to clear it &mdash; instead of treating the
+pause as an error.</p>
+</div>
+
+<h2>Check yourself</h2>
+<div class="quiz" id="q1">
+<p class="q">A record has full-text access blocked by a paywall. What does the run do?</p>
+<label><input type="radio" name="q1" value="wrong"> Tries an institutional proxy automatically</label>
+<label><input type="radio" name="q1" value="right"> Quarantines it and asks you, never circumventing access</label>
+<label><input type="radio" name="q1" value="wrong2"> Silently extracts from the abstract as if full text</label>
+<div class="feedback"></div>
+</div>
+
+<div class="quiz" id="q2">
+<p class="q">You're running <code>systematic</code> profile and Stage 4 surfaces a quarantined record. Can Stage 5 start before you respond?</p>
+<label><input type="radio" name="q2" value="wrong"> Yes, systematic always proceeds provisionally</label>
+<label><input type="radio" name="q2" value="right"> No, systematic hard-gates on the quarantine</label>
+<label><input type="radio" name="q2" value="wrong2"> Only if max_articles has not been reached</label>
+<div class="feedback"></div>
+</div>
+
+<div class="quiz" id="q3">
+<p class="q">Screening excludes a record. What must the record's log show, beyond "excluded"?</p>
+<label><input type="radio" name="q3" value="wrong"> Nothing further is required</label>
+<label><input type="radio" name="q3" value="right"> The first numbered criterion it failed</label>
+<label><input type="radio" name="q3" value="wrong2"> The screener's confidence percentage</label>
+<div class="feedback"></div>
+</div>
+
+<h2>Primary source</h2>
+<p class="source">
+Recommended reading: <code>SKILL.md</code>, the "Pipeline" table and Stages 1&ndash;4 narrative
+directly below it, plus <code>references/acquisition.md</code> for the full retrieval-ladder and
+quarantine mechanics this lesson summarizes.
+</p>
+
+<div class="ask-teacher">
+Stuck, or want to see what a real <code>missing.md</code> table looks like? Ask me directly
+&mdash; I'm your teacher here, not just the author of this page.
+</div>
+
+<div class="nav">
+<span>&larr; <a href="0002-stage-0-configure.html">Lesson 2: Stage 0 in detail</a></span>
+<span>Next: <a href="0004-stages-5-6-extract-appraise.html">Lesson 4: Stages 5&ndash;6 &mdash; extract &amp; appraise</a></span>
+</div>
+
+<script>
+document.querySelectorAll('.quiz').forEach(function (quiz) {
+  quiz.querySelectorAll('input[type=radio]').forEach(function (input) {
+    input.addEventListener('change', function () {
+      var fb = quiz.querySelector('.feedback');
+      var correct = input.value === 'right';
+      fb.textContent = correct ? 'Correct.' : 'Not quite — reread the section above and try again.';
+      fb.className = 'feedback show ' + (correct ? 'correct' : 'incorrect');
+    });
+  });
+});
+</script>
+</body>
+</html>

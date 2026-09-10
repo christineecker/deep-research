@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 2 — Stage 0: Configure</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<p class="kicker">Lesson 2 of the deep-research course</p>
+<h1>Stage 0: what the pipeline actually asks you</h1>
+<p class="lede">Lesson 1 gave you the profile/target shorthand. This lesson is the real Stage 0 conversation — the five things it needs from you, in the order it needs them, so a live run never catches you flat-footed.</p>
+
+<h2>The rule Stage 0 follows</h2>
+<p>
+It asks only for what it doesn't already know, and never re-asks what's already sitting in the
+run's <code>config.json</code>. That means: on a first run, expect all five; on a resumed or
+templated run, expect fewer.
+</p>
+
+<h2>1. Question &mdash; restated through a framework</h2>
+<p>
+Before anything runs, your question gets rephrased into a formal framework and shown back to
+you. The skill doesn't default blindly to PICO &mdash; it picks the framework that fits the
+question's shape:
+</p>
+<table>
+<tr><th>Question shape</th><th>Framework</th></tr>
+<tr><td>Intervention has a comparator (drug vs. placebo, therapy vs. usual care)</td><td>PICO</td></tr>
+<tr><td>Exposure/etiology, no intervention (does X cause Y)</td><td>PECO</td></tr>
+<tr><td>Population + exposure, no comparator needed</td><td>PEO</td></tr>
+<tr><td>Scoping review (map a concept, not answer a question)</td><td>PCC</td></tr>
+<tr><td>Qualitative or mixed-methods</td><td>SPIDER</td></tr>
+<tr><td>Service delivery / implementation</td><td>SPICE</td></tr>
+</table>
+<p>
+Full definitions: <code>references/question-frameworks.md</code>. Your job here isn't to name
+the framework yourself &mdash; it's to <strong>check the restatement is right</strong> before
+the pipeline commits to it. A wrong Population or a missing Comparator at this step becomes
+wrong inclusion/exclusion criteria at Stage 1.
+</p>
+
+<h2>2. Profile &mdash; or its parts, individually</h2>
+<p>
+You already know <code>fast</code>/<code>standard</code>/<code>systematic</code>/<code>max</code>
+from Lesson 1 (full table: <a href="../reference/pipeline-cheat-sheet.html">cheat sheet</a>).
+What's new here: you don't have to accept a bundle. Stage 0 will take
+<strong>scope</strong>, <strong>gates</strong> (protocol confirmation, screening double-check),
+and <strong>max_articles</strong> as separate overrides, and everything is still editable
+afterward directly in the run's <code>config.json</code>.
+</p>
+<p>
+One more lever worth knowing cold: <code>pipeline.stop_after_stage</code>. Set it to
+<code>5</code> and the run does search &rarr; screen &rarr; retrieve &rarr; extract, then halts
+&mdash; no appraisal, no report. That's the move for building up the shared paper pool on a
+topic before you've decided the topic deserves a full appraised review. Clear the field later
+and resume the same run to carry on into appraisal.
+</p>
+
+<h2>3. Target &mdash; wiki or standalone repo, and its setup command</h2>
+<p>
+Lesson 1 gave you the decision. Here's the command each side actually needs before Stage 0 can
+proceed:
+</p>
+<table>
+<tr><th></th><th>Wiki mode</th><th>Standalone repo mode</th></tr>
+<tr><td>One-time setup</td><td><code>python3 scripts/library.py init --wiki &lt;root&gt;</code></td><td><code>python3 scripts/research.py init &lt;path&gt;</code></td></tr>
+<tr><td>Needs wiki-manager?</td><td>Yes</td><td>No, ever</td></tr>
+</table>
+<p>
+If you picked standalone and later want a manuscript deliverable rather than just a pool, add
+one more command: <code>research.py project create &lt;slug&gt; --repo &lt;path&gt;</code>.
+Changed your mind after the fact? <code>research.py export wiki</code> copies a repo's pool and
+one project's bundle into a wiki (one-way courtesy copy). Going the other direction,
+<code>pool.py migrate --from-wiki &lt;wiki&gt; --repo &lt;path&gt;</code> pulls an existing
+wiki's pool into a new standalone repo.
+</p>
+
+<h2>4. Filters</h2>
+<p>
+Stage 0 also collects the boring-but-decisive scoping knobs, all optional, all worth stating up
+front rather than discovering mid-run: <strong>years</strong>, <strong>authors</strong>,
+<strong>journals</strong>, <strong>article types</strong>, <strong>species/age</strong>,
+<strong>language</strong>, and <strong>OA-only</strong> (open-access-only, which matters a lot
+for Stage 4's retrieval success rate).
+</p>
+
+<h2>5. Outputs</h2>
+<p>
+<code>report.md</code> is always produced. On top of that you can ask for HTML, a Quarto
+PDF/docx, or promotion into an OKF bundle (wiki mode only). Decide this now, not after Stage 8
+&mdash; it doesn't block earlier stages, but naming it up front avoids a second pass through
+Stage 8's render step.
+</p>
+
+<div class="win">
+<p><strong>The tangible win for this lesson:</strong> given a real question, you can now answer
+all five Stage 0 prompts in one go &mdash; framework check, profile (or its parts), target plus
+its one-time setup command, filters, and outputs &mdash; without the pipeline having to walk you
+through them one at a time.</p>
+</div>
+
+<h2>Check yourself</h2>
+<div class="quiz" id="q1">
+<p class="q">Your question is "does night-shift work increase cardiovascular risk in nurses?" &mdash; no intervention, just an exposure. Which framework should the restatement use?</p>
+<label><input type="radio" name="q1" value="wrong"> PICO, since it is the default</label>
+<label><input type="radio" name="q1" value="right"> PECO, since it is exposure not intervention</label>
+<label><input type="radio" name="q1" value="wrong2"> SPIDER, since it involves people</label>
+<div class="feedback"></div>
+</div>
+
+<div class="quiz" id="q2">
+<p class="q">You want to build a shared paper pool on a topic but aren't ready to commit to full appraisal yet. What do you set?</p>
+<label><input type="radio" name="q2" value="wrong"> profile: fast</label>
+<label><input type="radio" name="q2" value="right"> pipeline.stop_after_stage: 5</label>
+<label><input type="radio" name="q2" value="wrong2"> outputs: report.md only</label>
+<div class="feedback"></div>
+</div>
+
+<div class="quiz" id="q3">
+<p class="q">First time using standalone repo mode in a fresh directory. What must you run before Stage 0 can proceed?</p>
+<label><input type="radio" name="q3" value="wrong"> python3 scripts/library.py init --wiki &lt;root&gt;</label>
+<label><input type="radio" name="q3" value="right"> python3 scripts/research.py init &lt;path&gt;</label>
+<label><input type="radio" name="q3" value="wrong2"> Nothing, standalone mode needs no setup</label>
+<div class="feedback"></div>
+</div>
+
+<h2>Primary source</h2>
+<p class="source">
+Recommended reading: <code>README.md</code>, section "Invoking it" (the Stage 0 question table)
+and "Two ways to run this" (the setup-command table this lesson expands on). For the framework
+picker specifically: <code>references/question-frameworks.md</code>.
+</p>
+
+<div class="ask-teacher">
+Stuck, or want to walk through Stage 0 for a question you actually have? Ask me directly &mdash;
+I'm your teacher here, not just the author of this page.
+</div>
+
+<div class="nav">
+<span>&larr; <a href="0001-what-is-deep-research.html">Lesson 1: What is deep-research?</a></span>
+<span>Next: Stages 1&ndash;4 &mdash; protocol, search, screen, retrieve</span>
+</div>
+
+<script>
+document.querySelectorAll('.quiz').forEach(function (quiz) {
+  quiz.querySelectorAll('input[type=radio]').forEach(function (input) {
+    input.addEventListener('change', function () {
+      var fb = quiz.querySelector('.feedback');
+      var correct = input.value === 'right';
+      fb.textContent = correct ? 'Correct.' : 'Not quite — reread the section above and try again.';
+      fb.className = 'feedback show ' + (correct ? 'correct' : 'incorrect');
+    });
+  });
+});
+</script>
+</body>
+</html>

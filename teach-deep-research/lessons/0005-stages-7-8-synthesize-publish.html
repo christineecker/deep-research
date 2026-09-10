@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 5 — Stages 7–8: Synthesize &amp; Publish</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<p class="kicker">Lesson 5 of the deep-research course</p>
+<h1>Stages 7&ndash;8: the bottom line, and which file to open</h1>
+<p class="lede">The pipeline's last stretch turns extracted, appraised papers into something you can actually read. This lesson covers the rules that keep that read honest, and which of the three output files answers which question.</p>
+
+<h2>Stage 7 &mdash; Synthesize</h2>
+<p>
+Main thread only &mdash; no subagent writes the synthesis. The core moves: tabulate effect
+<em>direction</em> per outcome (not pooled effects &mdash; recall from Lesson 1, this is not a
+meta-analysis), surface agreement and conflict <strong>with an explanation of why</strong>
+studies disagree, rate certainty, name the gaps, and keep a hard-walled hypotheses section.
+Three invariants are what make that trustworthy rather than just tidy:
+</p>
+<ul>
+<li><strong>Null and negative findings are actively searched for</strong> &mdash; screening
+must not exclude on outcome positivity, so a synthesis can't quietly become a highlight reel.</li>
+<li><strong>Conflicts are never averaged away.</strong> Two studies disagreeing is a finding to
+explain, not noise to smooth over.</li>
+<li><strong>"New insights / hypotheses" is hard-walled from "what the evidence shows."</strong>
+If the report speculates, it says so in a clearly separated section &mdash; it never blends a
+guess into the evidence tabulation.</li>
+</ul>
+<p>
+Read <code>outputs/report.md</code> with those three in mind and you're reading it the way the
+skill intends: check the gaps section as seriously as the findings, and treat the hypotheses
+section as "worth investigating," not "established."
+</p>
+
+<h2>Stage 7b &mdash; Digest</h2>
+<p>
+One opus subagent compresses the finished report into <code>outputs/digest.md</code>: an
+answer-first paragraph, a categorical outcomes table (outcome / direction / certainty /
+studies), and an <code>## Open Questions</code> section merging gaps and hypotheses, each paired
+with what would resolve it. No new research happens here, no re-derived judgement &mdash; same
+GRADE wording, same hard wall between evidence and speculation as the source report. In wiki
+mode this digest becomes the actual page content at <code>research/reviews/&lt;slug&gt;.md</code>;
+the full report stays linked as the audit trail behind it.
+</p>
+
+<h2>Stage 8 &mdash; Assemble, verify, publish</h2>
+<p>
+Fixed order, every time:
+</p>
+<pre>assemble.py run  -&gt;  verify.py run  -&gt;  render.py / html_report.py  -&gt;  okf.py promote --check  -&gt;  okf.py promote</pre>
+<p>
+<code>assemble.py</code> decides which artifacts are admissible and writes
+<code>outputs/result.json</code>. <code>verify.py</code> runs 12 report checks plus 4
+evidence-kernel checks and writes <code>outputs/verification.json</code> &mdash; this is the file
+that answers "did this run pass its own sanity checks," independent of whether you agree with its
+conclusions. <code>okf.py promote</code> (wiki mode only) is the step that actually publishes
+into the wiki, and it blocks if Stage 7b hasn't produced a completed digest or if verification
+failed. In standalone repo mode there's no promote step at all &mdash;
+<code>outputs/report.md</code>/<code>digest.md</code> plus the project's
+<code>manuscript.qmd</code>/<code>refs.bib</code> under <code>projects/&lt;slug&gt;/</code>
+<em>are</em> the deliverable.
+</p>
+<p>
+One nuance worth knowing: the evidence-kernel gate is <strong>off by default</strong> until a
+live end-to-end run has passed once. Gate off, those kernel checks still run and still show up
+in <code>verification.json</code> &mdash; they just warn instead of blocking. A hash-mismatched
+snapshot or a quote that doesn't match its source span is never silently downgraded, though
+&mdash; tamper detection stays a hard failure regardless of the gate setting.
+</p>
+
+<h2>Which file answers which question</h2>
+<table>
+<tr><th>You want to know&hellip;</th><th>Open</th></tr>
+<tr><td>The bottom line, fast</td><td><code>outputs/digest.md</code></td></tr>
+<tr><td>Full methods, PRISMA flow, per-study detail, provenance</td><td><code>outputs/report.md</code></td></tr>
+<tr><td>Did the run pass its own consistency/citation checks</td><td><code>outputs/verification.json</code></td></tr>
+<tr><td>What's still open, and what would resolve it</td><td><code>digest.md</code>'s <code>## Open Questions</code></td></tr>
+<tr><td>Coverage during the run (reused vs. fresh, retrieval format)</td><td><code>python3 scripts/status.py &lt;run_dir&gt; --table</code> (Lesson 4)</td></tr>
+</table>
+
+<div class="win">
+<p><strong>The tangible win for this lesson:</strong> handed a finished run directory, you know
+exactly which file to open for "give me the bottom line" versus "show me the full audit trail"
+versus "did this actually pass its checks" &mdash; and you can explain why a report's hypotheses
+section is never itself a citable finding.</p>
+</div>
+
+<h2>Check yourself</h2>
+<div class="quiz" id="q1">
+<p class="q">Two included studies disagree on an outcome's direction. What does Stage 7 do?</p>
+<label><input type="radio" name="q1" value="wrong"> Averages the two effects into one net direction</label>
+<label><input type="radio" name="q1" value="right"> Surfaces the conflict with an explanation of why they disagree</label>
+<label><input type="radio" name="q1" value="wrong2"> Drops the weaker study from the table</label>
+<div class="feedback"></div>
+</div>
+
+<div class="quiz" id="q2">
+<p class="q">A colleague wants the bottom line from a finished run in under a minute. Which file?</p>
+<label><input type="radio" name="q2" value="wrong"> outputs/report.md</label>
+<label><input type="radio" name="q2" value="right"> outputs/digest.md</label>
+<label><input type="radio" name="q2" value="wrong2"> outputs/verification.json</label>
+<div class="feedback"></div>
+</div>
+
+<div class="quiz" id="q3">
+<p class="q">The evidence-kernel gate is off (its default) and a snapshot's hash doesn't match. What happens?</p>
+<label><input type="radio" name="q3" value="wrong"> It's logged as a warning only, promotion proceeds</label>
+<label><input type="radio" name="q3" value="right"> Tamper is still a hard failure, gate setting or not</label>
+<label><input type="radio" name="q3" value="wrong2"> The run silently re-fetches the snapshot and continues</label>
+<div class="feedback"></div>
+</div>
+
+<h2>Primary source</h2>
+<p class="source">
+Recommended reading: <code>SKILL.md</code>, Stages 7&ndash;8 narrative and the "Invariants"
+section (especially 4, 5, 6, and the tamper rule); <code>references/synthesis.md</code> for the
+full synthesis mechanics; <code>references/reporting.md</code> for the report's section
+structure.
+</p>
+
+<div class="ask-teacher">
+Stuck, or want to walk through a real <code>report.md</code>/<code>digest.md</code> pair
+together? Ask me directly &mdash; I'm your teacher here, not just the author of this page.
+</div>
+
+<div class="nav">
+<span>&larr; <a href="0004-stages-5-6-extract-appraise.html">Lesson 4: Stages 5&ndash;6</a></span>
+<span>Next: <a href="0006-paper-summary-profile.html">Lesson 6: the lightweight paper-summary profile</a></span>
+</div>
+
+<script>
+document.querySelectorAll('.quiz').forEach(function (quiz) {
+  quiz.querySelectorAll('input[type=radio]').forEach(function (input) {
+    input.addEventListener('change', function () {
+      var fb = quiz.querySelector('.feedback');
+      var correct = input.value === 'right';
+      fb.textContent = correct ? 'Correct.' : 'Not quite — reread the section above and try again.';
+      fb.className = 'feedback show ' + (correct ? 'correct' : 'incorrect');
+    });
+  });
+});
+</script>
+</body>
+</html>
