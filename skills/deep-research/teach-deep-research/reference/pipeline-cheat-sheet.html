@@ -47,12 +47,30 @@
 <h2>Two run targets</h2>
 <table>
 <tr><th></th><th>Wiki mode (default)</th><th>Standalone repo mode</th></tr>
-<tr><td>Setup</td><td>wiki-manager wiki must exist</td><td><code>research.py init &lt;path&gt;</code> once</td></tr>
+<tr><td>Setup</td><td>wiki-manager wiki must exist</td><td><code>/deep-research:init &lt;path&gt;</code> once</td></tr>
 <tr><td>Run lives at</td><td><code>&lt;wiki&gt;/outputs/deep-research/&lt;slug&gt;/</code></td><td><code>&lt;repo&gt;/runs/&lt;slug&gt;/</code></td></tr>
 <tr><td>Shared pool</td><td><code>&lt;wiki&gt;/assets/papers/pool.jsonl</code></td><td><code>&lt;repo&gt;/data/papers/registry.jsonl</code></td></tr>
 <tr><td>Manuscript output</td><td>promoted into <code>&lt;wiki&gt;/research/</code></td><td><code>&lt;repo&gt;/projects/&lt;slug&gt;/</code></td></tr>
 <tr><td>Needs wiki-manager?</td><td>yes</td><td>no, ever</td></tr>
 </table>
+
+<h2>Slash commands (narrow asks, no pipeline)</h2>
+<table>
+<tr><th>Command</th><th>Does</th><th>Needs a run?</th></tr>
+<tr><td><code>init &lt;path&gt;</code></td><td>Create a standalone repo (prerequisite for the rest)</td><td>no</td></tr>
+<tr><td><code>pool-add</code></td><td>Register papers, bibliographic record only</td><td>no</td></tr>
+<tr><td><code>summarize</code></td><td>Read + summarize exactly one paper</td><td>no</td></tr>
+<tr><td><code>summarize-set</code></td><td>Discover/select + summarize a bounded set</td><td>no</td></tr>
+<tr><td><code>bib-export</code></td><td>Export BibTeX from the registry</td><td>no</td></tr>
+<tr><td><code>pdf-lookup</code></td><td>Check whether a paper is already registered</td><td>no</td></tr>
+<tr><td><code>project</code></td><td>Create/list manuscript projects</td><td>no</td></tr>
+<tr><td><code>status &lt;run-dir&gt;</code></td><td>Stage progress + record table for a run</td><td>yes</td></tr>
+<tr><td><code>verify</code></td><td>Consistency checks over a run or a summary</td><td>yes</td></tr>
+<tr><td><code>watch</code></td><td>Read-only snapshot of a run's progress</td><td>yes</td></tr>
+</table>
+<p>Full Stage 0&ndash;8 review still goes through the <code>deep-research</code> skill directly
+(ask for "a literature review" / "what does the evidence say about X"), never these commands.
+See <a href="../lessons/0007-slash-commands.html">Lesson 7</a>.</p>
 
 <h2>Glossary</h2>
 <table>

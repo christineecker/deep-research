@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 7 — Slash commands, for a single narrow ask</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<p class="kicker">Lesson 7 of the deep-research course</p>
+<h1>You don't always need the pipeline</h1>
+<p class="lede">The repo became a Claude Code plugin. Along with that came 11
+<code>/deep-research:*</code> slash commands &mdash; each one calls a script directly, no
+Stage 0&ndash;8 negotiation. This lesson is about knowing when to reach for one instead of
+asking for "a literature review."</p>
+
+<h2>The shape of the decision</h2>
+<table>
+<tr><th>Ask</th><th>Route</th></tr>
+<tr><td>"Register these five papers, I'll search/filter/export later"</td><td><code>/deep-research:pool-add</code></td></tr>
+<tr><td>"Summarize this one paper"</td><td><code>/deep-research:summarize</code></td></tr>
+<tr><td>"Summarize this bounded set / topic scan"</td><td><code>/deep-research:summarize-set</code></td></tr>
+<tr><td>"Is this paper already in the pool?"</td><td><code>/deep-research:pdf-lookup</code></td></tr>
+<tr><td>"Export my registry as BibTeX"</td><td><code>/deep-research:bib-export</code></td></tr>
+<tr><td>"How's my run doing / what's left?"</td><td><code>/deep-research:status</code>, <code>/deep-research:watch</code></td></tr>
+<tr><td>"Do these outputs check out?"</td><td><code>/deep-research:verify</code></td></tr>
+<tr><td>"Set up a manuscript folder"</td><td><code>/deep-research:project</code></td></tr>
+<tr><td>"Literature review / what does the evidence say about X"</td><td>Full pipeline &mdash; <em>not</em> a command</td></tr>
+</table>
+<p>
+Every command name above is a script name in disguise &mdash; <code>pool-add</code> is
+<code>library.py pool-add</code>, <code>summarize</code>/<code>summarize-set</code> are
+<code>paper.py</code>, <code>status</code>/<code>verify</code>/<code>watch</code> are their own
+scripts. The command spec's job is just to parse <code>$ARGUMENTS</code> and print the exact
+invocation before running it &mdash; nothing about the pipeline narrative in <code>SKILL.md</code>
+is read for these.
+</p>
+
+<h2><code>pool-add</code> vs. <code>summarize-set</code> &mdash; the one mixup worth avoiding</h2>
+<div class="win">
+<p>Both take a set of papers. The difference is whether you want <em>content</em> yet.</p>
+<ul>
+<li><code>pool-add</code>: bibliographic record only. No reading, no summary, no appraisal.
+Cheap, fast, just gets papers onto the shelf.</li>
+<li><code>summarize-set</code>: full read + summarize (optionally appraise) per paper. Not sure
+which papers would even be picked from a topic scan? Add <code>--select-only</code> to stop
+after the candidate list, before paying for any summaries &mdash; then re-run without it once
+the set looks right.</li>
+</ul>
+</div>
+
+<h2>One prerequisite, one exception set</h2>
+<p>
+Every command except <code>status</code>, <code>verify</code>, and <code>watch</code> takes
+<code>--repo &lt;path&gt;</code> and fails without a <code>data/papers/registry.jsonl</code>
+already there &mdash; run <code>/deep-research:init &lt;path&gt;</code> once first (or
+<code>--from-wiki &lt;wiki-root&gt;</code> to import from an existing wiki-manager wiki instead
+of starting empty). <code>status</code>/<code>verify</code>/<code>watch</code> key off
+<code>--run-dir</code> instead, which only exists once a full pipeline run has started &mdash;
+they read an existing run, they don't need a repo of their own.
+</p>
+
+<h2>Why this doesn't replace Lesson 6</h2>
+<p>
+Lesson 6's <code>paper.py summarize</code>/<code>summarize-set</code> profiles are what these
+slash commands wrap for the summary asks. The slash-command layer changed <em>how you invoke</em>
+that profile (a one-line command instead of remembering the script path and flags) &mdash; it
+didn't change what the profile does, its "not a meta-analysis" invariant, or its shared-pool
+reuse with the full pipeline.
+</p>
+
+<h2>Check yourself</h2>
+<div class="quiz" id="q1">
+<p class="q">You want to know which papers a run is still waiting on full text for. Which command?</p>
+<label><input type="radio" name="q1" value="wrong"> /deep-research:pool-add</label>
+<label><input type="radio" name="q1" value="right"> /deep-research:status</label>
+<label><input type="radio" name="q1" value="wrong2"> /deep-research:project</label>
+<div class="feedback"></div>
+</div>
+
+<div class="quiz" id="q2">
+<p class="q">You want a candidate list from a topic scan, but don't want to pay for summaries yet. Which flag, on which command?</p>
+<label><input type="radio" name="q2" value="wrong"> --appraise, on summarize</label>
+<label><input type="radio" name="q2" value="right"> --select-only, on summarize-set</label>
+<label><input type="radio" name="q2" value="wrong2"> --json, on watch</label>
+<div class="feedback"></div>
+</div>
+
+<div class="quiz" id="q3">
+<p class="q">A colleague asks "what does the evidence say about X" &mdash; a real multi-paper question. Route it to a slash command?</p>
+<label><input type="radio" name="q3" value="wrong"> Yes, summarize-set with --topic</label>
+<label><input type="radio" name="q3" value="right"> No, that's the full Stage 0-8 pipeline</label>
+<label><input type="radio" name="q3" value="wrong2"> Yes, pool-add then bib-export</label>
+<div class="feedback"></div>
+</div>
+
+<h2>Primary source</h2>
+<p class="source">
+Recommended reading: <code>commands/help.md</code> (the pool-add vs. summarize-set decision
+tree, verbatim source for this lesson) and <code>README.md</code>'s "Slash commands" table, both
+at the plugin repo root. Reference: <a href="../reference/pipeline-cheat-sheet.html">Pipeline
+cheat sheet</a>, now includes the command table too.
+</p>
+
+<div class="ask-teacher">
+Stuck, or want to trace a real <code>/deep-research:summarize-set --select-only</code> run
+together? Ask me directly &mdash; I'm your teacher here, not just the author of this page.
+</div>
+
+<div class="nav">
+<span>&larr; <a href="0006-paper-summary-profile.html">Lesson 6: Paper-summary profile</a></span>
+<span>Course complete &mdash; ask me for a practice run to try it end to end</span>
+</div>
+
+<script>
+document.querySelectorAll('.quiz').forEach(function (quiz) {
+  quiz.querySelectorAll('input[type=radio]').forEach(function (input) {
+    input.addEventListener('change', function () {
+      var fb = quiz.querySelector('.feedback');
+      var correct = input.value === 'right';
+      fb.textContent = correct ? 'Correct.' : 'Not quite — reread the section above and try again.';
+      fb.className = 'feedback show ' + (correct ? 'correct' : 'incorrect');
+    });
+  });
+});
+</script>
+</body>
+</html>

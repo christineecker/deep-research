@@ -12,6 +12,11 @@ output — so that when a real literature question comes up, the tool is not a b
   bypass) — and, since the skill added `scripts/paper.py summarize`/`summarize-set`, can also
   say when a single-paper or small-set ask should route to that lightweight profile instead of
   the full Stage 0-8 pipeline.
+- Since the repo became a plugin with 11 `/deep-research:*` slash commands (2026-09-10), can
+  pick the narrow command for a single ask (`init`, `pool-add`, `summarize`, `summarize-set`,
+  `bib-export`, `pdf-lookup`, `status`, `verify`, `project`, `watch`) instead of invoking the
+  full pipeline for it — and knows the full pipeline is still what to ask for when the request
+  is a genuine multi-paper review, not a command gap.
 - Can correctly answer Stage 0's setup questions (question framework, profile, wiki vs.
   standalone repo target, filters) for a real question.
 - Can name all 8 pipeline stages in order and what each one writes.

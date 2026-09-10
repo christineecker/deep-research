@@ -8,3 +8,7 @@
   and `tutorials/`, not external literature — this is a tool, not a domain topic.
 - No community/wisdom layer applies here (bespoke internal skill) — wisdom substitute is
   running real practice runs and bringing surprises back to the next teaching session.
+- 2026-09-10: repo restructured as a Claude Code plugin (`.claude-plugin/`, `commands/` at
+  repo root; skill itself moved down to `skills/deep-research/`). All resource paths updated
+  accordingly — re-check paths at the next session start in case it moves again. Added Lesson
+  7 covering the 11 new `/deep-research:*` slash commands.

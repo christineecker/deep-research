@@ -1,29 +1,41 @@
 # deep-research (skill) Resources
 
+Repo root is `/Users/sphache/.claude/skills/deep-research` — since the plugin restructure
+(2026-09-10) it holds `commands/`, `.claude-plugin/`, and `skills/deep-research/` (the skill
+itself, one level down: `SKILL.md`, `scripts/`, `references/`, `docs/`, this teaching
+workspace). Paths below reflect that; if a path 404s, the layout has moved again — check
+`README.md` at the repo root first.
+
 ## Knowledge
 
-- [`SKILL.md`](/Users/sphache/.claude/skills/deep-research/SKILL.md)
+- [`skills/deep-research/SKILL.md`](/Users/sphache/.claude/skills/deep-research/skills/deep-research/SKILL.md)
   The agent-facing router — primary source of truth for stage mechanics, profiles, invariants,
   delegation rules. Use for: anything about *how the skill actually runs internally*.
 - [`README.md`](/Users/sphache/.claude/skills/deep-research/README.md)
-  The human-facing operator manual — written for the person running the skill, not the agent.
-  Use for: "how do I invoke this / what do I need to answer / what are my two modes."
-- [`references/` directory](/Users/sphache/.claude/skills/deep-research/references/)
+  The human-facing operator manual at the repo root — written for the person running the
+  skill, not the agent. Now leads with slash commands vs. the full pipeline. Use for: "how do
+  I invoke this / what do I need to answer / what are my modes."
+- [`commands/` directory](/Users/sphache/.claude/skills/deep-research/commands/)
+  11 slash-command specs (`init`, `pool-add`, `summarize`, `summarize-set`, `bib-export`,
+  `pdf-lookup`, `status`, `verify`, `project`, `watch`, `help`) — each calls one script
+  directly (`${CLAUDE_PLUGIN_ROOT}/skills/deep-research/scripts/*.py`), bypassing SKILL.md's
+  staged Stage 0-8 narrative. Use for: any single narrow ask that isn't a full review. Use
+  for: Lesson 7.
+- [`references/` directory](/Users/sphache/.claude/skills/deep-research/skills/deep-research/references/)
   Per-topic deep references: `search-strategy.md`, `acquisition.md`, `appraisal.md`,
   `synthesis.md`, `reporting.md`, `pool-architecture.md`, `evidence-kernel.md`,
   `question-frameworks.md`, `schema.md`. Use for: any single stage in depth.
-- [`scripts/tutorial.py`](/Users/sphache/.claude/skills/deep-research/scripts/tutorial.py)
-  Guided local tutorial script (replaced the old static `tutorials/` markdown walkthrough,
-  which the repo has since deleted). Run `python3 scripts/tutorial.py quickstart --repo
-  /tmp/deep-research-tutorial-demo` for a hands-on standalone-repo-mode practice run without a
-  live wiki or PubMed connector; `build-site --out exports/html/tutorials` renders static HTML
-  versions. Use for: first real end-to-end practice run.
-- [`docs/` directory](/Users/sphache/.claude/skills/deep-research/docs/)
-  Newer human-facing static docs site (`index.html`, `quickstart.html`, `pipeline.html`,
-  `appraisal.html`, `commands.html`, `architecture.html`, `paper-summaries.html`) — appears to
-  be replacing/supplementing `README.md` as the operator-facing entry point. Worth checking each
-  session whether `README.md` still tracks it or has been superseded.
-- [`references/single-paper-summary.md`](/Users/sphache/.claude/skills/deep-research/references/single-paper-summary.md)
+- [`scripts/tutorial.py`](/Users/sphache/.claude/skills/deep-research/skills/deep-research/scripts/tutorial.py)
+  Guided local tutorial script. Run `python3 skills/deep-research/scripts/tutorial.py
+  quickstart --repo /tmp/deep-research-tutorial-demo` for a hands-on standalone-repo-mode
+  practice run without a live wiki or PubMed connector; `build-site --out
+  exports/html/tutorials` renders static HTML versions. Use for: first real end-to-end
+  practice run.
+- [`docs/` directory](/Users/sphache/.claude/skills/deep-research/skills/deep-research/docs/)
+  Human-facing static docs site (`index.html`, `quickstart.html`, `pipeline.html`,
+  `appraisal.html`, `commands.html`, `architecture.html`, `paper-summaries.html`) —
+  `README.md` now links out to these per-topic rather than duplicating them.
+- [`references/single-paper-summary.md`](/Users/sphache/.claude/skills/deep-research/skills/deep-research/references/single-paper-summary.md)
   Command reference for the lightweight `scripts/paper.py summarize`/`summarize-set` profiles
   (reuses the standalone-repo pool, skips the full Stage 0-8 pipeline). Use for: Lesson 6.
 

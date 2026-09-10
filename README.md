@@ -12,6 +12,22 @@ acquisition → extraction → appraisal → synthesis → verified report, prom
 credentials, no scraping — unobtainable text is quarantined and handed back to you), or
 general web research.
 
+## Install
+
+This repo is a Claude Code plugin.
+
+- **Local dev**: `claude --plugin-dir /path/to/deep-research`
+- **From a marketplace**:
+  ```
+  /plugin marketplace add https://forgejo.sphache.synology.me/sphache/deep-research.git
+  /plugin install deep-research@deep-research
+  ```
+  (this repo is its own marketplace — `.claude-plugin/marketplace.json`)
+
+Either way, `/deep-research:*` slash commands and the `deep-research` skill become
+available in every session. See Requirements below for the `python3`/binary
+dependencies the scripts themselves need.
+
 ## Slash commands — for a single narrow ask
 
 Register some papers, summarize one or a few, check a run's status — these call the
