@@ -566,7 +566,7 @@ def cmd_migrate(args) -> int:
 
     registered, extractions_copied, appraisals_copied = 0, 0, 0
     stale_pointers: list[dict] = []
-    with _registry.advisory_lock(args.repo, "registry"):
+    with registry.locked():
         for eid, entry in pool.records.items():
             raw = {k: entry.get(k) for k in _registry.REGISTRY_FIELDS if entry.get(k)}
             raw["evidence_id"] = eid

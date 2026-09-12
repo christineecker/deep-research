@@ -14,7 +14,7 @@ Parse `$ARGUMENTS` for:
 - `--project <slug>` — scopes `--appraisal-status appraised` and `--q`'s appraisal-rationale
   search to this project's own appraisal entry.
 - `--q "<text>"` — keyword search: lowercase AND-of-terms over title/abstract/journal/
-  extraction narrative/appraisal rationale/full text.
+  extraction claims and outcome names/extraction narrative/appraisal rationale/full text.
 - `--similar-to <evidence-id>` — rank surviving results by cosine similarity to this
   evidence_id. **Requires `embeddings.py index` to have already been run** for this repo
   (`/deep-research:embed index`) — if no embeddings file exists yet, the script will say so;

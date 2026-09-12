@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+import unittest.mock
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -220,6 +221,130 @@ class CliPlumbingTest(unittest.TestCase):
             self.assertEqual(payload["total_candidates"], 0)
 
 
+class CachedModelSelectionTest(unittest.TestCase):
+    """`query` must never rank across models — the vector spaces are unrelated."""
+
+    @staticmethod
+    def _cache(*models: str) -> dict:
+        return {f"pmid:{i}": {"evidence_id": f"pmid:{i}", "model": m, "vector": [1.0]}
+                for i, m in enumerate(models, start=1)}
+
+    def test_single_cached_model_is_chosen_implicitly(self):
+        model, error = embeddings._cached_model(self._cache("m", "m"), None)
+        self.assertEqual((model, error), ("m", None))
+
+    def test_mixed_models_require_an_explicit_choice(self):
+        model, error = embeddings._cached_model(self._cache("m1", "m2"), None)
+        self.assertIsNone(model)
+        self.assertIn("--model", error)
+
+    def test_explicit_model_must_actually_be_cached(self):
+        model, error = embeddings._cached_model(self._cache("m1"), "m2")
+        self.assertIsNone(model)
+        self.assertIn("m2", error)
+
+    def test_empty_cache_points_at_index(self):
+        model, error = embeddings._cached_model({}, None)
+        self.assertIsNone(model)
+        self.assertIn("index", error)
+
+
+class QueryCommandTest(unittest.TestCase):
+    """`query` ranking and error paths, exercised without the optional model."""
+
+    class _StubModel:
+        """Stands in for a SentenceTransformer: encodes the one text it is given."""
+
+        def __init__(self, vector):
+            self.vector = vector
+
+        def encode(self, texts, show_progress_bar=False):
+            return [self.vector for _ in texts]
+
+    def _query(self, repo: Path, *, text: str, k: int = 10, model: str | None = None,
+               vector=(1.0, 0.0)) -> dict:
+        import contextlib
+        import io
+
+        buf = io.StringIO()
+        with unittest.mock.patch.object(
+                embeddings, "_load_sentence_transformer",
+                return_value=self._StubModel(list(vector))):
+            with contextlib.redirect_stdout(buf):
+                code = embeddings.cmd_query(
+                    _ns(repo=str(repo), text=text, k=k, model=model))
+        return json.loads(buf.getvalue()), code
+
+    def _seed(self, repo: Path) -> None:
+        research.cmd_init(_ns(path=str(repo), from_wiki=None))
+        reg = registry.Registry(repo)
+        reg.register({"pmid": "1", "title": "Close paper", "journal": "J",
+                     "publication_date": "2026"})
+        reg.register({"pmid": "2", "title": "Far paper", "journal": "J",
+                     "publication_date": "2026"})
+        reg.save()
+        embeddings.write_embeddings(repo, {
+            "pmid:1": {"schema_version": 1, "evidence_id": "pmid:1", "model": "m",
+                      "dim": 2, "vector": [0.9, 0.1], "updated_at": "2026-01-01T00:00:00Z"},
+            "pmid:2": {"schema_version": 1, "evidence_id": "pmid:2", "model": "m",
+                      "dim": 2, "vector": [0.0, 1.0], "updated_at": "2026-01-01T00:00:00Z"},
+        })
+
+    def test_ranks_papers_against_free_text(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            self._seed(repo)
+            payload, code = self._query(repo, text="does X reduce Y?")
+            self.assertEqual(code, 0)
+            self.assertEqual([r["evidence_id"] for r in payload["results"]],
+                             ["pmid:1", "pmid:2"])
+            self.assertEqual(payload["results"][0]["title"], "Close paper")
+            self.assertEqual(payload["model"], "m")
+            self.assertEqual(payload["compared"], 2)
+
+    def test_k_caps_results(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            self._seed(repo)
+            payload, _ = self._query(repo, text="a question", k=1)
+            self.assertEqual([r["evidence_id"] for r in payload["results"]], ["pmid:1"])
+
+    def test_vectors_from_other_models_are_not_compared(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            self._seed(repo)
+            cached = embeddings.read_embeddings(repo)
+            cached["pmid:2"]["model"] = "other"
+            embeddings.write_embeddings(repo, cached)
+            payload, code = self._query(repo, text="a question", model="m")
+            self.assertEqual(code, 0)
+            self.assertEqual(payload["compared"], 1)
+            self.assertEqual([r["evidence_id"] for r in payload["results"]], ["pmid:1"])
+
+    def test_empty_text_is_rejected(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            self._seed(repo)
+            payload, code = self._query(repo, text="   ")
+            self.assertEqual(code, 2)
+            self.assertEqual(payload["status"], "error")
+
+    def test_errors_cleanly_when_embeddings_file_missing(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            research.cmd_init(_ns(path=str(repo), from_wiki=None))
+            result = run_py(["scripts/embeddings.py", "query", "--repo", str(repo),
+                             "--text", "a question"])
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "error")
+            self.assertIn("index", payload["error"])
+
+    def test_help_does_not_require_sentence_transformers(self):
+        result = run_py(["scripts/embeddings.py", "query", "--help"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
 @unittest.skipUnless(_HAS_ST, "sentence-transformers not installed")
 class RealModelIndexTest(unittest.TestCase):
     def test_index_then_similar_end_to_end(self):
@@ -246,6 +371,14 @@ class RealModelIndexTest(unittest.TestCase):
             similar_payload = json.loads(similar_result.stdout)
             self.assertEqual(len(similar_payload["results"]), 1)
             self.assertEqual(similar_payload["results"][0]["evidence_id"], "pmid:2")
+
+            # A question, not a paper: `query` must reach the same vectors.
+            query_result = run_py(["scripts/embeddings.py", "query", "--repo", str(repo),
+                                   "--text", "does exercise help teenage depression?",
+                                   "--k", "1"])
+            self.assertEqual(query_result.returncode, 0, query_result.stderr)
+            query_payload = json.loads(query_result.stdout)
+            self.assertEqual(query_payload["results"][0]["evidence_id"], "pmid:1")
 
             # Re-running index without --force should skip already-current embeddings.
             reindex_result = run_py(["scripts/embeddings.py", "index", "--repo", str(repo)])

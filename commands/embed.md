@@ -7,8 +7,8 @@ Do not read SKILL.md's staged pipeline narrative — call the script below direc
 to deep-research's blanket "zero pip installs, ever" policy, scoped to this one script only
 (`references/acquisition.md` §9, `references/reference-manager.md`) — no other script gains
 a dependency because of this. If it's not installed, `index` fails with a one-line message
-saying so; run `pip install sentence-transformers` first. `similar` and `--help` never
-require it.
+saying so; run `pip install sentence-transformers` first. `query` needs it too (it has to
+embed the question); `similar` and `--help` never require it.
 
 Parse `$ARGUMENTS` for a subcommand:
 
@@ -33,5 +33,18 @@ Call:
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/deep-research/scripts/embeddings.py" similar --repo <path> --evidence-id <id> [--k N]
 ```
 
-Print the script's own output verbatim. Run `index` at least once before `similar` or before
-`/deep-research:search --similar-to`.
+**`query`** — rank papers against a free-text question rather than against another paper:
+- `--repo <path>` — required.
+- `--text "<question>"` — required.
+- `--k N` — optional, default 10.
+- `--model <name>` — optional. Only needed when `embeddings.jsonl` holds vectors from more
+  than one model: rankings are never computed across models, so the command asks which one
+  to use instead of mixing them.
+
+Call:
+```
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/deep-research/scripts/embeddings.py" query --repo <path> --text "<question>" [--k N] [--model <name>]
+```
+
+Print the script's own output verbatim. Run `index` at least once before `similar`, `query`,
+or `/deep-research:search --similar-to`.

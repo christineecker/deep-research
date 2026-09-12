@@ -199,6 +199,46 @@ class KeywordSearchTest(unittest.TestCase):
             payload, _ = _search(repo, q="renal denervation")
             self.assertEqual([r["evidence_id"] for r in payload["results"]], ["pmid:1"])
 
+    def test_matches_extraction_claim_span(self):
+        with TemporaryDirectory() as tmp:
+            repo = _init_repo(Path(tmp))
+            reg = registry.Registry(repo)
+            reg.register({"pmid": "1", "title": "T1", "journal": "J", "publication_date": "2020"})
+            extraction_path = repo / "data" / "papers" / "extractions" / "pmid-1.json"
+            write_json(extraction_path, {
+                "population": None, "intervention": None, "comparator": None,
+                "limitations": None, "extractor_notes": None,
+                "spans": [{"claim": "24-week remission RR 1.12, no group difference.",
+                           "evidence_id": "pmid:1", "source_id": "src-absent",
+                           "start": 0, "end": 10, "access": "full_text"}],
+            })
+            reg.set_extraction("pmid:1", str(extraction_path.relative_to(repo)))
+            reg.save()
+            payload, _ = _search(repo, q="group difference")
+            self.assertEqual([r["evidence_id"] for r in payload["results"]], ["pmid:1"])
+            self.assertIn("no group difference", payload["results"][0]["snippet"])
+
+    def test_matches_outcome_name_and_prefers_it_for_the_snippet(self):
+        with TemporaryDirectory() as tmp:
+            repo = _init_repo(Path(tmp))
+            reg = registry.Registry(repo)
+            # The same term also appears in the abstract, which is searched first, so the
+            # snippet check below pins ordering only for a term unique to the outcome.
+            reg.register({"pmid": "1", "title": "T1", "journal": "J",
+                          "publication_date": "2020", "abstract": "A depression trial."})
+            extraction_path = repo / "data" / "papers" / "extractions" / "pmid-1.json"
+            write_json(extraction_path, {
+                "population": None, "intervention": None, "comparator": None,
+                "limitations": None, "extractor_notes": None,
+                "outcomes": [{"name": "CDI-2 total score", "timepoint": "12 weeks",
+                              "effect_measure": "SMD", "direction": "favors_intervention"}],
+            })
+            reg.set_extraction("pmid:1", str(extraction_path.relative_to(repo)))
+            reg.save()
+            payload, _ = _search(repo, q="cdi-2")
+            self.assertEqual([r["evidence_id"] for r in payload["results"]], ["pmid:1"])
+            self.assertIn("CDI-2", payload["results"][0]["snippet"])
+
     def test_matches_appraisal_rationale(self):
         with TemporaryDirectory() as tmp:
             repo = _init_repo(Path(tmp))

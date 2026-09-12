@@ -189,6 +189,26 @@ class Registry:
                 if eid:
                     self.records[eid] = rec
 
+    def reload(self) -> None:
+        """Re-read `registry.jsonl`, discarding whatever is in memory."""
+        self.records = {}
+        self._load()
+
+    @contextlib.contextmanager
+    def locked(self):
+        """Hold `advisory_lock(repo_root, "registry")` across a read-modify-write.
+
+        Re-reads the store **inside** the lock. `__init__` loads before any caller can
+        acquire the lock, so a `Registry` built outside it may already be stale by the
+        time the lock is granted -- and `save()` rewrites the whole file from memory,
+        so saving that stale state silently drops every record another process wrote in
+        between. Every mutating call site goes through here rather than taking
+        `advisory_lock` directly.
+        """
+        with advisory_lock(self.repo_root, "registry"):
+            self.reload()
+            yield self
+
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".jsonl.tmp")
@@ -405,7 +425,7 @@ def cmd_add_pdf(args) -> int:
     registry = Registry(args.repo)
     service = _refmgr_service(args.repo)
     try:
-        with advisory_lock(args.repo, "registry"):
+        with registry.locked():
             rec, is_new = add_pdf_to_registry(
                 registry, service, pdf, pmid=args.pmid, doi=args.doi, pmcid=args.pmcid,
                 title=args.title, move=args.move)
@@ -486,7 +506,7 @@ def cmd_import_bib(args) -> int:
     parsed = parse_bibtex(text)
     registry = Registry(args.repo)
     results = []
-    with advisory_lock(args.repo, "registry"):
+    with registry.locked():
         for entry in parsed:
             raw = _bibtex_to_registry_raw(entry["fields"])
             if not raw.get("title"):
@@ -516,7 +536,7 @@ def cmd_import_folder(args) -> int:
     results = []
     service = _refmgr_service(args.repo)
     try:
-        with advisory_lock(args.repo, "registry"):
+        with registry.locked():
             for pdf in pdfs:
                 rec, is_new = add_pdf_to_registry(registry, service, pdf)
                 results.append({"file": str(pdf), "evidence_id": rec["evidence_id"],
@@ -553,7 +573,7 @@ def cmd_add(args) -> int:
               "error": "could not resolve a title for this identifier "
                        "(pass --title to register with partial metadata)"})
         return 1
-    with advisory_lock(args.repo, "registry"):
+    with registry.locked():
         rec, is_new = registry.register(raw)
         registry.save()
         registry.generate_pool()
@@ -653,7 +673,7 @@ def cmd_promote(args) -> int:
     span_store = _store.Store(run_dir, repo_root=repo_root) if verify else None
 
     promoted, skipped = [], []
-    with advisory_lock(args.repo, "registry"), _corpus.advisory_lock(run_dir, "corpus"):
+    with registry.locked(), _corpus.advisory_lock(run_dir, "corpus"):
         corpus = _corpus.Corpus(run_dir, corpus_path).load()
         for eid in list(corpus.order):
             rec = corpus.records.get(eid)
@@ -709,7 +729,7 @@ def cmd_appraise_promote(args) -> int:
     project_dir = registry.paths["appraisals"] / args.project
 
     promoted, skipped = [], []
-    with advisory_lock(args.repo, "registry"), _corpus.advisory_lock(run_dir, "corpus"):
+    with registry.locked(), _corpus.advisory_lock(run_dir, "corpus"):
         corpus = _corpus.Corpus(run_dir, corpus_path).load()
         for eid in list(corpus.order):
             rec = corpus.records.get(eid)
@@ -744,7 +764,7 @@ def cmd_appraise_promote(args) -> int:
 
 def cmd_pool(args) -> int:
     registry = Registry(args.repo)
-    with advisory_lock(args.repo, "registry"):
+    with registry.locked():
         entries = registry.generate_pool()
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "pool",
           "repo": str(registry.repo_root), "pool": str(registry.paths["pool"]),
@@ -924,11 +944,33 @@ def _record_source_ids(rec: dict, extraction: dict | None) -> list[str]:
     return seen
 
 
+def _extraction_claim_texts(extraction: dict) -> list[str]:
+    """Claim sentences and outcome names from an extraction (schema/07-extraction.md §7).
+
+    These are the most answer-relevant text the pipeline produces -- an extracted claim
+    states the finding in one sentence, already tied to a verifiable span -- so they are
+    searched ahead of the narrative fields and well ahead of raw snapshot bodies.
+    """
+    texts: list[str] = []
+    for span in _extraction_spans(extraction):
+        claim = span.get("claim")
+        if isinstance(claim, str) and claim.strip():
+            texts.append(claim.strip())
+    for outcome in extraction.get("outcomes") or []:
+        if not isinstance(outcome, dict):
+            continue
+        for field in ("name", "timepoint", "effect_measure", "direction"):
+            val = outcome.get(field)
+            if isinstance(val, str) and val.strip():
+                texts.append(val.strip())
+    return texts
+
+
 def _search_text_pieces(rec: dict, repo_root: Path, project: str | None) -> list[str]:
     """Every text piece searched by `--q`, in the order a snippet should prefer them:
-    title, abstract, journal, extraction narrative fields, appraisal rationale, then
-    full-text snapshot bodies (plan §1 "Keyword search"). Missing/unreadable pieces are
-    skipped silently — best-effort, never a hard error."""
+    title, abstract, journal, extraction claims/outcomes, extraction narrative fields,
+    appraisal rationale, then full-text snapshot bodies (plan §1 "Keyword search").
+    Missing/unreadable pieces are skipped silently — best-effort, never a hard error."""
     pieces: list[str] = []
     for field in ("title", "abstract", "journal"):
         val = rec.get(field)
@@ -937,6 +979,7 @@ def _search_text_pieces(rec: dict, repo_root: Path, project: str | None) -> list
 
     extraction = _extraction_data(rec, repo_root)
     if extraction:
+        pieces.extend(_extraction_claim_texts(extraction))
         for field in ("population", "intervention", "comparator", "limitations", "extractor_notes"):
             val = extraction.get(field)
             if isinstance(val, str) and val.strip():
@@ -1041,7 +1084,8 @@ def _similarity_rank(records: list[dict], args) -> tuple[list[dict], dict[str, f
 def cmd_search(args) -> int:
     """`registry.py search` (plan §1): facet filters + `--tag`/`--min-rating` (joined
     against `annotations.jsonl`) + `--q` keyword search (title/abstract/journal/
-    extraction narrative/appraisal rationale/full-text snapshot bodies) + `--similar-to`
+    extraction claims and outcome names/extraction narrative/appraisal rationale/
+    full-text snapshot bodies) + `--similar-to`
     embeddings ranking. No filters/query at all behaves like a light `list` — every
     registry record, respecting `--limit`."""
     registry = Registry(args.repo)
@@ -1169,7 +1213,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="scope --appraisal-status appraised, and --q's appraisal-rationale "
                         "search, to this project's own appraisal entry")
     s.add_argument("--q", help="keyword search: lowercase AND-of-terms over title/abstract/"
-                              "journal/extraction narrative/appraisal rationale/full text")
+                              "journal/extraction claims and outcomes/extraction narrative/"
+                              "appraisal rationale/full text")
     s.add_argument("--similar-to", dest="similar_to",
                    help="rank surviving results by embeddings.py cosine similarity to this "
                         "evidence_id (requires `embeddings.py index` to have run)")

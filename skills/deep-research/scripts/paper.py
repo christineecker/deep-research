@@ -136,7 +136,7 @@ def resolve_paper(repo_root: Path, args) -> dict:
             raise SystemExit(f"paper.py: --pdf not found: {pdf_path}")
         service = _registry._refmgr_service(repo_root)
         try:
-            with _registry.advisory_lock(repo_root, "registry"):
+            with registry.locked():
                 rec, _is_new = _registry.add_pdf_to_registry(
                     registry, service, pdf_path, pmid=args.pmid, doi=args.doi,
                     pmcid=args.pmcid, title=args.title)
@@ -166,7 +166,7 @@ def resolve_paper(repo_root: Path, args) -> dict:
         raise SystemExit(
             "paper.py: could not resolve a title for this identifier; register manually with "
             "`registry.py add --title ...` first")
-    with _registry.advisory_lock(repo_root, "registry"):
+    with registry.locked():
         rec, _is_new = registry.register(raw)
         registry.save()
         registry.generate_pool()
@@ -446,7 +446,7 @@ def _promote(repo_root: Path, run_dir: Path, evidence_id: str, project: str | No
             evidence_id, extraction_src, store)
         if reason is None:
             dest = registry.paths["extractions"] / f"{slug}.json"
-            with _registry.advisory_lock(repo_root, "registry"):
+            with registry.locked():
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_text(json.dumps(extraction, indent=2, ensure_ascii=False) + "\n",
                                 encoding="utf-8")
@@ -458,7 +458,7 @@ def _promote(repo_root: Path, run_dir: Path, evidence_id: str, project: str | No
         if appraisal_src.exists():
             registry = _registry.Registry(repo_root)
             dest = registry.paths["appraisals"] / project / f"{slug}.json"
-            with _registry.advisory_lock(repo_root, "registry"):
+            with registry.locked():
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_text(appraisal_src.read_text(encoding="utf-8"), encoding="utf-8")
                 registry.set_appraisal(evidence_id, project,

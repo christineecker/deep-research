@@ -11,6 +11,11 @@ and answers nearest-neighbour queries against the cache with pure-Python cosine 
 Subcommands
   index    --repo (--model <name> --limit N --force)   (re)embed registry records
   similar  --repo --evidence-id <id> [--k N]            top-k nearest neighbours
+  query    --repo --text "<question>" [--k N --model]   top-k papers nearest to free text
+
+`similar` starts from a paper already in the registry; `query` starts from arbitrary text,
+which is what a question needs. Both compare only vectors built by the same model — a
+cross-model ranking is meaningless, so `query` refuses instead of returning one.
 
 Embedding text per paper: `title`. `abstract`. plus, when `extraction_path` is set and the
 file exists, its narrative fields (`population`, `intervention`, `comparator`,
@@ -259,6 +264,79 @@ def cmd_similar(args) -> int:
     return 0
 
 
+def _cached_model(all_embeddings: dict[str, dict], requested: str | None) -> tuple[str | None, str | None]:
+    """Which model's vectors a query should be compared against.
+
+    Comparing a query vector against vectors from a *different* model is meaningless —
+    the spaces are unrelated — so this refuses rather than silently returning nonsense
+    rankings. Returns `(model, None)` or `(None, error message)`.
+    """
+    models = sorted({rec.get("model") for rec in all_embeddings.values() if rec.get("model")})
+    if requested:
+        if requested not in models:
+            return None, (f"no cached vectors for model {requested!r} — cached: "
+                          f"{', '.join(models) or 'none'}. Run `embeddings.py index "
+                          f"--model {requested}` first")
+        return requested, None
+    if not models:
+        return None, "embeddings file has no usable vectors — run `embeddings.py index` first"
+    if len(models) > 1:
+        return None, (f"embeddings.jsonl mixes models ({', '.join(models)}) — pass --model "
+                      "to pick which one to query, or re-run `embeddings.py index --force`")
+    return models[0], None
+
+
+def cmd_query(args) -> int:
+    """Rank cached paper vectors against free text — a question, a paragraph, an
+    abstract — rather than against another paper (`similar`). This is the entry point
+    a question needs: `similar --evidence-id` can only start from a paper already in
+    the registry."""
+    repo_root = Path(args.repo).expanduser().resolve()
+    path = embeddings_path(repo_root)
+    if not path.exists():
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "query",
+              "error": f"no embeddings file at {path} — run `embeddings.py index` first"})
+        return 1
+
+    text = (args.text or "").strip()
+    if not text:
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "query",
+              "error": "--text must be non-empty"})
+        return 2
+
+    all_embeddings = read_embeddings(repo_root)
+    model_name, error = _cached_model(all_embeddings, args.model)
+    if error is not None:
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "query",
+              "error": error})
+        return 1
+
+    model = _load_sentence_transformer(model_name)
+    query_vector = [float(x) for x in model.encode([text], show_progress_bar=False)[0]]
+
+    scored = []
+    for eid, rec in all_embeddings.items():
+        if rec.get("model") != model_name:
+            continue
+        try:
+            scored.append((cosine_similarity(query_vector, rec["vector"]), eid))
+        except (ValueError, KeyError, TypeError):
+            continue  # a corrupt/mismatched cached vector is skipped, never fatal
+    scored.sort(key=lambda pair: (-pair[0], pair[1]))
+
+    registry = Registry(repo_root)
+    results = [
+        {"evidence_id": eid, "title": (registry.records.get(eid) or {}).get("title"),
+         "score": score}
+        for score, eid in scored[: args.k]
+    ]
+
+    emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "query",
+          "repo": str(repo_root), "text": text, "model": model_name, "k": args.k,
+          "compared": len(scored), "results": results})
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="embeddings.py", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -278,6 +356,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--evidence-id", dest="evidence_id", required=True)
     s.add_argument("--k", type=int, default=5)
     s.set_defaults(func=cmd_similar)
+
+    s = sub.add_parser("query", help="top-k papers nearest to free text (a question)")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--text", required=True, help="the question or passage to embed")
+    s.add_argument("--k", type=int, default=10)
+    s.add_argument("--model", help="which cached model's vectors to query (default: the "
+                                   "only one present; required when the cache mixes models)")
+    s.set_defaults(func=cmd_query)
     return p
 
 

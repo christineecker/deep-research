@@ -107,7 +107,7 @@ def _import_from_wiki(wiki_root: Path, repo_root: Path) -> dict:
     import registry as _registry
     reg = _registry.Registry(repo_root)
     count = 0
-    with _registry.advisory_lock(repo_root, "registry"):
+    with reg.locked():
         with legacy_pool.open(encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()

@@ -56,7 +56,7 @@
       <ul>
         <li><strong>Facet filters</strong> — <code>--journal</code>, <code>--year</code>, <code>--status</code>, <code>--extraction-status</code>, <code>--appraisal-status</code> — plain in-memory filters over fields the registry already carries.</li>
         <li><strong>Annotation filters</strong> — <code>--tag</code>, <code>--min-rating</code> — join read-only against <code>annotations.jsonl</code>.</li>
-        <li><strong>Keyword search</strong> — <code>--q "text"</code> — a stdlib-only, lowercase AND-of-terms match over title, abstract, journal, extraction narrative, appraisal rationale (scope it to one review with <code>--project</code>), and the paper's full text.</li>
+        <li><strong>Keyword search</strong> — <code>--q "text"</code> — a stdlib-only, lowercase AND-of-terms match over title, abstract, journal, the extraction's claim sentences and outcome names, extraction narrative, appraisal rationale (scope it to one review with <code>--project</code>), and the paper's full text. Claims are searched ahead of raw full text, so a snippet quotes the extracted finding whenever both match.</li>
         <li><strong>Similarity ranking</strong> — <code>--similar-to &lt;evidence-id&gt;</code> — re-ranks whatever the filters above surfaced by cosine similarity, using the cache built by <code>embeddings.py index</code>.</li>
       </ul>
       <pre><code>python3 scripts/registry.py search --repo ~/lit/ --tag to-read --min-rating 4 --q "biomarker"</code></pre>
@@ -70,9 +70,10 @@ python3 scripts/annotations.py show --repo ~/lit/ --evidence-id pmid:38214501
 python3 scripts/annotations.py list --repo ~/lit/ --tag to-read --min-rating 3</code></pre>
 
       <h2>Semantic Similarity (<code>embeddings.py</code>)</h2>
-      <p>Build a cached embedding per paper from its title, abstract, and extraction narrative, then ask for nearest neighbors by cosine similarity, in pure Python — no re-embedding at query time.</p>
+      <p>Build a cached embedding per paper from its title, abstract, and extraction narrative, then ask for nearest neighbors by cosine similarity, in pure Python — no re-embedding at query time. <code>similar</code> starts from a paper you already have; <code>query</code> starts from a question. Neither ranks across two embedding models — <code>query</code> says so and stops rather than mixing them.</p>
       <pre><code>python3 scripts/embeddings.py index   --repo ~/lit/
 python3 scripts/embeddings.py similar --repo ~/lit/ --evidence-id pmid:38214501 --k 5
+python3 scripts/embeddings.py query   --repo ~/lit/ --text "does X reduce Y in older adults?" --k 10
 
 # or fold similarity into a faceted/keyword search once the index exists:
 python3 scripts/registry.py search --repo ~/lit/ --similar-to pmid:38214501 --limit 5</code></pre>

@@ -34,9 +34,12 @@ python3 scripts/registry.py search --repo <path> \
 - **`--tag`/`--min-rating`** join against `data/papers/annotations.jsonl` read-only; search
   never writes to it.
 - **`--q`** is a stdlib-only, lowercase AND-of-terms keyword search over title, abstract,
-  journal, extraction narrative fields, appraisal rationale (scoped to `--project` when
-  given), and the paper's full text resolved from the global snapshot store (`store.py`'s
-  `global_read_snapshot` function). No persisted search index — it scans the pool at query
+  journal, the extraction's claim sentences and outcome names (`spans[].claim`,
+  `outcomes[].name`/`timepoint`/`effect_measure`/`direction`), extraction narrative
+  fields, appraisal rationale (scoped to `--project` when given), and the paper's full
+  text resolved from the global snapshot store (`store.py`'s `global_read_snapshot`
+  function). Pieces are searched in that order, so a snippet quotes an extracted claim
+  in preference to raw full text whenever both match. No persisted search index — it scans the pool at query
   time, which is fine at personal-library scale.
 - **`--similar-to <evidence-id>`** ranks whatever the facet/keyword filters already
   surfaced by cosine similarity, delegating to `embeddings.py`'s cached vectors. It
@@ -70,7 +73,14 @@ writes, and vice versa.
 ```bash
 python3 scripts/embeddings.py index   --repo <path> [--model <name>] [--limit N] [--force]
 python3 scripts/embeddings.py similar --repo <path> --evidence-id <id> [--k N]
+python3 scripts/embeddings.py query   --repo <path> --text "<question>" [--k N] [--model <name>]
 ```
+
+`similar` starts from a paper already in the registry; `query` starts from arbitrary text —
+a question, a paragraph, an abstract — which is what asking the library something requires.
+Both compare only vectors produced by the same model: a ranking across two embedding spaces
+is meaningless, so `query` refuses (naming the models it found) rather than returning one.
+`--model` is therefore only needed when the cache mixes models.
 
 Storage: `data/papers/embeddings.jsonl`, one record per `evidence_id`:
 `{schema_version, evidence_id, model, dim, vector, updated_at}`. Written atomically, same
@@ -91,7 +101,8 @@ no-pip-installs policy for full-text acquisition, extraction, appraisal, or anyt
 in this skill — those remain stdlib-plus-`requests`/`pdfminer` as before. If the package
 isn't installed, `index` fails fast with a one-line message pointing at
 `pip install sentence-transformers`; `similar` and `registry.py search --similar-to` never
-need it once `embeddings.jsonl` already exists.
+need it once `embeddings.jsonl` already exists. `query` does need it — it has to embed the
+question before it can rank anything.
 
 ## OKF export (`research.py okf-export`)
 
