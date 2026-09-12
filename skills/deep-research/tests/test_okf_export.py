@@ -14,8 +14,8 @@ def _write_json(path: Path, payload) -> None:
 
 
 def _registry_record(evidence_id: str, pmid: str, extraction_rel: str,
-                     appraisals: dict | None = None) -> dict:
-    return {
+                     appraisals: dict | None = None, **overrides) -> dict:
+    rec = {
         "schema_version": 1, "evidence_id": evidence_id, "pmid": pmid,
         "title": f"Study {pmid}", "journal": "Journal of Testing",
         "publication_date": "2025-01-01",
@@ -27,6 +27,8 @@ def _registry_record(evidence_id: str, pmid: str, extraction_rel: str,
         "sources": [], "created_at": "2026-01-01T00:00:00Z",
         "updated_at": "2026-01-01T00:00:00Z",
     }
+    rec.update(overrides)
+    return rec
 
 
 def _setup_repo_and_wiki(tmp: Path, *, with_appraisal_project: str | None = None):
@@ -101,6 +103,40 @@ class OkfExportHappyPathTest(unittest.TestCase):
             self.assertFalse(payload["run_kept"])
             self.assertIsNone(payload["run_dir"])
             self.assertEqual(list((repo / "runs").iterdir()), [])
+
+
+class OkfExportExemptionBoundaryTest(unittest.TestCase):
+    """Phase 5: `okf-export` no longer passes a blanket `--force` — only
+    C-SEARCH-LOG/C-PRISMA (expected-absent for a hand-picked registry
+    selection) are exempted. A genuine content-consistency failure (here,
+    an unmarked retracted paper — C-RETRACTION) must still block."""
+
+    def test_retracted_paper_without_a_retraction_marker_still_blocks_promotion(self):
+        with TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            repo = tmp / "repo"
+            wiki = tmp / "wiki"
+            wiki.mkdir(parents=True, exist_ok=True)
+            run_py(["scripts/research.py", "init", str(repo)])
+            init = run_py(["scripts/okf.py", "init", "--wiki", str(wiki)])
+            assert init.returncode == 0, init.stderr
+
+            extraction = repo / "data" / "papers" / "extractions" / "pmid-444.json"
+            _write_json(extraction, {"evidence_id": "pmid:444", "design": "RCT",
+                                     "population": "Adults with condition Z"})
+            reg_path = repo / "data" / "papers" / "registry.jsonl"
+            rec = _registry_record("pmid:444", "444", str(extraction.relative_to(repo)),
+                                   retraction_status="retracted")
+            reg_path.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+
+            result = run_py(["scripts/research.py", "okf-export", "--repo", str(repo),
+                            "--evidence-id", "pmid:444", "--wiki", str(wiki)])
+            self.assertEqual(result.returncode, 1)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "error")
+            self.assertIn("C-RETRACTION", payload["error"])
+            # nothing was promoted into the bundle
+            self.assertFalse((wiki / "research" / "studies" / "pmid-444.md").exists())
 
 
 class OkfExportFailureTest(unittest.TestCase):

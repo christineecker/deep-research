@@ -39,6 +39,7 @@ a live/authoritative store.
       "metadata_hash": "sha256:...",
       "warnings": [],
       "primary_pdf_available": true,
+      "fulltext_status": "fulltext",
       "attachments": [
         {"path": "PDFs/A-Smoke-Test--10238c10.pdf", "role": "primary"}
       ]
@@ -78,6 +79,7 @@ a live/authoritative store.
 | `records[].metadata_hash` | string | yes | `sha256:<hex>` over the canonical (sorted-key, no whitespace) JSON of the record's exported metadata fields — the basis for Phase 2.3 incremental-export comparison (see `references/export-ledger.md` once written, or `scripts/export_ledger.py`'s docstring). |
 | `records[].warnings` | string[] | yes | Per-record issues (e.g. "no resolvable primary PDF") — `[]` when none, never omitted. |
 | `records[].primary_pdf_available` | bool | yes | Whether asset resolution succeeded for this record. |
+| `records[].fulltext_status` | string | yes | `"fulltext"` \| `"abstract_only"` \| `"missing"` (plan Phase 5: "display abstract-only/full-text status clearly", `export.py fulltext_status_label`). For a legacy record this is read straight off `record["fulltext"]["status"]` (corpus.py `FULLTEXT_STATUS`); refmgr has no abstract-only concept (attachments are pass/fail only), so a refmgr-sourced record is `"fulltext"` when an attachment resolved, else `"missing"`. Listed per record in `import-report.md`'s Records table, not just as an aggregate count. |
 | `records[].attachments[].path` | string | yes | Bundle-relative path (`PDFs/...` or `Supplements/...`). |
 | `records[].attachments[].role` | string | yes | `"primary"`, `"supplement"`, `"version"`, or `"unknown"`. |
 | `attachments[]` | object[] | yes | One entry per distinct file in the bundle (by full sha256), independent of the per-record `records[].attachments` associations above — a file referenced by multiple records appears once here with multiple entries in `associations`. |

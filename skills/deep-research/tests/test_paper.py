@@ -11,6 +11,7 @@ paper = load_script("paper.py")
 paper_summary = load_script("paper_summary.py")
 registry_mod = load_script("registry.py")
 verify_mod = load_script("verify.py")
+annotations_mod = load_script("annotations.py")
 
 
 def _init_repo(root: Path) -> Path:
@@ -170,6 +171,102 @@ class PipelineStagesTest(unittest.TestCase):
             payload = paper.summarize_one(repo, args)
             self.assertEqual(payload["status"], "pending_summary")
             self.assertNotIn("appraisal_path=", payload["detail"])
+
+
+class SummarizeFromPdfTest(unittest.TestCase):
+    """Phase 5: `paper.py summarize --pdf` must route through the same shared refmgr
+    attachment pool as `registry.py add-pdf` -- not its own independent flat-store
+    implementation (that was the actual gap: two disconnected PDF-intake paths)."""
+
+    def test_pdf_ingestion_registers_a_refmgr_attachment_not_a_flat_store_copy(self):
+        import refmgr.service as refmgr_service
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _init_repo(root)
+            pdf = root / "paper.pdf"
+            pdf.write_bytes(b"%PDF-1.4\nsummarize me\n")
+
+            args = paper.build_parser().parse_args([
+                "summarize", "--repo", str(repo), "--pdf", str(pdf),
+                "--pmid", "77777777", "--offline"])
+            payload = paper.summarize_one(repo, args)
+            self.assertIn(payload["status"], ("pending_retrieval", "pending_appraisal",
+                                              "pending_summary", "completed"))
+
+            rec = registry_mod.Registry(repo).lookup(pmid="77777777")
+            self.assertIsNotNone(rec)
+            self.assertTrue(rec.get("refmgr_paper_id"))
+            # _init_repo pre-creates the old flat store dir; it must stay empty.
+            self.assertEqual(list((repo / "data" / "sources" / "assets").iterdir()), [])
+
+            service = refmgr_service.ReferenceManagerService(
+                registry_mod.repo_paths(repo)["refmgr"])
+            try:
+                attachments = service.attachments.list_for_paper(rec["refmgr_paper_id"])
+                self.assertEqual(len(attachments), 1)
+                self.assertEqual(attachments[0]["role"], "fulltext")
+            finally:
+                service.close()
+
+
+class PersonalNotesRenderingTest(unittest.TestCase):
+    """Phase 5: personal annotations render in a distinct, clearly-labeled section of the
+    single-paper summary, never mixed into the extraction-derived (verified) sections."""
+
+    def test_annotation_renders_in_its_own_section_and_none_recorded_otherwise(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _init_repo(root)
+            _register(repo)
+            ann = annotations_mod.Annotations(repo)
+            rec = ann.get("pmid:12345678")
+            rec["tags"] = ["to-read", "diagnostics"]
+            rec["rating"] = 4
+            rec["note"] = "Worth revisiting for the sample-size discussion."
+            ann.records["pmid:12345678"] = rec
+            ann.save()
+
+            args = paper.build_parser().parse_args([
+                "summarize", "--repo", str(repo), "--evidence-id", "pmid:12345678",
+                "--offline"])
+            payload = paper.summarize_one(repo, args)
+            run_dir = Path(payload["run_dir"])
+            _mark_fulltext(run_dir, "pmid:12345678")
+            _write_extraction(run_dir, "pmid:12345678")
+            _write_appraisal(run_dir, "pmid:12345678")
+            _write_summary(run_dir, "pmid:12345678")
+            payload = paper.summarize_one(repo, args)
+            self.assertEqual(payload["status"], "completed")
+
+            rendered = Path(payload["output_path"]).read_text(encoding="utf-8")
+            self.assertIn("## 14. Personal notes (unverified — not extracted evidence)",
+                         rendered)
+            notes_section = rendered.split("## 14. Personal notes")[1]
+            self.assertIn("to-read, diagnostics", notes_section)
+            self.assertIn("4/5", notes_section)
+            self.assertIn("Worth revisiting for the sample-size discussion.", notes_section)
+            self.assertNotIn("{{PERSONAL_NOTES}}", rendered)
+
+    def test_unannotated_paper_shows_none_recorded(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _init_repo(root)
+            _register(repo)
+            args = paper.build_parser().parse_args([
+                "summarize", "--repo", str(repo), "--evidence-id", "pmid:12345678",
+                "--offline"])
+            payload = paper.summarize_one(repo, args)
+            run_dir = Path(payload["run_dir"])
+            _mark_fulltext(run_dir, "pmid:12345678")
+            _write_extraction(run_dir, "pmid:12345678")
+            _write_appraisal(run_dir, "pmid:12345678")
+            _write_summary(run_dir, "pmid:12345678")
+            payload = paper.summarize_one(repo, args)
+
+            rendered = Path(payload["output_path"]).read_text(encoding="utf-8")
+            notes_section = rendered.split("## 14. Personal notes")[1]
+            self.assertIn("_None recorded._", notes_section)
 
 
 class SchemaHelpersTest(unittest.TestCase):

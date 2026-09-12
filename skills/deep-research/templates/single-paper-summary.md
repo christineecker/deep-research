@@ -97,3 +97,11 @@ Evidence basis: **{{SOURCE_BASIS}}**. {{ABSTRACT_ONLY_NOTE}}
 | Appraisal | {{APPRAISAL_PATH_OR_SKIP_REASON}} |
 | Generated | {{GENERATED_AT}} |
 | Verification | {{VERIFICATION_STATUS}} |
+
+## 14. Personal notes (unverified — not extracted evidence)
+
+{{PERSONAL_NOTES}}
+
+<!-- From `data/papers/annotations.jsonl`: the reader's own tags/rating/free-text note on
+     this paper. This is personal opinion, never a claim traced to the extraction/appraisal
+     record — do not cite it as evidence, and do not let it inform sections 1-12 above. -->

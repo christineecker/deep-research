@@ -188,6 +188,29 @@ def render_bullets(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items)
 
 
+def render_personal_notes(annotation: dict | None) -> str:
+    """Render `annotations.py`'s per-paper tags/rating/note, or an explicit "none recorded"
+    -- never omit the section outright, since absence is explicit (schema §0 S3). Kept as a
+    distinct renderer (not `render_section_body`, which reads extraction-derived claims) so a
+    personal opinion is never mistaken for a verified, span-traceable claim -- the template
+    section this feeds is deliberately labeled "unverified" (plan Phase 5: "distinguish
+    personal annotations from verified research claims")."""
+    annotation = annotation or {}
+    tags = annotation.get("tags") or []
+    rating = annotation.get("rating")
+    note = annotation.get("note")
+    if not tags and rating is None and not note:
+        return "_None recorded._"
+    lines = []
+    if tags:
+        lines.append(f"- Tags: {', '.join(tags)}")
+    if rating is not None:
+        lines.append(f"- Rating: {rating}/5")
+    if note:
+        lines.append(f"- Note: {note}")
+    return "\n".join(lines)
+
+
 def citation_line(registry_rec: dict) -> str:
     authors = registry_rec.get("authors") or []
     lead = authors[0] if authors else "Unknown author"

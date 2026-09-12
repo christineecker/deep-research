@@ -133,6 +133,17 @@ class PublishTest(unittest.TestCase):
                              {"pmid:1001", "doi:10.1000/metaonly", "pmid:1003", "pmid:1004"})
             self.assertEqual(manifest["counts"]["primary_pdf"], 1)
 
+            # Phase 5: per-record fulltext status, both in the manifest and listed
+            # (not just aggregated) in import-report.md.
+            by_eid = {r["evidence_id"]: r for r in manifest["records"]}
+            self.assertEqual(by_eid["pmid:1001"]["fulltext_status"], "fulltext")
+            self.assertEqual(by_eid["doi:10.1000/metaonly"]["fulltext_status"], "missing")
+            report_text = (batch_dir / "import-report.md").read_text(encoding="utf-8")
+            self.assertIn("## Records", report_text)
+            self.assertIn("| pmid:1001 |", report_text)
+            self.assertIn("fulltext", report_text)
+            self.assertIn("missing", report_text)
+
             ris_text = (batch_dir / "references.ris").read_text(encoding="utf-8")
             ty_blocks = re.findall(r"^TY  - ", ris_text, flags=re.MULTILINE)
             self.assertEqual(len(ty_blocks), 4)

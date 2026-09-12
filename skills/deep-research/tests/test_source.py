@@ -86,6 +86,61 @@ class SourceCliTest(unittest.TestCase):
             self.assertEqual(got["origin"], "user-supplied-pdf")
             self.assertEqual(got["asset"]["path"], "assets/papers/paywalled-cohort.pdf")
 
+    def test_local_via_refmgr_attachment_records_refmgr_ids_not_a_wiki_path(self):
+        with TemporaryDirectory() as td:
+            tmp = Path(td)
+            repo = tmp / "repo"
+            run = repo / "runs" / "r1"
+            run.mkdir(parents=True)
+            (run / "config.json").write_text(
+                json.dumps({"created_at": "2026-01-01T00:00:00Z"}), encoding="utf-8")
+            src = ROOT / "tests" / "fixtures" / "pdf" / "paywalled-cohort.pdf"
+
+            add_pdf = run_py([
+                "scripts/registry.py", "add-pdf", "--repo", str(repo),
+                "--file", str(src), "--pmid", "12345678",
+            ], cwd=ROOT)
+            self.assertEqual(add_pdf.returncode, 0, add_pdf.stderr + add_pdf.stdout)
+            attachment_id = json.loads(add_pdf.stdout)["asset"]["attachment_id"]
+
+            proc = run_py([
+                "scripts/source.py", "local", "--run-dir", str(run), "--repo", str(repo),
+                "--attachment-id", attachment_id, "--pdf", str(src),
+                "--pmid", "12345678", "--doi", "10.1000/validation",
+            ], cwd=ROOT)
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            got = json.loads(proc.stdout)
+            self.assertTrue(got["fresh"])
+            self.assertEqual(got["origin"], "user-supplied-pdf")
+            self.assertIsNone(got["asset"]["path"])
+            self.assertEqual(got["asset"]["refmgr_attachment_id"], attachment_id)
+            self.assertTrue(got["asset"]["refmgr_paper_id"])
+
+    def test_local_via_refmgr_rejects_a_pdf_that_does_not_match_the_attachment(self):
+        with TemporaryDirectory() as td:
+            tmp = Path(td)
+            repo = tmp / "repo"
+            run = repo / "runs" / "r1"
+            run.mkdir(parents=True)
+            (run / "config.json").write_text(
+                json.dumps({"created_at": "2026-01-01T00:00:00Z"}), encoding="utf-8")
+            src = ROOT / "tests" / "fixtures" / "pdf" / "paywalled-cohort.pdf"
+            other = tmp / "other.pdf"
+            other.write_bytes(b"%PDF-1.4\nnot the same bytes\n")
+
+            add_pdf = run_py([
+                "scripts/registry.py", "add-pdf", "--repo", str(repo),
+                "--file", str(src), "--pmid", "12345678",
+            ], cwd=ROOT)
+            attachment_id = json.loads(add_pdf.stdout)["asset"]["attachment_id"]
+
+            proc = run_py([
+                "scripts/source.py", "local", "--run-dir", str(run), "--repo", str(repo),
+                "--attachment-id", attachment_id, "--pdf", str(other),
+            ], cwd=ROOT)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("does not match", json.loads(proc.stdout)["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

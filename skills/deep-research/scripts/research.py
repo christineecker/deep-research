@@ -236,10 +236,17 @@ def _okf_export_report_md(question: str, records: list[dict]) -> str:
     """Minimal synthetic report satisfying `verify.py`'s structural checks (C-SECTIONS,
     C-CITE-RESOLVE, C-ATTRIBUTION, C-HYPOTHESIS-WALL): every required heading present with a
     non-empty body, and every selected record cited by a footnote that resolves against
-    `corpus.jsonl` (`verify.py RunData._build_cite_keys`). C-PRISMA is expected to fail —
-    there is no real PRISMA flow behind a registry selection, see okf-export.md."""
+    `corpus.jsonl` (`verify.py RunData._build_cite_keys`). C-PRISMA/C-SEARCH-LOG are expected
+    to fail — there is no real PRISMA flow or search history behind a registry selection (see
+    okf-export.md) — which deterministically also trips C-PROVISIONAL (verify.py
+    `check_provisional`: any failed check requires the title block to say PROVISIONAL in
+    caps), so the title block declares it up front rather than needing that check exempted
+    too."""
     keys = [_okf_export_footnote_key(r.get("evidence_id") or "") for r in records]
     lines = [f"# OKF export: {question}", "",
+             "**Status: PROVISIONAL** — a mechanical export of hand-picked registry "
+             "records, not a synthesized review; there is no search or PRISMA screening "
+             "history to report on.", "",
              "## Question / Protocol", "",
              f"Ad hoc export of {len(records)} previously registered paper(s) selected "
              f"directly from the repo's reference registry; no new screening was performed.",
@@ -393,12 +400,17 @@ def cmd_okf_export(args) -> int:
               "run_dir": str(run_dir)})
         return 1
 
-    # --- 4. okf.py promote, unmodified. --force because a registry-only export routinely
-    # fails pipeline-shaped checks (esp. C-PRISMA) that do not apply here; the resulting
-    # concepts still go through okf.py's own V1-V25 validator unchanged and unforced.
+    # --- 4. okf.py promote, unmodified except for a narrow exemption: a registry-only
+    # export routinely fails pipeline-shaped checks (C-SEARCH-LOG, C-PRISMA) that don't
+    # apply here because there is no search/screening history to report on -- that is
+    # expected and correctly downgrades status to "provisional". Everything else
+    # (evidence identity, span integrity, source/citation consistency) is left enforced;
+    # a real verifier failure there still blocks promotion instead of being silently
+    # forced through (plan Phase 5: "remove blanket forcing as the normal mechanism").
     promote_args = argparse.Namespace(
-        run_dir=str(run_dir), wiki=str(wiki_root), status=None, allow_unverified=True,
-        force=True, check=False, gate=None, no_log=False, dry_run=False)
+        run_dir=str(run_dir), wiki=str(wiki_root), status=None, allow_unverified=False,
+        force=False, exempt_checks=["C-SEARCH-LOG", "C-PRISMA"],
+        check=False, gate=None, no_log=False, dry_run=False)
     promote_stdout = io.StringIO()
     try:
         with contextlib.redirect_stdout(promote_stdout):

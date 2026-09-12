@@ -104,6 +104,21 @@ def metadata_hash(metadata: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+_FULLTEXT_STATUS_VALUES = ("fulltext", "abstract_only", "missing")  # corpus.py FULLTEXT_STATUS
+
+
+def fulltext_status_label(record: dict, resolution: "_select.AssetResolution") -> str:
+    """A per-record fulltext/abstract-only/missing status for the import report and
+    manifest (plan Phase 5: "display abstract-only/full-text status clearly"). Legacy
+    registry records carry `fulltext.status` (corpus.py `FULLTEXT_STATUS`) directly;
+    refmgr has no abstract-only concept (attachments are pass/fail only), so a refmgr
+    record falls back to whether an attachment actually resolved."""
+    fulltext = record.get("fulltext")
+    if isinstance(fulltext, dict) and fulltext.get("status") in _FULLTEXT_STATUS_VALUES:
+        return fulltext["status"]
+    return "fulltext" if resolution.available else "missing"
+
+
 def completeness_warnings(record: dict, resolution: "_select.AssetResolution") -> list[str]:
     warnings: list[str] = []
     if not (record.get("doi") or record.get("pmid") or record.get("pmcid")):
@@ -370,6 +385,7 @@ def build_manifest(*, batch_id: str, created_at: str, selection_description: dic
             "metadata_hash": entry["metadata_hash"],
             "warnings": entry["warnings"],
             "primary_pdf_available": resolution.available,
+            "fulltext_status": fulltext_status_label(entry["record"], resolution),
             "attachments": assoc,
         })
 
@@ -414,7 +430,15 @@ def render_import_report(manifest: dict, warnings: list[str], blocking_errors: l
         f"- Supplements: {manifest['counts']['supplements']}",
         f"- Attachment files: {manifest['counts']['attachments']}",
         "",
+        "## Records",
+        "",
+        "| Evidence id | Citation key | Fulltext status |",
+        "|---|---|---|",
     ]
+    for rec in manifest["records"]:
+        lines.append(f"| {rec['evidence_id']} | {rec['citation_key']} | "
+                     f"{rec['fulltext_status']} |")
+    lines.append("")
     if blocking_errors:
         lines.append("## Blocking errors")
         lines.append("")

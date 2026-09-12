@@ -20,8 +20,11 @@ A run under either root works end to end without the other. `pool.py migrate --f
 ```text
 <repo>/
   data/
+    refmgr/
+      library.sqlite3    refmgr's paper/identifier/asset/attachment store (`registry.py
+                         add-pdf`/`import-folder` route PDF bytes here, not `data/sources/`)
+      assets/            content-addressed PDFs: assets/sha256/<2-char-prefix>/<hash><ext>
     sources/
-      assets/            content-addressed PDFs: sha256-<hash>.pdf
       sources/            JSON snapshots: src-<64 hex>.json  (store.global_sources_root)
       events.jsonl        append-only retrieval log, global
     papers/
@@ -56,7 +59,8 @@ Every `data/papers/registry.jsonl` record carries, beyond the bibliographic fiel
 | `asset_status` | missing / available | set by `add-pdf` / `import-folder` |
 | `extraction_status` | not_started / in_progress / extracted | set by `promote` |
 | `appraisal_status` | not_appraised / in_progress / appraised | set by `appraise-promote` |
-| `asset` | `{sha256, path, bytes, pages, added_at}` | present once `asset_status: available` |
+| `asset` | `{refmgr_paper_id, attachment_id, sha256, bytes, pages, mime_type, added_at}` | present once `asset_status: available`; PDF bytes live in the refmgr attachment pool (`data/refmgr/library.sqlite3`), not a flat file under `data/sources/` |
+| `refmgr_paper_id` | refmgr paper id | the same id, top-level, for direct lookup without unpacking `asset` |
 | `extraction_path` | repo-relative path | canonical extraction, once promoted |
 | `appraisals` | `{project: repo-relative path}` | project-scoped, see below |
 

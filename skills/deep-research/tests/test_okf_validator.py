@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -479,6 +480,81 @@ class PromoteTransactionTest(unittest.TestCase):
             self.assertEqual(rc, 0)
             after = sorted(str(p.relative_to(wiki)) for p in research.rglob("*"))
             self.assertEqual(after, before)
+
+
+def _make_promotable_repo_run_with_refmgr_asset(td: Path):
+    """A repo-rooted run (`<repo>/runs/<slug>`) whose one `user-supplied-pdf` snapshot
+    is refmgr-backed (`asset.refmgr_attachment_id`, no `asset.path`) -- exercises
+    `okf.py`'s `Preflight._check_asset` refmgr branch when such a run is promoted into
+    a wiki bundle (Phase 5: two storage roots, cross-checked at the asset-hash level)."""
+    store = load_script("store.py")
+    from helpers import ROOT, run_py
+
+    repo = td / "repo"
+    run = repo / "runs" / "okf-promote-refmgr-run"
+    for rel in ("outputs", "workspace/extractions", "workspace/appraisals", "sources"):
+        (run / rel).mkdir(parents=True, exist_ok=True)
+    (run / "config.json").write_text(json.dumps({
+        "schema_version": 1, "created_at": "2026-01-01T00:00:00Z",
+        "slug": "okf-promote-refmgr-run", "question": "x",
+        "gates": {"evidence_kernel": False},
+    }), encoding="utf-8")
+
+    pdf_src = ROOT / "tests" / "fixtures" / "pdf" / "paywalled-cohort.pdf"
+    add_pdf = run_py(["scripts/registry.py", "add-pdf", "--repo", str(repo),
+                      "--file", str(pdf_src), "--pmid", "12345678"])
+    assert add_pdf.returncode == 0, add_pdf.stderr + add_pdf.stdout
+    asset = json.loads(add_pdf.stdout)["asset"]
+
+    text = "Methods. The trial enrolled 42 adults. Results were reported."
+    out = store.write_snapshot_result(
+        run, url=f"file://refmgr/{asset['attachment_id']}", text=text, title="Full text",
+        access="full_text", origin="user-supplied-pdf",
+        paper={"pmid": "12345678", "doi": None, "pmcid": None},
+        asset={"path": None, "sha256": asset["sha256"], "bytes": asset["bytes"],
+              "refmgr_paper_id": asset["refmgr_paper_id"],
+              "refmgr_attachment_id": asset["attachment_id"]},
+        event_type="local_pdf", fresh=True, actor="test")
+    snap = out["snapshot"]
+    rec = minimal_corpus_record("pmid:12345678")
+    rec["source_ids"] = [snap["source_id"]]
+    write_jsonl(run / "corpus.jsonl", [rec])
+    (run / "outputs" / "report.md").write_text(
+        "# Report\n\nThe trial enrolled 42 adults.[^pubmed-12345678]\n\n"
+        "## References\n\n[^pubmed-12345678]: Smith JA. Journal of Validation. "
+        "PMID 12345678.\n", encoding="utf-8")
+    write_digest_receipt(run)
+    return repo, run
+
+
+class RefmgrBackedAssetPromoteTest(unittest.TestCase):
+    def test_refmgr_backed_asset_verifies_and_promotes(self):
+        with TemporaryDirectory() as td:
+            td = Path(td)
+            repo, run = _make_promotable_repo_run_with_refmgr_asset(td)
+            wiki = td / "wiki"
+            wiki.mkdir(parents=True, exist_ok=True)
+            okf.cmd_init(argparse.Namespace(wiki=str(wiki)))
+            rc = okf.cmd_promote(_promote_args(run, wiki))
+            self.assertEqual(rc, 0)
+            self.assertTrue((wiki / "research" / "studies" / "pmid-12345678.md").exists())
+
+    def test_tampered_refmgr_asset_blocks_promotion_without_crashing(self):
+        with TemporaryDirectory() as td:
+            td = Path(td)
+            repo, run = _make_promotable_repo_run_with_refmgr_asset(td)
+            wiki = td / "wiki"
+            wiki.mkdir(parents=True, exist_ok=True)
+            okf.cmd_init(argparse.Namespace(wiki=str(wiki)))
+
+            refmgr_assets_dir = repo / "data" / "refmgr" / "assets" / "sha256"
+            pdf_files = list(refmgr_assets_dir.rglob("*.pdf"))
+            self.assertEqual(len(pdf_files), 1)
+            pdf_files[0].write_bytes(b"%PDF-1.4\ntampered\n")
+
+            rc = okf.cmd_promote(_promote_args(run, wiki))
+            self.assertNotEqual(rc, 0)
+            self.assertFalse((wiki / "research" / "studies" / "pmid-12345678.md").exists())
 
 
 if __name__ == "__main__":

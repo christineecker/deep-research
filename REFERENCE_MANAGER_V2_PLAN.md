@@ -29,8 +29,9 @@ feature.
   `repositories/` (papers, identifiers, assets, attachments, organization,
   audit, merges — atomic compound operations — search, saved_searches),
   `service.py` (facade: idempotent import, auto-reindexing, proven under
-  real multi-process concurrency). **Not wired to any CLI command** — see
-  "Open decisions" below.
+  real multi-process concurrency). Wired into `registry.py`'s `add-pdf`/
+  `import-folder` (Phase 5) for PDF attachment storage; not yet wired for
+  bibliographic metadata — see "Open decisions" below.
 - **`skills/deep-research/scripts/export.py`** (`readcube` subcommand) +
   `export_select.py`, `export_select_refmgr.py`, `ris.py`,
   `export_ledger.py` — selection, two `AssetSource` implementations
@@ -68,9 +69,10 @@ original PDFs immutable, visible diagnostics over silent failure. Search
 (FTS5) is a rebuildable derived index, never a source of truth.
 
 Deferred, open question (see "Open decisions"): Page-derivative,
-Annotation, and Job entities. Embedding stays relevant independent of
-that question (semantic search/dedup, not a browser UI) — see "Remaining
-work" below.
+Annotation, and Job entities. Embedding rework (real input hashes and
+config fingerprints, chunk-level granularity, replacing
+`embeddings.py`'s model-name-only freshness check) is paused along with
+the rest of Phase 4 — see below.
 
 ## Known issues and standing decisions
 
@@ -101,11 +103,10 @@ work" below.
   model is paper-level only (tags/rating/note) — no attachment anchoring,
   bounding boxes, or revision history. `embeddings.py`'s Embedding model
   has no chunk granularity, input hash, or processor version — can't
-  safely detect staleness or mixed-model comparisons. `research.py
-  okf-export`'s `--force --allow-unverified` pattern is a known mechanism
-  to revise (see "Remaining work," Phase 5). None of this is being
-  deleted or rewritten now — it's real working code — but none of it
-  should be treated as a model to extend when building the items below.
+  safely detect staleness or mixed-model comparisons. None of this is
+  being deleted or rewritten now — it's real working code — but none of
+  it should be treated as a model to extend when building the items
+  below.
 
 ## Remaining work
 
@@ -121,41 +122,85 @@ work" below.
   publish a real batch there and verify against the compatibility trial's
   findings.
 
-### Phase 4 remainder — search and large-library processing
+### Phase 4 — paused, not active backlog
 
-- Replace `embeddings.py`'s model-name-only freshness check with real
-  input hashes and full configuration fingerprints (model + dimension +
-  normalization + processor version); add chunk-level granularity
-  (currently one vector per whole paper). Independently large,
-  model/chunking design work.
-- Benchmark exact semantic retrieval before choosing an
-  approximate-nearest-neighbor dependency (depends on the above).
-- Attachment/processing filters and any filter needing page-level text —
-  blocked on the Page-derivative/Annotation entity decision below.
-- Bounded workers for text extraction/OCR/rendering/indexing with
-  cancellation/retry/restart-recovery — not urgent while ReadCube, not
-  this project, does PDF reading.
-- 10k/100k-record lexical-search latency benchmark
-  (`references/reference-manager-benchmark-fixtures.md`) — needs real
-  bulk data in `refmgr`, which needs the CLI cutover decision below.
+Lexical search (FTS5) and saved searches already shipped (see "What
+exists today") and are not being removed. Everything else in Phase 4's
+original scope — the embeddings rework (input hashes, config
+fingerprints, chunk granularity), the exact-vs-ANN retrieval benchmark,
+attachment/processing/page-level-text filters, bounded OCR/extraction/
+indexing workers, and the 10k/100k-record latency benchmark
+(`references/reference-manager-benchmark-fixtures.md`) — is intentionally
+pulled out of the active backlog for now, not scheduled. Restore it as its
+own section here when it's picked back up rather than assuming the prior
+scoping still applies unchanged.
 
 ### Phase 5 — citations and research integration
 
-- Route research acquisition into the shared `refmgr` attachment pool once
-  the CLI cutover happens; connect extractions to exact
-  attachment/snapshot versions.
-- Distinguish personal annotations from verified research claims, and
-  display abstract-only/full-text status clearly, in `import-report.md`
-  and paper-summary output.
-- Revise `research.py okf-export`'s `--force --allow-unverified` pattern:
-  introduce a reference-selection export validation mode that exempts
-  absent search/PRISMA history explicitly while retaining checks for
-  evidence identity, spans, and source consistency — remove blanket
-  forcing as the normal mechanism. Independent of the CLI cutover; can be
-  done anytime.
+- **Done**: `registry.py add-pdf`/`import-folder` now stage PDF bytes into
+  the shared refmgr attachment pool (`data/refmgr/library.sqlite3`) instead
+  of the old flat `data/sources/assets/sha256-<hash>.pdf` store — see
+  `registry.py`'s `_refmgr_service`/`_refmgr_paper_id`/
+  `_import_pdf_attachment` and `tests/test_registry.py
+  RegistryRefmgrAttachmentPoolTest`. `registry.jsonl` remains the
+  bibliographic/lifecycle store; each record's `asset` field now points at
+  a refmgr `(paper_id, attachment_id, sha256)` triple instead of a local
+  path, and `refmgr_paper_id` is kept top-level too as the idempotency key
+  across repeated CLI calls. `registry.py add`/`import-bib` (metadata-only,
+  no attachments) are untouched.
+- **Done**: extractions/spans can now connect to an exact refmgr attachment
+  version. Snapshot schema (§10) `asset` gained an alternate refmgr-backed
+  shape — `{path: null, sha256, bytes, refmgr_paper_id, refmgr_attachment_id}`
+  — instead of the wiki-relative `path` shape; `store.py`'s `_validate_asset`,
+  freshness (`_asset_digest_ok`/`fresh_event`/`freshness`, now `repo_root`-
+  aware), and `okf.py`'s `Preflight._check_asset` (wiki-mode promotion) all
+  handle both shapes. `source.py local --repo <repo> --attachment-id <id>`
+  ingests a PDF already staged via `registry.py add-pdf` and records which
+  attachment it came from, instead of requiring the file live under
+  `<wiki>/assets/papers/`. Along the way, found and fixed a real gap:
+  `paper.py`'s `--pdf` ingestion (`_registry_add_pdf`) had its own
+  independent copy of the old flat-store logic, disconnected from the
+  refmgr cutover above — it now calls the same shared
+  `registry.add_pdf_to_registry` helper `cmd_add_pdf`/`import-folder` use.
+  See `tests/test_source.py` (refmgr-backed `local`), `tests/test_paper.py
+  SummarizeFromPdfTest`, and `tests/test_okf_validator.py
+  RefmgrBackedAssetPromoteTest` (including a tamper case — a corrupted
+  refmgr-backed asset still blocks promotion, not just a crash-avoidance
+  fix). Not done: `verify.py`'s own kernel checks were exercised
+  incidentally through this work but not audited end-to-end for every other
+  refmgr-adjacent code path; treat this as "the two known asset-consumers
+  fixed," not "every consumer of `snapshot.asset` is now refmgr-aware."
+- **Done**: personal annotations are visually and structurally separated
+  from verified, span-traceable claims. `paper_summary.py
+  render_personal_notes` + a new "§14 Personal notes (unverified)" section
+  in `templates/single-paper-summary.md`, fed from `annotations.jsonl` and
+  never from the extraction/appraisal record. `export.py`'s
+  `import-report.md` now lists a per-record fulltext/abstract-only/missing
+  status table (`fulltext_status`, manifest schema §17) instead of only
+  aggregate counts — annotations are deliberately not surfaced in the
+  ReadCube export bundle at all (out of scope for that artifact, per
+  schema §17's existing disclaimer).
+- **Done**: `research.py okf-export` no longer calls `okf.py promote` with
+  a blanket `--force --allow-unverified`. `okf.py promote` gained
+  `--exempt-check CHECK_ID` (repeatable); `okf-export` passes
+  `--exempt-check C-SEARCH-LOG --exempt-check C-PRISMA` only — every other
+  verifier check (evidence identity, span integrity, source/citation
+  consistency, the evidence-kernel's tamper checks) is still enforced, and
+  a real failure there still blocks promotion (`tests/test_okf_export.py
+  OkfExportExemptionBoundaryTest` proves an unmarked retracted paper still
+  blocks). `_okf_export_report_md`'s title block now states PROVISIONAL up
+  front, since C-SEARCH-LOG/C-PRISMA failing is deterministic for this
+  export mode and otherwise trips `C-PROVISIONAL` too.
 
 (Citation-key collision handling is already implemented and tested in
 `refmgr`'s `PaperRepository.set_citation_key` — nothing left to do there.)
+
+**Fixed**: `okf.py` (~line 2785) had an f-string with a backslash inside
+the expression part (`f"...{...replace('|', '\\|')}..."`), a `SyntaxError`
+on Python <3.12 (PEP 701) — meant `okf.py` couldn't even import under the
+project's target 3.11.15 interpreter. Hoisted the escape into a plain
+variable before the f-string; full suite (494 tests) now runs clean under
+3.11.15, same as 3.12.
 
 ### Phase 6 — recovery, release, and scale hardening
 
@@ -167,11 +212,15 @@ caches/workers, a documented acceptance walkthrough). Not urgent while
 
 ## Open decisions
 
-1. **CLI cutover timing**: when (or whether) to route `registry.py
-   add/import/lookup` through `refmgr`'s service layer. Not required for
-   anything currently buildable — the export command targets the legacy
-   registry directly and `RefmgrAssetSource` only needs `refmgr` data to
-   exist, not `registry.py` writing to it.
+1. **CLI cutover timing**: PDF attachment storage (`add-pdf`/
+   `import-folder`) is cut over (Phase 5, above). Bibliographic
+   metadata/lifecycle (`add`/`import-bib`/`lookup`/`list`/`search`/
+   `promote`/`appraise-promote`) still lives in `registry.jsonl` only —
+   whether/when to route that through `refmgr`'s `papers`/`identifiers`
+   tables too remains open. Not required for anything currently
+   buildable — the export command targets the legacy registry directly
+   and `RefmgrAssetSource` only needs `refmgr` data to exist, not
+   `registry.py` writing all of it.
 2. **Whether Page-derivative/Annotation/Job entities are still needed at
    all**, now that ReadCube owns PDF viewing/annotation. Recommendation:
    don't build them speculatively — revisit only if a concrete

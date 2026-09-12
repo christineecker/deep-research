@@ -34,7 +34,7 @@ import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _common import read_json, slugify, utcnow  # noqa: E402  (sibling module, stdlib-only)
+from _common import read_json, repo_root_for_run, slugify, utcnow  # noqa: E402  (sibling module, stdlib-only)
 
 # `store.py` is the single owner of snapshot hashing, span checking and freshness
 # (`references/evidence-kernel.md`). It is never reimplemented here.
@@ -2031,7 +2031,12 @@ class Preflight:
             self._check_asset(source_id)
 
     def _check_asset(self, source_id: str) -> None:
-        """User-supplied PDF bytes must still hash to the recorded asset digest."""
+        """User-supplied PDF bytes must still hash to the recorded asset digest.
+        Handles both asset shapes (schema §10): wiki-relative (`asset.path`) and
+        refmgr-backed (`asset.refmgr_attachment_id`, resolved via
+        `data/refmgr/library.sqlite3` under the repo this run's `run_dir` belongs
+        to, if any -- a refmgr-backed run promoted into a wiki bundle still gets
+        its bytes re-hashed here, same as a wiki-native one)."""
         try:
             snap = self.store.read_snapshot(source_id)
         except Exception as exc:                       # already reported by the caller
@@ -2045,16 +2050,22 @@ class Preflight:
                           "hash, so the snapshot cannot be proven (schema.md §11)")
             return
         self.counts["assets_checked"] += 1
-        path = self.wiki / asset["path"]
-        if not path.is_file():
-            self.fail("ASSET_HASH_MISMATCH", source_id,
-                      f"asset file missing: {asset['path']}")
+        if asset.get("refmgr_attachment_id"):
+            repo_root = repo_root_for_run(self.run_dir)
+            path = _store._refmgr_asset_local_path(repo_root, asset["sha256"]) \
+                if repo_root and _store is not None else None
+            label = f"refmgr attachment {asset['refmgr_attachment_id']} (paper " \
+                    f"{asset.get('refmgr_paper_id')})"
+        else:
+            path = self.wiki / asset["path"]
+            label = asset["path"]
+        if path is None or not path.is_file():
+            self.fail("ASSET_HASH_MISMATCH", source_id, f"asset file missing: {label}")
             return
         actual = _store.sha256_file(path)
         if actual != asset["sha256"]:
             self.fail("ASSET_HASH_MISMATCH", source_id,
-                      f"{asset['path']} hashes to {actual}, snapshot records "
-                      f"{asset['sha256']}")
+                      f"{label} hashes to {actual}, snapshot records {asset['sha256']}")
 
     def _check_result_sources(self, result: dict) -> None:
         """`result.sources[]` is derived from snapshots; any drift is tampering."""
@@ -2416,10 +2427,13 @@ def cmd_promote(args) -> int:
         status = "provisional"
         verified_at = now
     else:
+        exempt_checks = set(getattr(args, "exempt_checks", None) or [])
         failed = [c for c in verification.get("checks") or []
                   if c.get("status") == "fail"]
-        if failed and not args.force:
-            detail = "; ".join(f"{c.get('check_id')}: {c.get('detail')}" for c in failed)
+        blocking_failed = [c for c in failed if c.get("check_id") not in exempt_checks]
+        if blocking_failed and not args.force:
+            detail = "; ".join(f"{c.get('check_id')}: {c.get('detail')}"
+                               for c in blocking_failed)
             raise OkfError(
                 "verifier reported failing checks — OKF promotion is blocked "
                 f"(SKILL.md, pipeline stage 8): {detail}")
@@ -2767,8 +2781,8 @@ def build_run_concepts(run: dict, wiki: Path, research: Path, now: str,
                  f"**{appraisal.get('overall_judgement')}**.[^{primary}]", "",
                  "| domain | judgement | rationale |", "|---|---|---|"]
         for dom in appraisal.get("domains") or []:
-            lines.append(f"| {dom.get('domain')} | {dom.get('judgement')} | "
-                         f"{str(dom.get('rationale') or '').replace('|', '\\|')} |")
+            rationale = str(dom.get("rationale") or "").replace("|", "\\|")
+            lines.append(f"| {dom.get('domain')} | {dom.get('judgement')} | {rationale} |")
         grade = appraisal.get("grade")
         if grade:
             lines += ["", "### GRADE", ""]
@@ -3004,6 +3018,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="promote without outputs/verification.json (status: provisional)")
     s.add_argument("--force", action="store_true",
                    help="promote despite failing verifier checks (not recommended)")
+    s.add_argument("--exempt-check", dest="exempt_checks", action="append", default=[],
+                   metavar="CHECK_ID",
+                   help="treat this check_id's failure as non-blocking (status still "
+                        "reflects it as provisional); repeatable. For check_ids that are "
+                        "expected-absent in a given export mode (e.g. C-SEARCH-LOG/C-PRISMA "
+                        "for a hand-picked registry selection with no search/screening "
+                        "history) rather than a blanket --force override")
     s.add_argument("--check", action="store_true",
                    help="validation-only preflight: run every integrity and V-rule check "
                         "and write NOTHING, anywhere")

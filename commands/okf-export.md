@@ -25,9 +25,14 @@ Steps:
 
 **Deviations to expect and not treat as failure**: this synthesizes a throwaway run
 directory (no real screening/PRISMA history) and runs the existing `verify.py`/`okf.py
-promote` over it unmodified. Pipeline-shaped checks like `C-SEARCH-LOG` and `C-PRISMA`
-routinely fail for a registry-only export — that's expected, not a bug. `okf-export`
-therefore calls `okf.py promote` with `--force --allow-unverified`, and every concept it
-promotes lands with `status: provisional`, never `stable`. The concepts themselves still go
-through `okf.py promote`'s full V1-V25 validator unmodified — only the pipeline-completeness
-gate is bypassed, not concept-level correctness.
+promote` over it unmodified except for a narrow exemption. Pipeline-shaped checks like
+`C-SEARCH-LOG` and `C-PRISMA` routinely fail for a registry-only export — that's expected,
+not a bug, since there is no search/screening history to report on. `okf-export` therefore
+calls `okf.py promote` with `--exempt-check C-SEARCH-LOG --exempt-check C-PRISMA` (not a
+blanket `--force`): those two check_ids' failures don't block promotion, but every other
+verifier check — evidence identity, span integrity, source/citation consistency, and the
+evidence-kernel's tamper checks — is still enforced, and a real failure there still blocks
+promotion. Every concept promoted this way lands with `status: provisional`, never `stable`.
+The concepts themselves still go through `okf.py promote`'s full V1-V25 validator unmodified
+— only the two pipeline-completeness checks named above are exempted, not concept-level
+correctness.

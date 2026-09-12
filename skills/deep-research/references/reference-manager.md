@@ -113,11 +113,14 @@ second concept-emission path. It:
    `workspace/`.
 3. Runs the existing `verify.py` over that synthetic run to produce
    `outputs/verification.json`.
-4. Calls `okf.py promote` unmodified, with `--force --allow-unverified` — a registry-only
-   export has no real screening/PRISMA history, so pipeline-completeness checks like
-   `C-SEARCH-LOG`/`C-PRISMA` are expected to fail; that's why every concept this promotes
-   lands with `status: provisional`, never `stable`. Concept-level correctness (V1-V25) is
-   still enforced, unforced.
+4. Calls `okf.py promote` unmodified except for a narrow exemption — a registry-only export
+   has no real screening/PRISMA history, so pipeline-completeness checks
+   `C-SEARCH-LOG`/`C-PRISMA` are expected to fail. Rather than a blanket `--force`, only
+   those two check_ids are passed via `--exempt-check`; every other verifier check (evidence
+   identity, span integrity, source/citation consistency, evidence-kernel tamper checks) stays
+   enforced, so a real failure there still blocks promotion. Every concept this promotes lands
+   with `status: provisional`, never `stable`. Concept-level correctness (V1-V25) is still
+   enforced, unforced.
 5. Leaves the synthetic run directory on disk by default (it's a legitimate run record, not
    scratch) — pass `--no-keep-run` to delete it after promotion.
 

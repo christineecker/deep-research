@@ -58,6 +58,12 @@ factual claim that is not already backed by one of those two records.
 | `do_not_conclude` | string[] | yes | Explicit guardrail bullets warning against generalizing beyond this one paper (plan "Prompting": "never generalize from one study to the whole field"). At minimum one entry for any `fulltext` summary with `purpose` in `clinical`/`journal-club`; may be `[]` only for `background`-purpose abstract-only summaries where §"outcomes_and_results" already carries no quantitative claim. |
 | `created_at` | string | yes | S2 timestamp. |
 
+The rendered `templates/single-paper-summary.md` carries one further section beyond this
+record's own `sections[]`: "14. Personal notes (unverified — not extracted evidence)",
+populated directly from `data/papers/annotations.jsonl` (tags/rating/note), never from this
+summary record. It is not part of this schema, carries no `span_refs`, and must never be
+read as a claim — see `annotations.py`/`paper_summary.py render_personal_notes`.
+
 `summary_id`, `extraction_path`, and `appraisal_path` are written once at assembly time and are
 immutable per S10 — a corrected summary is a new `created_at`, produced by rerunning
 `scripts/paper.py summarize` with `--force`, not a hand edit.

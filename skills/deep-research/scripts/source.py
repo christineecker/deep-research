@@ -10,6 +10,8 @@ turns them into text, and hands them to the store. Contracts: `references/schema
     source.py read  --run-dir D --source-id S [--start N --end N]   bounded, verified window
     source.py spans --run-dir D --source-id S --query T [--max N]   candidate span offsets
     source.py local --run-dir D --pdf P [--wiki R]       ingest a user-supplied PDF
+    source.py local --run-dir D --pdf P --repo R --attachment-id A   ingest via refmgr
+                                                          (registry.py add-pdf's attachment)
 
 Policy (`SKILL.md` "Invariants" — hard limits, not defaults):
 
@@ -508,10 +510,71 @@ def cmd_spans(args) -> int:
                           % MAX_SPAN_CHARS})
 
 
+def _cmd_local_refmgr(args, pdf: Path) -> int:
+    """`source.py local --repo ... --attachment-id ...`: ingest a PDF already staged
+    into the shared refmgr attachment pool (`registry.py add-pdf`/`import-folder`),
+    recording `asset.refmgr_paper_id`/`refmgr_attachment_id` instead of a
+    wiki-relative path (schema §10 Phase 5: "connect extractions to exact
+    attachment/snapshot versions"). The given `--pdf` must be the exact file already
+    registered as that attachment -- this never stages new bytes into refmgr itself,
+    only ingests text from bytes it already holds."""
+    import refmgr.service as _refmgr_service_mod
+    repo_root = Path(args.repo).expanduser().resolve()
+    service = _refmgr_service_mod.ReferenceManagerService(repo_root / "data" / "refmgr")
+    try:
+        row = service.conn.execute(
+            "SELECT * FROM attachments WHERE id = ? AND deleted_at IS NULL",
+            (args.attachment_id,)).fetchone()
+        if row is None:
+            raise FetchError(
+                "no refmgr attachment %r in %s -- register it first with "
+                "`registry.py add-pdf`" % (args.attachment_id, repo_root))
+        paper_id, asset_sha256 = row["paper_id"], row["asset_sha256"]
+        digest = sha256_file(pdf)
+        if digest != asset_sha256:
+            raise FetchError(
+                "%s (sha256 %s) does not match refmgr attachment %s's recorded asset "
+                "%s -- pass the exact file registered via `registry.py add-pdf`"
+                % (pdf, digest[:16], args.attachment_id, asset_sha256[:16]))
+        asset_row = service.assets.get(asset_sha256)
+        stored_path = repo_root / "data" / "refmgr" / asset_row["storage_path"]
+        nbytes = pdf.stat().st_size
+        text, tool = pdf_to_text(pdf)
+        if not text.strip() and not args.allow_empty:
+            raise FetchError(
+                "no text extracted from %s (tried pdftotext -layout, then pdfminer); a "
+                "scanned PDF needs OCR, or pass --allow-empty" % pdf)
+        url = args.url or ("file://" + stored_path.as_posix())
+        out = store.write_snapshot_result(
+            args.run_dir, url=url, text=text, title=args.title, access=args.access,
+            origin="user-supplied-pdf", paper=_paper(args),
+            asset={"path": None, "sha256": digest, "bytes": nbytes,
+                  "refmgr_paper_id": paper_id, "refmgr_attachment_id": args.attachment_id},
+            event_type="local_pdf", fresh=True, actor=args.actor,
+            detail=args.detail or ("user-supplied pdf via %s; %d chars, %d bytes, refmgr "
+                                   "attachment %s" % (tool, len(text), nbytes,
+                                                       args.attachment_id)))
+    finally:
+        service.close()
+    snap = out["snapshot"]
+    st = Store(args.run_dir, repo_root=repo_root)
+    fresh = st.freshness(snap["source_id"])
+    return _emit({"ok": True, "source_id": snap["source_id"], "created": out["created"],
+                  "url": snap["url"], "asset": snap["asset"], "chars": len(snap["text"]),
+                  "extractor": tool, "access": snap["access"], "origin": snap["origin"],
+                  "content_hash": snap["content_hash"], "fresh": fresh["fresh"],
+                  "fresh_reason_code": fresh["reason_code"]})
+
+
 def cmd_local(args) -> int:
     pdf = Path(args.pdf).expanduser().resolve()
     if not pdf.is_file():
         raise FetchError("no such PDF: %s" % pdf)
+    if args.repo:
+        if not args.attachment_id:
+            raise FetchError("--attachment-id is required with --repo (the refmgr "
+                             "attachment this PDF was staged as via `registry.py add-pdf`)")
+        return _cmd_local_refmgr(args, pdf)
     wiki = Path(args.wiki).expanduser().resolve() if args.wiki else wiki_root_for_run(args.run_dir)
     try:
         rel = pdf.relative_to(wiki)
@@ -612,8 +675,17 @@ def build_parser() -> argparse.ArgumentParser:
                                    "origin: user-supplied-pdf, and logs a fresh `local_pdf` "
                                    "event with the asset hash (R13, R15 exception).")
     s.add_argument("--run-dir", required=True, dest="run_dir")
-    s.add_argument("--pdf", required=True, help="path inside <wiki>/assets/papers/")
-    s.add_argument("--wiki", help="wiki root (default: inferred from --run-dir)")
+    s.add_argument("--pdf", required=True,
+                   help="path inside <wiki>/assets/papers/, or (with --repo) the exact "
+                        "file already registered as --attachment-id")
+    root_group = s.add_mutually_exclusive_group()
+    root_group.add_argument("--wiki", help="wiki root (default: inferred from --run-dir)")
+    root_group.add_argument("--repo", help="repo root: ingest via the refmgr attachment "
+                                           "pool instead of the wiki-relative library "
+                                           "(requires --attachment-id)")
+    s.add_argument("--attachment-id", dest="attachment_id",
+                   help="refmgr attachment id from `registry.py add-pdf`'s output "
+                        "(required with --repo)")
     s.add_argument("--title", default=None)
     s.add_argument("--access", default="full_text", choices=list(store.ACCESS_VALUES))
     s.add_argument("--pmid")

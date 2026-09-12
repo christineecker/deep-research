@@ -71,7 +71,80 @@ def repo_paths(repo_root: Path) -> dict[str, Path]:
         "extractions": papers / "extractions",
         "appraisals": papers / "appraisals",
         "sources": repo_root / "data" / "sources",
+        "refmgr": repo_root / "data" / "refmgr",
         "locks": repo_root / ".locks",
+    }
+
+
+def _refmgr_service(repo_root: Path):
+    """Open the shared refmgr SQLite library (`data/refmgr/`) that now backs
+    PDF attachment storage for `add-pdf`/`import-folder` (plan Phase 5:
+    "route research acquisition into the shared refmgr attachment pool").
+    """
+    import refmgr.service as _refmgr_service_mod
+    return _refmgr_service_mod.ReferenceManagerService(repo_paths(repo_root)["refmgr"])
+
+
+def _refmgr_identifiers(raw: dict) -> list[tuple[str, str]]:
+    """`{pmid, doi, pmcid}` -> refmgr `(scheme, raw_value)` pairs, skipping
+    values that don't normalize (refmgr's own normalizers are the authority,
+    not `corpus.py`'s — the two identity models are deliberately independent,
+    see plan "Known issues and standing decisions")."""
+    import refmgr.identity as _identity
+
+    pairs = []
+    for scheme, value in (("pmid", raw.get("pmid")), ("doi", raw.get("doi")),
+                          ("pmcid", raw.get("pmcid"))):
+        if not value:
+            continue
+        try:
+            _identity.normalize_identifier(scheme, str(value))
+        except _identity.IdentifierError:
+            continue
+        pairs.append((scheme, str(value)))
+    return pairs
+
+
+def _refmgr_paper_id(service, rec: dict, raw: dict, title: str) -> str:
+    """Resolve (or create) the refmgr paper backing this registry record.
+
+    The registry record's own `refmgr_paper_id` is the durable idempotency
+    key across repeated CLI calls -- once linked, later calls reuse it
+    directly rather than re-deriving identifiers, since a registry record
+    with no pmid/doi/pmcid (title-only) has nothing refmgr can match on.
+    """
+    existing = rec.get("refmgr_paper_id")
+    if existing and service.papers.get(existing) is not None:
+        return existing
+    return service.add_paper(
+        title=title, paper_type="article",
+        identifiers=_refmgr_identifiers(raw),
+    )
+
+
+def _import_pdf_attachment(service, paper_id: str, pdf: Path, *,
+                           digest: str, pages: int, move: bool) -> dict:
+    """Stage `pdf`'s bytes into the refmgr asset store and link them to
+    `paper_id`, reusing an existing attachment instead of creating a
+    duplicate row if this exact asset is already attached to this paper
+    (attachments are append-only in refmgr -- see `AttachmentRepository.link`
+    -- so callers that want idempotent re-imports must guard for it here)."""
+    for att in service.attachments.list_for_paper(paper_id):
+        if att["asset_sha256"] == digest:
+            attachment_id = att["id"]
+            break
+    else:
+        attachment_id = service.import_attachment(
+            paper_id, pdf, role="fulltext", mime_type="application/pdf",
+            original_filename=pdf.name, page_count=pages,
+        )
+    if move:
+        pdf.unlink(missing_ok=True)
+    asset_row = service.assets.get(digest)
+    return {
+        "refmgr_paper_id": paper_id, "attachment_id": attachment_id,
+        "sha256": digest, "bytes": asset_row["byte_size"] if asset_row else None,
+        "pages": pages, "mime_type": "application/pdf", "added_at": utcnow(),
     }
 
 
@@ -296,49 +369,53 @@ def _esearch_doi(doi: str) -> str | None:
     return pmids[0] if pmids else None
 
 
-def cmd_add_pdf(args) -> int:
-    """`data/sources/assets/sha256-<hash>.pdf` (plan "Target Repository Layout") — flat,
-    content-addressed, distinct from `library.py`'s wiki-shaped `<wiki>/assets/papers/`
-    (pmid/doi-named files + index.json manifest). Reuses `library.py`'s pure PDF helpers
-    (`sha256_file`, `pdf_pages`, `doi_from_pdf`) without its wiki-coupled `Library` class."""
+def add_pdf_to_registry(registry: "Registry", service, pdf: Path, *,
+                        pmid: str | None = None, doi: str | None = None,
+                        pmcid: str | None = None, title: str | None = None,
+                        move: bool = False) -> tuple[dict, bool]:
+    """Register `pdf` in `registry` and attach it via the shared refmgr attachment
+    pool -- content-addressed storage, multi-attachment-capable, superseding the
+    old flat `data/sources/assets/sha256-<hash>.pdf` store. The single PDF-intake
+    implementation shared by `cmd_add_pdf` (CLI) and `paper.py`'s `--pdf` ingestion
+    path (Phase 5: there is exactly one of these, not two independently
+    maintained copies). Caller owns `registry.save()`/`generate_pool()` and the
+    `advisory_lock`/`service` lifecycle."""
     import library as _library_mod
+    digest = _library_mod.sha256_file(pdf)
+    pages = _library_mod.pdf_pages(pdf)
+    resolved_doi = doi or _library_mod.doi_from_pdf(pdf)
+    raw = {"pmid": pmid, "doi": resolved_doi, "pmcid": pmcid, "title": title or pdf.stem}
+    rec, is_new = registry.register(raw)
+    eid = rec["evidence_id"]
+    paper_id = _refmgr_paper_id(service, rec, raw, rec.get("title") or pdf.stem)
+    asset = _import_pdf_attachment(service, paper_id, pdf, digest=digest, pages=pages, move=move)
+    rec["refmgr_paper_id"] = paper_id
+    rec = registry.set_asset(eid, asset)
+    return rec, is_new
+
+
+def cmd_add_pdf(args) -> int:
+    """Register a paper from a local PDF and attach it via the shared refmgr
+    attachment pool (plan Phase 5 cutover). See `add_pdf_to_registry`."""
     pdf = Path(args.file).expanduser().resolve()
     if not pdf.exists():
         emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "add-pdf",
               "error": f"no such file: {pdf}"})
         return 1
     registry = Registry(args.repo)
-    digest = _library_mod.sha256_file(pdf)
-    assets_dir = registry.paths["sources"] / "assets"
-    dest = assets_dir / f"sha256-{digest}.pdf"
-
-    doi = args.doi or _library_mod.doi_from_pdf(pdf)
-    raw = {
-        "pmid": args.pmid, "doi": doi, "pmcid": args.pmcid,
-        "title": args.title or pdf.stem,
-    }
-    with advisory_lock(args.repo, "registry"):
-        rec, is_new = registry.register(raw)
-        eid = rec["evidence_id"]
-        if not dest.exists():
-            assets_dir.mkdir(parents=True, exist_ok=True)
-            import shutil
-            if args.move:
-                shutil.move(str(pdf), str(dest))
-            else:
-                shutil.copy2(str(pdf), str(dest))
-        elif args.move:
-            pdf.unlink(missing_ok=True)
-        asset = {
-            "sha256": digest, "path": str(dest.relative_to(registry.repo_root)),
-            "bytes": dest.stat().st_size, "pages": _library_mod.pdf_pages(dest),
-            "added_at": utcnow(),
-        }
-        rec = registry.set_asset(eid, asset)
-        registry.save()
-        registry.generate_pool()
+    service = _refmgr_service(args.repo)
+    try:
+        with advisory_lock(args.repo, "registry"):
+            rec, is_new = add_pdf_to_registry(
+                registry, service, pdf, pmid=args.pmid, doi=args.doi, pmcid=args.pmcid,
+                title=args.title, move=args.move)
+            registry.save()
+            registry.generate_pool()
+    finally:
+        service.close()
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "add-pdf",
-          "evidence_id": eid, "is_new": is_new, "asset": asset, "record": rec})
+          "evidence_id": rec["evidence_id"], "is_new": is_new, "asset": rec["asset"],
+          "record": rec})
     return 0
 
 
@@ -431,33 +508,23 @@ def cmd_import_bib(args) -> int:
 
 
 def cmd_import_folder(args) -> int:
-    import library as _library_mod
-    import shutil
+    """Bulk `add-pdf` over a folder -- see `add_pdf_to_registry` for the refmgr
+    attachment-pool cutover this shares."""
     folder = Path(args.dir).expanduser().resolve()
     pdfs = sorted(folder.rglob("*.pdf")) if args.recursive else sorted(folder.glob("*.pdf"))
     registry = Registry(args.repo)
-    assets_dir = registry.paths["sources"] / "assets"
     results = []
-    with advisory_lock(args.repo, "registry"):
-        for pdf in pdfs:
-            digest = _library_mod.sha256_file(pdf)
-            dest = assets_dir / f"sha256-{digest}.pdf"
-            doi = _library_mod.doi_from_pdf(pdf)
-            raw = {"doi": doi, "title": pdf.stem}
-            rec, is_new = registry.register(raw)
-            eid = rec["evidence_id"]
-            if not dest.exists():
-                assets_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(pdf), str(dest))
-            asset = {
-                "sha256": digest, "path": str(dest.relative_to(registry.repo_root)),
-                "bytes": dest.stat().st_size, "pages": _library_mod.pdf_pages(dest),
-                "added_at": utcnow(),
-            }
-            registry.set_asset(eid, asset)
-            results.append({"file": str(pdf), "evidence_id": eid, "is_new": is_new})
-        registry.save()
-        registry.generate_pool()
+    service = _refmgr_service(args.repo)
+    try:
+        with advisory_lock(args.repo, "registry"):
+            for pdf in pdfs:
+                rec, is_new = add_pdf_to_registry(registry, service, pdf)
+                results.append({"file": str(pdf), "evidence_id": rec["evidence_id"],
+                               "is_new": is_new})
+            registry.save()
+            registry.generate_pool()
+    finally:
+        service.close()
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "import-folder",
           "repo": str(registry.repo_root), "dir": str(folder), "files_seen": len(pdfs),
           "registered": len(results), "new": sum(1 for r in results if r["is_new"]),
