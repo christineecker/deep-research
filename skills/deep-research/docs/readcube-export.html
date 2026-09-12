@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ReadCube export - deep-research</title>
+  <link rel="icon" href="assets/favicon.png" type="image/png">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="brand" href="index.html"><img src="assets/logo.png" alt="" width="36" height="36"><span class="brand-text"><strong>deep-research</strong><span>Skill documentation</span></span></a>
+      <nav class="nav" aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="quickstart.html">Quickstart</a>
+        <a href="questions.html">Scientific questions</a>
+        <a href="pipeline.html">Full pipeline</a>
+        <a href="paper-summaries.html">Paper summaries</a>
+        <a href="reference-manager.html">Reference manager</a>
+        <a href="readcube-export.html" aria-current="page">ReadCube export</a>
+        <a href="architecture.html">Repo architecture</a>
+        <a href="appraisal.html">Appraisal frameworks</a>
+        <a href="commands.html">Command reference</a>
+        <a href="../teach-deep-research/lessons/0001-what-is-deep-research.html">Guided course</a>
+        <a href="https://github.com/christineecker/deep-research">GitHub repo ↗</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <p class="eyebrow">Library UI: ReadCube, not deep-research</p>
+        <h1>Publish a ReadCube-importable bundle from the registry — RIS bibliography, primary PDFs, manifest, import report.</h1>
+        <p class="lead">deep-research does not build or maintain a browser library, an embedded PDF reader, or any in-app annotation UI. You browse and read papers in the ReadCube desktop app; <code>/deep-research:export readcube</code> prepares a local, self-contained import bundle for it on request. It never edits ReadCube's database, uploads anything, or confirms an actual import — every result carries <code>readcube_import_status: "unknown"</code> for exactly that reason.</p>
+      </section>
+
+      <div class="callout">
+        <strong>This replaces an earlier browser-app plan.</strong> A custom SQLite-backed local web app with an embedded PDF reader was drafted and partly built, then retired in favor of ReadCube. The SQLite storage layer that work produced (<code>skills/deep-research/scripts/refmgr/</code>) wasn't thrown away — it's the newer of two data sources this export command can read from, described below.
+      </div>
+
+      <h2>Command</h2>
+      <pre><code>/deep-research:export --repo &lt;research-repo&gt; \
+  (--all | --evidence-id &lt;id&gt; [...] | --run-dir &lt;run&gt;) \
+  --destination &lt;local-folder&gt; \
+  [--name &lt;batch-name&gt;] [--incremental] [--bib] [--require-pdfs] [--dry-run] \
+  [--source legacy|refmgr] [--library &lt;path&gt;]</code></pre>
+      <ul>
+        <li><strong>Selection</strong> — exactly one of <code>--all</code>, <code>--evidence-id</code> (repeatable), or <code>--run-dir</code>. Unresolved <code>--evidence-id</code>s block publication entirely, listing every one that failed, not just the first. <code>--run-dir</code> selects a run's actually-included records (<code>screening.decision == "include"</code>) and rejects a run with no resolvable screening state.</li>
+        <li><strong><code>--destination</code></strong> — any locally accessible folder, including an already-downloaded iCloud Drive folder. Always explicit; never guessed.</li>
+        <li><strong><code>--incremental</code></strong> — compares each record's metadata + attachment fingerprint against a per-destination ledger. Nothing changed → no batch directory is created at all, a structured no-op. A failed publish attempt never becomes a future baseline.</li>
+        <li><strong><code>--bib</code></strong> — also writes <code>references.bib</code>. RIS stays the primary import format; import one bibliography file into ReadCube, not both.</li>
+        <li><strong><code>--require-pdfs</code></strong> — blocks publication (nothing written) if any selected record's asset doesn't resolve. Without it, metadata-only records still publish, with a warning.</li>
+        <li><strong><code>--dry-run</code></strong> — same selection/resolution/manifest logic, same reported counts, zero filesystem writes.</li>
+      </ul>
+
+      <h2>Two Data Sources, One Command</h2>
+      <p>Real paper data lives today in the original JSONL registry (<code>data/papers/registry.jsonl</code>) — one primary asset pointer per record. The newer <code>refmgr</code> SQLite layer supports multiple attachments per paper (primary, supplement, version) with checksum-verified content-addressed storage, but starts empty until it's populated. <code>--source</code> picks which one the export command reads from — the bundle format, manifest schema, and CLI surface are identical either way:</p>
+      <table>
+        <thead><tr><th><code>--source</code></th><th>Reads</th><th>Selection support</th><th>Attachments per record</th></tr></thead>
+        <tbody>
+          <tr><td><code>legacy</code> (default)</td><td><code>--repo</code>'s <code>registry.jsonl</code></td><td><code>--all</code>, <code>--evidence-id</code>, <code>--run-dir</code></td><td>One (the registry's single asset pointer)</td></tr>
+          <tr><td><code>refmgr</code></td><td><code>--library</code>'s SQLite database</td><td><code>--all</code>, <code>--evidence-id</code> (bare paper id, or <code>scheme:value</code> identifier lookup) — not <code>--run-dir</code></td><td>All of them — primary into <code>PDFs/</code>, everything else into <code>Supplements/</code></td></tr>
+        </tbody>
+      </table>
+      <p><code>--run-dir</code> is a deliberate rejection for <code>--source refmgr</code>: a run's evidence_ids use the legacy registry's scheme, and there's no defined way to cross-resolve those against <code>refmgr</code> identifiers yet.</p>
+
+      <h2>Bundle Layout</h2>
+      <pre><code>&lt;destination&gt;/&lt;batch-name&gt;-&lt;unique-id&gt;/
+  references.ris
+  references.bib             # only with --bib
+  PDFs/&lt;safe-label&gt;--&lt;hash-prefix&gt;.pdf
+  Supplements/
+  manifest.json               # schema/17-export-manifest.md
+  import-report.md
+  README.md
+  COMPLETE.json                # written last; local completion only</code></pre>
+      <p>Publication is staged and atomic — everything is written into a temporary directory first, then moved into its final location in one filesystem rename, so a crash mid-export never leaves a half-written batch. Every copied file is re-hashed after the copy and compared against the source's checksum before anything is considered complete.</p>
+
+      <h2>Storage Added</h2>
+      <table>
+        <thead><tr><th>File</th><th>Written by</th><th>Contents</th></tr></thead>
+        <tbody>
+          <tr><td><code>data/papers/export_ledger.jsonl</code></td><td><code>export.py</code> (<code>--incremental</code>)</td><td>Per-destination, per-record metadata + attachment fingerprint of the last <em>published</em> export — a failed attempt never counts as a baseline.</td></tr>
+          <tr><td><code>&lt;library&gt;/library.sqlite3</code></td><td><code>refmgr/</code> (<code>--source refmgr</code> only)</td><td>Papers, identifiers, assets, attachments, organization, an FTS5 search index, and saved searches — a separate store from <code>registry.jsonl</code>, not yet the default.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>What's Still Manual</h2>
+      <p>Two things can't be automated: verifying the bundle actually imports correctly in the real ReadCube desktop app, and running a real export to a real iCloud (or other) destination folder. A ready-to-import compatibility-trial bundle — seven references covering full metadata, metadata-only, no-identifier, Unicode, a supplement, and a preprint/published version pair, with real viewable PDFs — already exists at <code>skills/deep-research/references/fixtures/compat-trial/</code>, with its own README walking through what to check.</p>
+
+      <footer class="footer">Slash command: <code>commands/export.md</code>. Full agent-facing spec: <code>references/readcube-export.md</code>. Manifest schema: <code>references/schema/17-export-manifest.md</code>. Backlog and standing decisions: <code>REFERENCE_MANAGER_V2_PLAN.md</code>.</footer>
+    </main>
+  </div>
+</body>
+</html>

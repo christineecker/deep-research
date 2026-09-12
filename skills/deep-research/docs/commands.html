@@ -18,6 +18,7 @@
         <a href="pipeline.html">Full pipeline</a>
         <a href="paper-summaries.html">Paper summaries</a>
         <a href="reference-manager.html">Reference manager</a>
+        <a href="readcube-export.html">ReadCube export</a>
         <a href="architecture.html">Repo architecture</a>
         <a href="appraisal.html">Appraisal frameworks</a>
         <a href="commands.html" aria-current="page">Command reference</a>
@@ -83,6 +84,17 @@ python3 scripts/registry.py appraise-promote --repo &lt;path&gt; --run-dir &lt;r
       — the one scoped exception to the skill's no-pip-installs policy. <code>okf-export</code> requires each
       <code>--evidence-id</code> to already have an extraction on file. Details:
       <a href="reference-manager.html">Reference manager</a>.</p>
+
+      <h2>ReadCube Export</h2>
+      <pre><code>/deep-research:export --repo &lt;path&gt; --all --destination &lt;folder&gt; --require-pdfs
+/deep-research:export --repo &lt;path&gt; --evidence-id pmid:38214501 --destination &lt;folder&gt; --incremental
+/deep-research:export --repo &lt;path&gt; --run-dir &lt;run&gt; --destination &lt;folder&gt; --bib --dry-run</code></pre>
+      <p>Distinct from <code>okf-export</code>: this publishes a local RIS + PDF bundle for the ReadCube
+      desktop app, not an OKF wiki bundle — it never touches wiki state and needs no extraction on file.
+      Add <code>--source refmgr --library &lt;path&gt;</code> to read from the newer SQLite reference-manager
+      layer instead of the registry (supports multiple attachments per paper; <code>--all</code>/
+      <code>--evidence-id</code> selection only, not <code>--run-dir</code>). Details:
+      <a href="readcube-export.html">ReadCube export</a>.</p>
 
       <h2>Run Monitoring</h2>
       <pre><code>/deep-research:status &lt;run&gt; --table
