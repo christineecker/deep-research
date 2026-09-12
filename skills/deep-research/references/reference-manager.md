@@ -14,7 +14,8 @@ reads/writes the same `data/papers/registry.jsonl` and its neighbors described i
 | Search | `registry.py search` | reads `registry.jsonl`, `annotations.jsonl`, refmgr's indexes | Facet filters + full-text keyword search + optional similarity ranking, all in one subcommand |
 | Index | `registry.py reindex` | `data/refmgr/library.sqlite3` (`papers_fts`, `chunks_fts`, `paper_terms`) | Rebuilds every derived index from the registry and the snapshot store |
 | Facets | `registry.py facets` | `paper_terms` | What MeSH headings / keywords / article types / authors the library actually holds, with counts |
-| Health | `registry.py doctor` | none — read-only | Missing or corrupt assets, dangling attachments, stale index rows |
+| Figures | `registry.py figures` | `figures` + `figures_fts`, images as role=`figure` attachments | Crops captioned figures out of stored PDFs, and searches those captions |
+| Health | `registry.py doctor` | none — read-only | Missing or corrupt assets, dangling attachments, stale index rows, figures that lost their source |
 | Ask | `ask.py retrieve` | none new | Hybrid retrieval over the indexes, every hit re-verified as a span; the answering command writes prose from the result |
 | Alerts | `alerts.py` | refmgr's `saved_searches` table | Saved PubMed queries, re-run on demand to report (or register) what the repo has not seen |
 | Annotations | `annotations.py` | `data/papers/annotations.jsonl` | Personal tags/star-rating/note per `evidence_id`, kept separate from the registry and from project-scoped appraisal |
@@ -40,6 +41,39 @@ Consequences worth knowing:
   existed — slower, same answers, with a note on stderr.
 - **`refmgr_paper_id` on a registry record is the link** between the two stores, and the
   idempotency key for records with no identifier refmgr can match on.
+- **Figures are the exception to "nothing is lost".** Every other derived table is
+  rebuilt from canonical text by `reindex`; figure crops are derived from PDF *layout*
+  by a heuristic, so rebuilding them means re-running poppler over every asset. That is
+  a separate command (`registry.py figures`), not part of `reindex`, and the cropped
+  PNGs are real assets in the store rather than rows that can be regenerated for free.
+
+## Figures (`registry.py figures`)
+
+Journal figures are mostly vector charts, so pulling embedded images out of a PDF
+misses them entirely. Extraction instead anchors on captions: `pdftotext -bbox` gives
+every word's rectangle, a line *starting* with `Figure N` is a caption, the figure is
+the whitespace band above it within that column, and `pdftoppm` renders exactly that
+region (`library.py`, "figures" section). Each crop is stored as an ordinary asset with
+a role=`figure` attachment; the `figures` table records which figure of which paper it
+is and what its caption says.
+
+```
+registry.py figures --repo <path>                  # backfill; already-done PDFs skipped
+registry.py figures --repo <path> --replace        # re-crop (after an extractor change)
+registry.py figures --repo <path> --query "forest plot"
+registry.py add-pdf --repo <path> --file x.pdf --figures   # opt in at import time
+```
+
+Two limits worth knowing before relying on it:
+
+- **Scanned PDFs yield nothing.** No text layer means no caption anchors. OCR first.
+- **Tables are deliberately excluded.** Their body is text, which the chunk index
+  already holds in a form that keeps the cell values searchable; a crop would not.
+
+Captions are indexed in `figures_fts`, not `chunks_fts`. A chunk row is a verifiable
+claim span into a snapshot (`store.verify_span`); a caption read out of PDF layout
+has no such offsets, so filing it as a chunk would put unverifiable rows into an index
+whose contract is that its rows verify.
 
 ## Search (`registry.py search`)
 

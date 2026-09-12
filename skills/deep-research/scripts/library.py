@@ -10,6 +10,7 @@ Subcommands
   add           file a PDF into the library (sha256 content dedupe)
   ingest-inbox  match every PDF in <run-dir>/inbox/ to a quarantined corpus record
   list          dump index entries
+  figures       crop captioned figure images out of a PDF (caption anchoring)
 
 Evidence kernel: `ingest-inbox` registers each matched PDF's extracted text into the run's
 snapshot store (`scripts/store.py`, references/schema.md §10-§11) with
@@ -40,6 +41,7 @@ import sys
 import tempfile
 import unicodedata
 from difflib import SequenceMatcher
+from html.parser import HTMLParser
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -278,6 +280,376 @@ def doi_from_pdf(pdf: Path) -> str | None:
         text = (text or "") + "\n" + ocr_pdf(pdf, max_pages=1)
     m = DOI_RE.search(text or "")
     return normalize_doi(m.group(0)) if m else None
+
+
+# ----------------------------------------------------------------- figures -----
+#
+# Figures are recovered by *caption anchoring*, not by pulling image objects out of
+# the PDF. `pdfimages` only sees embedded bitmaps, so it misses every vector chart
+# (which is most of them), splits tiled figures into fragments, and returns logos
+# and rules alongside real content, with no captions and no figure numbers.
+#
+# Instead: `pdftotext -bbox` gives every word's rectangle. A line that *starts* with
+# "Figure 3" is a caption (an in-text mention like "as shown in Figure 3" never
+# does). The figure is then the whitespace band directly above that caption, bounded
+# by the nearest content above it within the same column; `pdftoppm -x/-y/-W/-H`
+# renders exactly that band.
+#
+# All poppler, no new dependencies, and each figure carries its label, caption text
+# and page. Vector and bitmap figures come out the same way, because the page is
+# rasterised rather than dissected. Expect this to land most but not all figures;
+# see `extract_figures` for the known misses.
+
+# A caption line must *start* with one of these.
+#
+# Tables are deliberately absent: their caption sits above a body that is itself
+# text, so the whitespace geometry that isolates a figure finds nothing to bound,
+# and the caption block runs straight into the first rows. Tables are already
+# captured verbatim by the text layer, which is the better representation of them
+# anyway — cropping them to pixels would lose the cell values to search.
+CAPTION_RE = re.compile(
+    r"^(?P<kind>Fig(?:ure|s?\.)?|Scheme|Chart|Exhibit|Plate)\s*"
+    r"(?P<number>\d{1,3}[A-Za-z]?|[IVXLC]{1,6})\s*[.:)–-]?(?:\s|$)",
+    re.IGNORECASE,
+)
+FIGURE_MIN_POINTS = 40.0     # a band thinner than this is a stray gap, not a figure
+FIGURE_PAD_POINTS = 4.0      # breathing room around a detected band
+CAPTION_MAX_LINES = 6        # captions longer than this have run into body text
+LINE_OVERLAP_RATIO = 0.5     # words share a line when their y-spans overlap this much
+COLUMN_MIN_LINES = 3         # lines needed on each side before a gutter means two columns
+COLUMN_CROSSING_RATIO = 0.15  # share of lines allowed to straddle a genuine gutter
+BLANK_INK_FRACTION = 0.004   # a crop with less ink than this is empty page, not a figure
+INK_PROBE_DPI = 20           # cheap greyscale probe resolution for the blank check
+
+
+class _BBoxParser(HTMLParser):
+    """Reads `pdftotext -bbox` XHTML into pages of word rectangles.
+
+    html.parser rather than ElementTree: the output carries an XHTML doctype and
+    may contain named entities, both of which ElementTree rejects.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.pages: list[dict] = []
+        self._rect: tuple[float, float, float, float] | None = None
+        self._buf: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        # html.parser lower-cases attribute names, so the source's xMin reads as xmin.
+        a = {k.lower(): v for k, v in attrs}
+        if tag == "page":
+            self.pages.append({
+                "width": _as_float(a.get("width")),
+                "height": _as_float(a.get("height")),
+                "words": [],
+            })
+        elif tag == "word" and self.pages:
+            keys = ("xmin", "ymin", "xmax", "ymax")
+            if all(a.get(k) is not None for k in keys):
+                self._rect = tuple(_as_float(a[k]) for k in keys)  # type: ignore[assignment]
+                self._buf = []
+
+    def handle_data(self, data: str) -> None:
+        if self._rect is not None:
+            self._buf.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "word" and self._rect is not None:
+            text = "".join(self._buf).strip()
+            if text:
+                x0, y0, x1, y1 = self._rect
+                self.pages[-1]["words"].append(
+                    {"x0": x0, "y0": y0, "x1": x1, "y1": y1, "text": text}
+                )
+            self._rect = None
+            self._buf = []
+
+
+def _as_float(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def bbox_pages(pdf: Path) -> list[dict]:
+    """`pdftotext -bbox` -> [{width, height, words:[{x0,y0,x1,y1,text}]}] in points.
+
+    Empty when poppler is missing or the PDF has no text layer (a pure scan). Origin
+    is top-left with y increasing downwards, matching `pdftoppm`'s crop coordinates.
+    """
+    if not shutil.which("pdftotext"):
+        return []
+    try:
+        proc = _run(["pdftotext", "-bbox", str(pdf), "-"], timeout=300)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return []
+    parser = _BBoxParser()
+    try:
+        parser.feed(proc.stdout)
+        parser.close()
+    except Exception:  # malformed output is a miss, never a crash
+        return []
+    return parser.pages
+
+
+def _group_lines(words: list[dict]) -> list[dict]:
+    """Cluster words into text lines by vertical overlap, ordered top-to-bottom."""
+    lines: list[dict] = []
+    for w in sorted(words, key=lambda w: (w["y0"], w["x0"])):
+        current = lines[-1] if lines else None
+        if current is not None and _shares_line(current, w):
+            current["words"].append(w)
+            current["x0"] = min(current["x0"], w["x0"])
+            current["x1"] = max(current["x1"], w["x1"])
+            current["y0"] = min(current["y0"], w["y0"])
+            current["y1"] = max(current["y1"], w["y1"])
+        else:
+            lines.append({"x0": w["x0"], "y0": w["y0"], "x1": w["x1"], "y1": w["y1"],
+                          "words": [w]})
+    for line in lines:
+        line["words"].sort(key=lambda w: w["x0"])
+        line["text"] = " ".join(w["text"] for w in line["words"])
+    return lines
+
+
+def _shares_line(line: dict, word: dict) -> bool:
+    overlap = min(line["y1"], word["y1"]) - max(line["y0"], word["y0"])
+    shortest = min(line["y1"] - line["y0"], word["y1"] - word["y0"])
+    return shortest > 0 and (overlap / shortest) >= LINE_OVERLAP_RATIO
+
+
+def _detect_columns(page: dict, lines: list[dict]) -> list[tuple[float, float]]:
+    """Column x-ranges: two entries for a two-column layout, one otherwise.
+
+    The split is the x in the middle of the page crossed by the fewest lines,
+    rather than the widest fully clear band — a two-column page nearly always
+    carries a few genuinely full-width lines (title, running head, a spanning
+    figure), and demanding a perfectly clear gutter lets any one of them hide
+    the layout. Two conditions then have to hold together: almost nothing
+    crosses the split, and both sides are properly populated. The second is
+    what stops a single column of ragged-right text, which trivially satisfies
+    the first, from being read as two.
+    """
+    width = page["width"]
+    if width <= 0 or len(lines) < COLUMN_MIN_LINES * 2:
+        return [(0.0, max(width, 1.0))]
+
+    best_split, best_crossings = None, None
+    x = width * 0.35
+    while x <= width * 0.65:
+        crossings = sum(1 for ln in lines if ln["x0"] < x < ln["x1"])
+        if best_crossings is None or crossings < best_crossings:
+            best_split, best_crossings = x, crossings
+        x += 2.0
+    if best_split is None:
+        return [(0.0, width)]
+
+    if best_crossings > max(1, int(len(lines) * COLUMN_CROSSING_RATIO)):
+        return [(0.0, width)]
+    left = sum(1 for ln in lines if ln["x1"] <= best_split)
+    right = sum(1 for ln in lines if ln["x0"] >= best_split)
+    if min(left, right) < COLUMN_MIN_LINES:
+        return [(0.0, width)]
+    return [(0.0, best_split), (best_split, width)]
+
+
+def _column_of(line: dict, columns: list[tuple[float, float]]) -> int:
+    centre = (line["x0"] + line["x1"]) / 2.0
+    for i, (x0, x1) in enumerate(columns):
+        if x0 <= centre < x1:
+            return i
+    return len(columns) - 1
+
+
+def _caption_block(anchor_index: int, column_lines: list[dict]) -> tuple[str, float]:
+    """Caption text starting at the anchor line, and the y where the caption ends.
+
+    Continuation stops at the first line separated by more than ordinary leading,
+    which is what keeps a two-line caption from swallowing the paragraph under it.
+    """
+    anchor = column_lines[anchor_index]
+    height = max(anchor["y1"] - anchor["y0"], 1.0)
+    parts = [anchor["text"]]
+    bottom = anchor["y1"]
+    for line in column_lines[anchor_index + 1: anchor_index + CAPTION_MAX_LINES]:
+        if (line["y0"] - bottom) > height * 1.6 or CAPTION_RE.match(line["text"]):
+            break
+        parts.append(line["text"])
+        bottom = line["y1"]
+    return " ".join(parts), bottom
+
+
+def _region_above(anchor: dict, column: tuple[float, float], lines: list[dict]) -> tuple | None:
+    """Whitespace band above a figure caption, bounded by the nearest content above."""
+    blockers = [ln["y1"] for ln in lines
+                if ln["y1"] <= anchor["y0"] + 1.0 and _overlaps_x(ln, column)]
+    top = max(blockers) if blockers else 0.0
+    if (anchor["y0"] - top) < FIGURE_MIN_POINTS:
+        return None
+    return (column[0], top + FIGURE_PAD_POINTS,
+            column[1], anchor["y0"] - FIGURE_PAD_POINTS)
+
+
+def _overlaps_x(line: dict, column: tuple[float, float]) -> bool:
+    return line["x1"] > column[0] and line["x0"] < column[1]
+
+
+def _crop_args(box: tuple, dpi: int) -> list[str]:
+    scale = dpi / 72.0
+    x0, y0, x1, y1 = box
+    return ["-x", str(max(0, int(x0 * scale))), "-y", str(max(0, int(y0 * scale))),
+            "-W", str(max(1, int(round((x1 - x0) * scale)))),
+            "-H", str(max(1, int(round((y1 - y0) * scale))))]
+
+
+def _render_region(pdf: Path, page_no: int, box: tuple, dpi: int,
+                   gray: bool = False) -> bytes | None:
+    """Rasterise one page region. PNG, or raw PGM when `gray` (for the ink probe)."""
+    if not shutil.which("pdftoppm"):
+        return None
+    cmd = ["pdftoppm", "-r", str(dpi), "-f", str(page_no), "-l", str(page_no)]
+    cmd += ["-gray"] if gray else ["-png"]
+    cmd += _crop_args(box, dpi)
+    with tempfile.TemporaryDirectory() as td:
+        stem = os.path.join(td, "crop")
+        try:
+            proc = _run(cmd + [str(pdf), stem], timeout=300)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if proc.returncode != 0:
+            return None
+        found = sorted(Path(td).glob("crop*"))
+        return found[0].read_bytes() if found else None
+
+
+def _ink_fraction(pgm: bytes) -> float:
+    """Share of non-white pixels in a binary (P5) PGM. 0.0 when unparseable."""
+    if not pgm.startswith(b"P5"):
+        return 0.0
+    fields: list[bytes] = []
+    pos = 2
+    while len(fields) < 3 and pos < len(pgm):
+        while pos < len(pgm) and pgm[pos: pos + 1].isspace():
+            pos += 1
+        if pgm[pos: pos + 1] == b"#":
+            while pos < len(pgm) and pgm[pos: pos + 1] != b"\n":
+                pos += 1
+            continue
+        start = pos
+        while pos < len(pgm) and not pgm[pos: pos + 1].isspace():
+            pos += 1
+        fields.append(pgm[start:pos])
+    if len(fields) < 3:
+        return 0.0
+    try:
+        maxval = int(fields[2])
+    except ValueError:
+        return 0.0
+    if maxval > 255:  # 16-bit PGM; not worth decoding for a blank check
+        return 1.0
+    pixels = pgm[pos + 1:]
+    if not pixels:
+        return 0.0
+    threshold = int(maxval * 0.98)
+    return sum(1 for b in pixels if b < threshold) / len(pixels)
+
+
+def _looks_blank(pdf: Path, page_no: int, box: tuple) -> bool:
+    probe = _render_region(pdf, page_no, box, INK_PROBE_DPI, gray=True)
+    if probe is None:
+        return False  # cannot tell; keep the candidate rather than drop it silently
+    return _ink_fraction(probe) < BLANK_INK_FRACTION
+
+
+def _normalise_kind(raw: str) -> str:
+    lowered = raw.lower().rstrip(".")
+    if lowered.startswith("fig"):
+        return "figure"
+    return lowered
+
+
+def extract_figures(
+    pdf: Path,
+    *,
+    dpi: int = 300,
+    pages: list[int] | None = None,
+    max_figures: int = 100,
+    out_dir: Path | None = None,
+) -> list[dict]:
+    """Recover captioned figure images from a PDF by caption anchoring.
+
+    Returns one dict per figure, ordered by page then position:
+
+        {page, kind, label, number, caption, bbox, dpi, png_bytes, path?}
+
+    `bbox` is `[x0, y0, x1, y1]` in PDF points, top-left origin. `path` is present
+    only when `out_dir` is given, in which case the PNG is also written there.
+
+    Known misses, in rough order of how often they bite:
+      * scanned PDFs with no text layer — no anchors exist; OCR first
+      * figures whose caption sits on the facing page
+      * figures spanning both columns of a two-column layout, when a full-width
+        caption is mis-assigned to one column
+      * captions typeset in-line with body text rather than on their own line
+    Candidates that render to blank page area are dropped, so misdetection tends
+    towards missing figures rather than emitting junk.
+    """
+    results: list[dict] = []
+    for page_index, page in enumerate(bbox_pages(pdf), start=1):
+        if pages is not None and page_index not in pages:
+            continue
+        lines = _group_lines(page["words"])
+        if not lines:
+            continue
+        columns = _detect_columns(page, lines)
+        by_column: dict[int, list[dict]] = {}
+        for line in lines:
+            by_column.setdefault(_column_of(line, columns), []).append(line)
+
+        for column_index, column_lines in by_column.items():
+            column = columns[column_index]
+            for i, line in enumerate(column_lines):
+                match = CAPTION_RE.match(line["text"])
+                if match is None:
+                    continue
+                kind = _normalise_kind(match.group("kind"))
+                caption, _ = _caption_block(i, column_lines)
+                box = _region_above(line, column, lines)
+                if box is None or _looks_blank(pdf, page_index, box):
+                    continue
+                png = _render_region(pdf, page_index, box, dpi)
+                if not png:
+                    continue
+                results.append({
+                    "page": page_index,
+                    "kind": kind,
+                    "label": "%s %s" % (kind.capitalize(), match.group("number")),
+                    "number": match.group("number"),
+                    "caption": caption,
+                    "bbox": [round(v, 2) for v in box],
+                    "dpi": dpi,
+                    "png_bytes": png,
+                })
+                if len(results) >= max_figures:
+                    break
+            if len(results) >= max_figures:
+                break
+        if len(results) >= max_figures:
+            break
+
+    results.sort(key=lambda r: (r["page"], r["bbox"][1]))
+    if out_dir is not None:
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for n, fig in enumerate(results, start=1):
+            path = out_dir / ("p%03d-%s-%02d.png" % (fig["page"], fig["kind"], n))
+            path.write_bytes(fig["png_bytes"])
+            fig["path"] = str(path)
+    return results
 
 
 # ------------------------------------------------------------------ library ----
@@ -848,6 +1220,19 @@ def cmd_list(args) -> int:
     return 0
 
 
+def cmd_figures(args) -> int:
+    figures = extract_figures(
+        Path(args.pdf).expanduser(), dpi=args.dpi,
+        max_figures=args.limit, out_dir=Path(args.out) if args.out else None,
+    )
+    print(json.dumps(
+        {"count": len(figures),
+         "figures": [{k: v for k, v in f.items() if k != "png_bytes"} for f in figures]},
+        indent=2, ensure_ascii=False,
+    ))
+    return 0 if figures else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="library.py", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -896,6 +1281,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--wiki", required=True)
     s.add_argument("--limit", type=int, default=50)
     s.set_defaults(func=cmd_list)
+
+    s = sub.add_parser("figures", help="extract captioned figure images from a PDF")
+    s.add_argument("--pdf", required=True)
+    s.add_argument("--out", help="write PNGs to this directory")
+    s.add_argument("--dpi", type=int, default=300)
+    s.add_argument("--limit", type=int, default=100, help="max figures to extract")
+    s.set_defaults(func=cmd_figures)
     return p
 
 

@@ -13,6 +13,7 @@ re-imports and "ambiguous paper matches require review"
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 from . import db
@@ -20,6 +21,7 @@ from .repositories.assets import AssetRepository
 from .repositories.attachments import AttachmentRepository
 from .repositories.audit import AuditRepository
 from .repositories.chunks import ChunkRepository
+from .repositories.figures import FigureRepository
 from .repositories.identifiers import IdentifierConflictError, IdentifierRepository
 from .repositories.organization import OrganizationRepository
 from .repositories.papers import PaperRepository
@@ -42,6 +44,7 @@ class ReferenceManagerService:
         self.chunks = ChunkRepository(self.conn)
         self.terms = TermRepository(self.conn)
         self.saved_searches = SavedSearchRepository(self.conn)
+        self.figures = FigureRepository(self.conn)
 
     def reindex_paper(self, paper_id: str) -> None:
         """Bring the search index up to date for one paper.
@@ -143,6 +146,99 @@ class ReferenceManagerService:
             version_label=version_label,
             page_count=page_count,
             preferred=preferred,
+        )
+
+    def asset_path(self, sha256: str) -> Path | None:
+        """Absolute path to an asset's bytes, or None if the row is unknown."""
+        row = self.assets.get(sha256)
+        return self.library_root / row["storage_path"] if row is not None else None
+
+    def import_figures(
+        self,
+        paper_id: str,
+        source_attachment_id: str,
+        figures: list[dict],
+        extractor: str,
+        replace: bool = False,
+    ) -> list[dict]:
+        """Store already-extracted figure crops against the PDF they came from.
+
+        `figures` is what `library.extract_figures` returns: dicts carrying
+        `png_bytes` plus `kind`/`label`/`number`/`caption`/`page`/`bbox`. Each one
+        is staged as an asset, linked as a role='figure' attachment, and recorded
+        as a figure row.
+
+        Extraction itself lives in `library.py`, not here, and that split is
+        deliberate: it needs poppler binaries and a pile of layout heuristics,
+        neither of which the reference manager should depend on to open a library.
+        This method is pure storage, so a different extractor -- a PMC figure
+        package, a manual crop -- can feed the same table by passing the same
+        shape and its own `extractor` string.
+
+        Idempotent: re-running the same extractor over the same PDF re-derives
+        identical bytes, which dedupe to the same asset and collide on the figure
+        table's uniqueness key. Pass `replace=True` to drop the previous rows
+        first, which is what a *changed* extractor wants (the old crops' assets
+        survive; only the derived rows are rebuilt).
+        """
+        if replace:
+            self.figures.remove_for_attachment(source_attachment_id)
+
+        stored: list[dict] = []
+        for figure in figures:
+            png_bytes = figure.get("png_bytes")
+            if not png_bytes:
+                continue
+            with tempfile.TemporaryDirectory() as staging:
+                temp_png = Path(staging) / ("%s-p%s.png" % (
+                    (figure.get("label") or "figure").replace(" ", "-").lower(),
+                    figure.get("page") or 0))
+                temp_png.write_bytes(png_bytes)
+                asset_sha256 = self.assets.stage_and_commit(
+                    temp_png, mime_type="image/png")
+
+            figure_attachment_id = self._figure_attachment_id(
+                paper_id, asset_sha256, figure)
+            figure_id = self.figures.record(
+                paper_id=paper_id,
+                source_attachment_id=source_attachment_id,
+                figure_attachment_id=figure_attachment_id,
+                asset_sha256=asset_sha256,
+                kind=figure.get("kind") or "figure",
+                extractor=extractor,
+                label=figure.get("label"),
+                number=figure.get("number"),
+                caption=figure.get("caption"),
+                page=figure.get("page"),
+                bbox=figure.get("bbox"),
+            )
+            stored.append({"figure_id": figure_id, "asset_sha256": asset_sha256,
+                           "attachment_id": figure_attachment_id,
+                           "label": figure.get("label"), "page": figure.get("page")})
+        return stored
+
+    def _figure_attachment_id(self, paper_id: str, asset_sha256: str,
+                              figure: dict) -> str:
+        """Reuse this paper's existing role='figure' attachment for these bytes.
+
+        Attachments are append-only and never deduped in general (invariant #2),
+        but a re-extraction is not a second upload -- it is the same crop derived
+        again. Linking it twice would grow a row per run forever, so the reuse
+        guard lives here, exactly as `registry.py _import_pdf_attachment` does it
+        for the PDF itself.
+        """
+        for existing in self.attachments.list_for_paper(paper_id):
+            if (existing["asset_sha256"] == asset_sha256
+                    and existing["role"] == "figure"):
+                return existing["id"]
+        return self.attachments.link(
+            paper_id=paper_id,
+            asset_sha256=asset_sha256,
+            role="figure",
+            original_filename="%s.png" % (
+                (figure.get("label") or "figure").replace(" ", "-").lower()),
+            provenance=figure.get("provenance"),
+            version_label=figure.get("label"),
         )
 
     def find_or_create_paper_by_identifier(

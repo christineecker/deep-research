@@ -154,6 +154,63 @@ def _import_pdf_attachment(service, paper_id: str, pdf: Path, *,
     }
 
 
+#: Names the extraction that produced a figure row, so a later heuristic's output can
+#: be told apart from an earlier one's (figures are not a cheaply rebuildable index —
+#: see migrations/0005_figures.sql).
+FIGURE_EXTRACTOR = "library.extract_figures/1"
+
+
+def extract_figures_for_attachment(service, paper_id: str, attachment_id: str, *,
+                                   dpi: int = 300, max_figures: int = 100,
+                                   replace: bool = False) -> dict:
+    """Crop figures out of one PDF attachment and store them against its paper.
+
+    This is the seam between the two halves: `library.extract_figures` knows about
+    poppler and page layout, `service.import_figures` knows about assets and rows,
+    and neither imports the other. Extraction reads the asset from refmgr's own
+    store rather than the original file, which may have been moved or deleted after
+    import — the stored bytes are the checksummed copy.
+
+    Returns `{"figures": n, "skipped": bool, ...}`. `skipped` is True when this
+    attachment already has figure rows and `replace` was not requested, which makes
+    a library-wide backfill re-runnable without redoing finished work.
+    """
+    import library as _library_mod
+
+    if not replace and service.figures.has_figures_for_attachment(attachment_id):
+        return {"attachment_id": attachment_id, "figures": 0, "skipped": True}
+
+    attachment = next(
+        (a for a in service.attachments.list_for_paper(paper_id)
+         if a["id"] == attachment_id), None)
+    if attachment is None:
+        return {"attachment_id": attachment_id, "figures": 0, "skipped": False,
+                "error": "no such attachment for this paper"}
+    pdf_path = service.asset_path(attachment["asset_sha256"])
+    if pdf_path is None or not pdf_path.exists():
+        return {"attachment_id": attachment_id, "figures": 0, "skipped": False,
+                "error": "asset bytes are missing (run `registry.py doctor`)"}
+
+    figures = _library_mod.extract_figures(
+        pdf_path, dpi=dpi, max_figures=max_figures)
+    stored = service.import_figures(
+        paper_id, attachment_id, figures, extractor=FIGURE_EXTRACTOR, replace=replace)
+    return {"attachment_id": attachment_id, "figures": len(stored),
+            "skipped": False, "stored": stored}
+
+
+def extract_figures_for_paper(service, paper_id: str, **kwargs) -> dict:
+    """Run figure extraction over every role='fulltext' PDF attached to a paper."""
+    results = [
+        extract_figures_for_attachment(service, paper_id, att["id"], **kwargs)
+        for att in service.attachments.list_for_paper(paper_id)
+        if att["role"] == "fulltext"
+    ]
+    return {"paper_id": paper_id,
+            "figures": sum(r["figures"] for r in results),
+            "attachments": results}
+
+
 #: Registry fields mirrored into a refmgr paper's `metadata_json`. `evidence_id` is
 #: carried so a refmgr row can always be traced back to the registry record that owns
 #: it; the rest is what `papers_fts` indexes or what search filters read.
@@ -504,7 +561,7 @@ def _esearch_doi(doi: str) -> str | None:
 def add_pdf_to_registry(registry: "Registry", service, pdf: Path, *,
                         pmid: str | None = None, doi: str | None = None,
                         pmcid: str | None = None, title: str | None = None,
-                        move: bool = False) -> tuple[dict, bool]:
+                        move: bool = False, figures: bool = False) -> tuple[dict, bool]:
     """Register `pdf` in `registry` and attach it via the shared refmgr attachment
     pool -- content-addressed storage, multi-attachment-capable, superseding the
     old flat `data/sources/assets/sha256-<hash>.pdf` store. The single PDF-intake
@@ -522,6 +579,14 @@ def add_pdf_to_registry(registry: "Registry", service, pdf: Path, *,
     eid = rec["evidence_id"]
     paper_id = _refmgr_paper_id(service, rec, raw, rec.get("title") or pdf.stem)
     asset = _import_pdf_attachment(service, paper_id, pdf, digest=digest, pages=pages, move=move)
+    if figures:
+        # Opt-in, and best-effort: a heuristic crop failing is never a reason to
+        # fail an import whose PDF is already safely stored.
+        try:
+            asset["figures"] = extract_figures_for_attachment(
+                service, paper_id, asset["attachment_id"])["figures"]
+        except Exception as exc:  # noqa: BLE001 - reported, never fatal
+            asset["figures_error"] = str(exc)
     rec["refmgr_paper_id"] = paper_id
     rec = registry.set_asset(eid, asset)
     return rec, is_new
@@ -541,7 +606,7 @@ def cmd_add_pdf(args) -> int:
         with registry.locked():
             rec, is_new = add_pdf_to_registry(
                 registry, service, pdf, pmid=args.pmid, doi=args.doi, pmcid=args.pmcid,
-                title=args.title, move=args.move)
+                title=args.title, move=args.move, figures=args.figures)
             registry.commit(service=service)
     finally:
         service.close()
@@ -959,6 +1024,57 @@ def cmd_reindex(args) -> int:
     emit(payload)
     errors = (payload.get("papers") or {}).get("errors") or []
     return 1 if errors else 0
+
+
+def cmd_figures(args) -> int:
+    """Extract figure images from stored PDFs, or search the captions already stored.
+
+    Extraction is not part of `reindex`: it re-runs poppler over every PDF rather
+    than re-reading canonical text, which makes it far too slow to fold into the
+    routine index repair path. It is a separate, resumable pass — already-extracted
+    PDFs are skipped unless `--replace` is given.
+    """
+    registry = Registry(args.repo)
+    service = _refmgr_service(args.repo)
+    payload = {"schema_version": SCHEMA_VERSION, "status": "ok", "command": "figures"}
+    try:
+        if args.query:
+            hits = service.figures.search(args.query, limit=args.limit)
+            payload["query"] = args.query
+            payload["count"] = len(hits)
+            payload["hits"] = [
+                {k: v for k, v in hit.items() if k != "bbox_json"} for hit in hits]
+            emit(payload)
+            return 0
+
+        if args.evidence_id:
+            rec = registry.records.get(args.evidence_id)
+            if rec is None:
+                emit({"schema_version": SCHEMA_VERSION, "status": "error",
+                      "command": "figures",
+                      "error": f"no registry record for {args.evidence_id!r}"})
+                return 2
+            paper_ids = [rec.get("refmgr_paper_id")] if rec.get("refmgr_paper_id") else []
+        else:
+            paper_ids = [rec["refmgr_paper_id"] for rec in registry.records.values()
+                         if rec.get("refmgr_paper_id")]
+
+        results = []
+        for paper_id in paper_ids:
+            result = extract_figures_for_paper(
+                service, paper_id, dpi=args.dpi, max_figures=args.limit,
+                replace=args.replace)
+            if result["figures"] or any(a.get("error") for a in result["attachments"]):
+                results.append(result)
+        payload["papers_scanned"] = len(paper_ids)
+        payload["papers_with_new_figures"] = len(results)
+        payload["figures"] = sum(r["figures"] for r in results)
+        payload["results"] = results
+        payload["coverage"] = service.figures.coverage()
+    finally:
+        service.close()
+    emit(payload)
+    return 0
 
 
 def cmd_facets(args) -> int:
@@ -1499,6 +1615,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--pmcid")
     s.add_argument("--title", help="default: the PDF's filename stem")
     s.add_argument("--move", action="store_true", help="move instead of copy into the asset store")
+    s.add_argument("--figures", action="store_true",
+                   help="also crop captioned figures out of the PDF (slow; see `figures`)")
     s.set_defaults(func=cmd_add_pdf)
 
     s = sub.add_parser("import-bib", help="bulk-register papers from a .bib file")
@@ -1537,6 +1655,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--chunks-only", action="store_true",
                    help="rebuild the full-text chunk index only")
     s.set_defaults(func=cmd_reindex)
+
+    s = sub.add_parser("figures", help="crop captioned figures out of stored PDFs, "
+                                       "or search the captions already stored")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--evidence-id", dest="evidence_id",
+                   help="one record (default: every record with a refmgr paper)")
+    s.add_argument("--query", help="search stored captions instead of extracting")
+    s.add_argument("--dpi", type=int, default=300, help="render resolution for crops")
+    s.add_argument("--limit", type=int, default=100,
+                   help="max figures per PDF, or max hits when searching")
+    s.add_argument("--replace", action="store_true",
+                   help="re-extract PDFs that already have figures (for a changed extractor)")
+    s.set_defaults(func=cmd_figures)
 
     s = sub.add_parser("facets", help="most common MeSH/keyword/article-type/author "
                                       "values in the library, with paper counts")

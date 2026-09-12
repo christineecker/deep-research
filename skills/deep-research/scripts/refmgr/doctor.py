@@ -16,6 +16,7 @@ Checks
   orphan_assets       an asset no live attachment references
   orphan_attachments  an attachment whose asset row is gone
   orphan_terms        term/chunk rows for a paper that no longer exists
+  figure_links        figure rows whose source PDF attachment or image asset is gone
   index_staleness     papers missing from papers_fts, and chunk/term coverage
 
 `--deep` hashes every asset (slow, exact); the default trusts a matching size and only
@@ -124,18 +125,46 @@ def check_indexes(conn) -> dict:
             "SELECT COUNT(DISTINCT paper_id) AS c FROM chunks").fetchone()["c"],
         "papers_with_terms": conn.execute(
             "SELECT COUNT(DISTINCT paper_id) AS c FROM paper_terms").fetchone()["c"],
+        "papers_with_figures": conn.execute(
+            "SELECT COUNT(DISTINCT paper_id) AS c FROM figures").fetchone()["c"],
         "orphan_chunks": _orphan_count(conn, "chunks"),
         "orphan_terms": _orphan_count(conn, "paper_terms"),
+        "orphan_figures": _orphan_count(conn, "figures"),
         "orphan_fts_rows": conn.execute(
             "SELECT COUNT(*) AS c FROM papers_fts f WHERE NOT EXISTS "
             "(SELECT 1 FROM papers p WHERE p.id = f.paper_id)").fetchone()["c"],
+        "orphan_figure_fts_rows": conn.execute(
+            "SELECT COUNT(*) AS c FROM figures_fts ff WHERE NOT EXISTS "
+            "(SELECT 1 FROM figures f WHERE f.id = ff.figure_id)").fetchone()["c"],
     }
+
+
+def check_figures(conn) -> dict:
+    """Figure rows whose source PDF attachment or image asset has gone.
+
+    Unlike chunks and papers_fts, figures are not rebuilt by `registry.py reindex`
+    — they are cropped from PDFs by a heuristic, so recovery means re-running
+    `registry.py figures --replace`, which is a much more expensive pass. Reporting
+    them separately keeps that distinction visible in the advice.
+    """
+    figures_without_source = [dict(row) for row in conn.execute(
+        "SELECT f.id AS figure_id, f.paper_id AS paper_id, "
+        "f.source_attachment_id AS source_attachment_id FROM figures f "
+        "WHERE NOT EXISTS (SELECT 1 FROM attachments at WHERE at.id = f.source_attachment_id) "
+        "ORDER BY f.id")]
+    figures_without_asset = [dict(row) for row in conn.execute(
+        "SELECT f.id AS figure_id, f.paper_id AS paper_id, "
+        "f.asset_sha256 AS asset_sha256 FROM figures f WHERE NOT EXISTS "
+        "(SELECT 1 FROM assets a WHERE a.sha256 = f.asset_sha256) ORDER BY f.id")]
+    return {"figures_without_source": figures_without_source,
+            "figures_without_asset": figures_without_asset}
 
 
 #: Findings that mean data is gone or wrong, as opposed to merely un-indexed. Only these
 #: make `doctor` exit non-zero: a library with no PDFs attached yet is not unhealthy.
 _PROBLEM_KEYS = ("missing_files", "corrupt_assets", "orphan_attachments",
-                 "attachments_without_paper")
+                 "attachments_without_paper", "figures_without_source",
+                 "figures_without_asset")
 
 
 def run(service, *, deep: bool = False) -> dict:
@@ -144,6 +173,7 @@ def run(service, *, deep: bool = False) -> dict:
     report = {"library_root": str(service.library_root)}
     report.update(check_assets(conn, service.library_root, deep=deep))
     report.update(check_links(conn))
+    report.update(check_figures(conn))
     report["indexes"] = check_indexes(conn)
 
     problems = {key: len(report[key]) for key in _PROBLEM_KEYS if report.get(key)}
@@ -162,6 +192,13 @@ def run(service, *, deep: bool = False) -> dict:
             or report["indexes"]["orphan_terms"] or report["indexes"]["orphan_fts_rows"]:
         advice.append("index rows are stale or orphaned — `registry.py reindex` rebuilds "
                       "them; no data is at risk")
+    if report["figures_without_source"] or report["figures_without_asset"]:
+        advice.append("figure rows have lost the PDF attachment or image asset they "
+                      "were derived from — `registry.py reindex` does NOT rebuild "
+                      "these; re-crop with `registry.py figures --replace`")
+    if report["indexes"]["orphan_figures"] or report["indexes"]["orphan_figure_fts_rows"]:
+        advice.append("figure rows or caption index rows point at papers that no longer "
+                      "exist; they are stale derived data, not data loss")
     if report["orphan_assets"]:
         advice.append("orphan assets are stored bytes no live attachment references; "
                       "they are safe to keep and are not counted as a problem")
