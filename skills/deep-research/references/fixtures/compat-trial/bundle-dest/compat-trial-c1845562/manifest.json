@@ -1,0 +1,221 @@
+{
+  "attachments": [
+    {
+      "associations": [
+        {
+          "evidence_id": "09775b060eaf42a2ada5a78a562352d5",
+          "role": "primary"
+        }
+      ],
+      "bytes": 609,
+      "page_count": null,
+      "path": "PDFs/Zweite-Unicode-Referenz-mit-PDF-Anhang--f1a072e4.pdf",
+      "provenance": {
+        "source_path": "/Users/sphache/Projects/deep-research/skills/deep-research/references/fixtures/compat-trial/library/assets/sha256/f1/f1a072e42829d8d0ed1a287f6a5b1aca54a995ef1de2359eb4b532a2cf4d6dda.pdf"
+      },
+      "role": "primary",
+      "sha256": "f1a072e42829d8d0ed1a287f6a5b1aca54a995ef1de2359eb4b532a2cf4d6dda"
+    },
+    {
+      "associations": [
+        {
+          "evidence_id": "471ba29f009d469fbfcd5eabe1566aba",
+          "role": "primary"
+        },
+        {
+          "evidence_id": "9419fa293fdd4049bf0589eb319b667f",
+          "role": "primary"
+        },
+        {
+          "evidence_id": "a7ae525fb25b4db985a9d2c6d3b455a1",
+          "role": "primary"
+        }
+      ],
+      "bytes": 617,
+      "page_count": null,
+      "path": "PDFs/A-Reference-With-a-Preprint-and-a-Published-Version--2cd5361b.pdf",
+      "provenance": {
+        "source_path": "/Users/sphache/Projects/deep-research/skills/deep-research/references/fixtures/compat-trial/library/assets/sha256/2c/2cd5361bddcb6e96d24af35cbfb450c4db747dd8851e65b037e13f7c4dbd2d96.pdf"
+      },
+      "role": "primary",
+      "sha256": "2cd5361bddcb6e96d24af35cbfb450c4db747dd8851e65b037e13f7c4dbd2d96"
+    },
+    {
+      "associations": [
+        {
+          "evidence_id": "471ba29f009d469fbfcd5eabe1566aba",
+          "role": "version"
+        }
+      ],
+      "bytes": 626,
+      "page_count": null,
+      "path": "Supplements/A-Reference-With-a-Preprint-and-a-Published-Version--dc646608.pdf",
+      "provenance": {
+        "source_path": "/Users/sphache/Projects/deep-research/skills/deep-research/references/fixtures/compat-trial/library/assets/sha256/dc/dc6466081a0acf7e6759511115ab60d2ce2ec3e1c580c26fe1ac33c56c76c9d0.pdf"
+      },
+      "role": "version",
+      "sha256": "dc6466081a0acf7e6759511115ab60d2ce2ec3e1c580c26fe1ac33c56c76c9d0"
+    },
+    {
+      "associations": [
+        {
+          "evidence_id": "9419fa293fdd4049bf0589eb319b667f",
+          "role": "supplement"
+        }
+      ],
+      "bytes": 620,
+      "page_count": null,
+      "path": "Supplements/A-Reference-With-a-Supplementary-File--5da91ee4.pdf",
+      "provenance": {
+        "source_path": "/Users/sphache/Projects/deep-research/skills/deep-research/references/fixtures/compat-trial/library/assets/sha256/5d/5da91ee40839618e5894bbc4fff50c4642e6aa00645294bb4bbc2033fd0597da.pdf"
+      },
+      "role": "supplement",
+      "sha256": "5da91ee40839618e5894bbc4fff50c4642e6aa00645294bb4bbc2033fd0597da"
+    }
+  ],
+  "batch_id": "compat-trial-c1845562",
+  "counts": {
+    "attachments": 4,
+    "metadata_only": 3,
+    "primary_pdf": 4,
+    "records": 7,
+    "supplements": 2
+  },
+  "created_at": "2026-09-12T09:56:25Z",
+  "destination": "/Users/sphache/Projects/deep-research/skills/deep-research/references/fixtures/compat-trial/bundle-dest",
+  "exporter_version": "export.py/0.1",
+  "records": [
+    {
+      "attachments": [
+        {
+          "path": "PDFs/Zweite-Unicode-Referenz-mit-PDF-Anhang--f1a072e4.pdf",
+          "role": "primary"
+        }
+      ],
+      "citation_key": "09775b060eaf42a2ada5a78a562352d5",
+      "doi": "10.9999/compat-unicode-2",
+      "evidence_id": "09775b060eaf42a2ada5a78a562352d5",
+      "metadata_hash": "ae2c221a58e160e04508ab92c1ec88d6a2dff6ca3143d6833f136742522379f8",
+      "pmcid": null,
+      "pmid": null,
+      "primary_pdf_available": true,
+      "type": "GEN",
+      "warnings": [
+        "no authors on file",
+        "no publication date on file"
+      ]
+    },
+    {
+      "attachments": [],
+      "citation_key": "2de2bb2bccdc43fab10cec84005817fb",
+      "doi": null,
+      "evidence_id": "2de2bb2bccdc43fab10cec84005817fb",
+      "metadata_hash": "45fdb18b3e78915cffea5c587cf63a17a783415f68aef9f09cc18da04ef49398",
+      "pmcid": null,
+      "pmid": null,
+      "primary_pdf_available": false,
+      "type": "JOUR",
+      "warnings": [
+        "no external identifier (DOI/PMID/PMCID)",
+        "no authors on file",
+        "primary PDF unavailable: no attachments"
+      ]
+    },
+    {
+      "attachments": [
+        {
+          "path": "PDFs/A-Reference-With-a-Preprint-and-a-Published-Version--2cd5361b.pdf",
+          "role": "primary"
+        },
+        {
+          "path": "Supplements/A-Reference-With-a-Preprint-and-a-Published-Version--dc646608.pdf",
+          "role": "version"
+        }
+      ],
+      "citation_key": "471ba29f009d469fbfcd5eabe1566aba",
+      "doi": "10.9999/compat-version-1",
+      "evidence_id": "471ba29f009d469fbfcd5eabe1566aba",
+      "metadata_hash": "e176273751a20614bc021311ff9f45a3e91f2e4997444bb4122f2d83fee1adf4",
+      "pmcid": null,
+      "pmid": null,
+      "primary_pdf_available": true,
+      "type": "JOUR",
+      "warnings": [
+        "no authors on file"
+      ]
+    },
+    {
+      "attachments": [],
+      "citation_key": "5536c20d4bc04adcb42c3fd59fe6d2ec",
+      "doi": "10.9999/compat-unicode-1",
+      "evidence_id": "5536c20d4bc04adcb42c3fd59fe6d2ec",
+      "metadata_hash": "b87074b21ffb19dab977760efad6a0ac68d2886cc6ea6cb3eacdf9a38b56738b",
+      "pmcid": null,
+      "pmid": null,
+      "primary_pdf_available": false,
+      "type": "JOUR",
+      "warnings": [
+        "primary PDF unavailable: no attachments"
+      ]
+    },
+    {
+      "attachments": [
+        {
+          "path": "PDFs/A-Reference-With-a-Preprint-and-a-Published-Version--2cd5361b.pdf",
+          "role": "primary"
+        },
+        {
+          "path": "Supplements/A-Reference-With-a-Supplementary-File--5da91ee4.pdf",
+          "role": "supplement"
+        }
+      ],
+      "citation_key": "9419fa293fdd4049bf0589eb319b667f",
+      "doi": "10.9999/compat-supplement-1",
+      "evidence_id": "9419fa293fdd4049bf0589eb319b667f",
+      "metadata_hash": "90a2aeb866aea85cd055a84a95b54803c1011ed65f6e8f2d70592623acf09ade",
+      "pmcid": null,
+      "pmid": null,
+      "primary_pdf_available": true,
+      "type": "JOUR",
+      "warnings": [
+        "no authors on file"
+      ]
+    },
+    {
+      "attachments": [
+        {
+          "path": "PDFs/A-Reference-With-a-Preprint-and-a-Published-Version--2cd5361b.pdf",
+          "role": "primary"
+        }
+      ],
+      "citation_key": "a7ae525fb25b4db985a9d2c6d3b455a1",
+      "doi": "10.9999/compat-full-1",
+      "evidence_id": "a7ae525fb25b4db985a9d2c6d3b455a1",
+      "metadata_hash": "2ffced3c5fce459e3a04a74adb846208b3fc877eacbdfbde93b0b68e8c07460f",
+      "pmcid": null,
+      "pmid": "90000001",
+      "primary_pdf_available": true,
+      "type": "JOUR",
+      "warnings": []
+    },
+    {
+      "attachments": [],
+      "citation_key": "da645069e00245038c9f5e4804c39c0f",
+      "doi": "10.9999/compat-metaonly-1",
+      "evidence_id": "da645069e00245038c9f5e4804c39c0f",
+      "metadata_hash": "fa8b0908c2a89fba0c40f7b0d6bdf9dd067bcad024f8ae8c5e250c003952dae4",
+      "pmcid": null,
+      "pmid": null,
+      "primary_pdf_available": false,
+      "type": "JOUR",
+      "warnings": [
+        "no authors on file",
+        "primary PDF unavailable: no attachments"
+      ]
+    }
+  ],
+  "schema_version": 1,
+  "selection": {
+    "source": "all"
+  }
+}

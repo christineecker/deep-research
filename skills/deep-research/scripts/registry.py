@@ -726,6 +726,297 @@ def cmd_bib(args) -> int:
     return 0
 
 
+_SEARCH_SNIPPET_RADIUS = 80  # chars either side of the first matched term (~160 total)
+
+
+def _record_year(rec: dict) -> int | None:
+    """Leading 4-digit year out of `publication_date` (e.g. `"2026-01-01"` -> 2026),
+    or None when unparseable/absent — such a record never matches a `--year` filter."""
+    m = re.match(r"(\d{4})", str(rec.get("publication_date") or ""))
+    return int(m.group(1)) if m else None
+
+
+def _parse_year_arg(value: str) -> tuple[int, int]:
+    """`"2020"` -> (2020, 2020); `"2018-2022"` -> (2018, 2022)."""
+    m = re.match(r"^(\d{4})(?:-(\d{4}))?$", value.strip())
+    if not m:
+        raise SystemExit(f"--year must be YYYY or YYYY-YYYY, got {value!r}")
+    lo = int(m.group(1))
+    hi = int(m.group(2)) if m.group(2) else lo
+    return (lo, hi) if lo <= hi else (hi, lo)
+
+
+def _facet_filter(records: list[dict], args) -> list[dict]:
+    """Cheap in-memory filters against existing registry fields — no annotation lookups,
+    no file reads (plan §1 "operates directly on Registry._load()'s in-memory dict")."""
+    out = records
+    if args.journal:
+        needle = args.journal.lower()
+        out = [r for r in out if needle in str(r.get("journal") or "").lower()]
+    if args.year:
+        lo, hi = _parse_year_arg(args.year)
+        out = [r for r in out if (lambda y: y is not None and lo <= y <= hi)(_record_year(r))]
+    if args.status:
+        out = [r for r in out if r.get("status") == args.status]
+    if args.extraction_status:
+        out = [r for r in out if r.get("extraction_status") == args.extraction_status]
+    if args.appraisal_status:
+        if args.appraisal_status == "appraised" and args.project:
+            # --project scopes "appraised" to that project's own appraisal entry, never
+            # the record's repo-wide `appraisal_status` (appraisal is project-scoped —
+            # `set_appraisal`).
+            out = [r for r in out if (r.get("appraisals") or {}).get(args.project)]
+        else:
+            out = [r for r in out if r.get("appraisal_status") == args.appraisal_status]
+    return out
+
+
+def _annotation_filter(records: list[dict], args) -> list[dict]:
+    """`--tag`/`--min-rating`, joined against `annotations.jsonl` (plan §1 "join against
+    the new annotations file"). Imported lazily — `annotations.py` imports `registry.py`
+    at module scope, so a top-level import here would be circular."""
+    if not args.tag and args.min_rating is None:
+        return records
+    import annotations as _annotations
+    ann = _annotations.Annotations(args.repo)
+    out = records
+    if args.tag:
+        out = [r for r in out if args.tag in (ann.get(r["evidence_id"]).get("tags") or [])]
+    if args.min_rating is not None:
+        out = [r for r in out if (ann.get(r["evidence_id"]).get("rating") or 0) >= args.min_rating]
+    return out
+
+
+def _read_json_best_effort(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _extraction_data(rec: dict, repo_root: Path) -> dict | None:
+    rel = rec.get("extraction_path")
+    if not rel:
+        return None
+    path = Path(rel)
+    if not path.is_absolute():
+        path = repo_root / path
+    if not path.exists():
+        return None
+    return _read_json_best_effort(path)
+
+
+def _appraisal_texts(rec: dict, repo_root: Path, project: str | None) -> list[str]:
+    """Domain `rationale` strings from whichever appraisal file(s) apply — the given
+    `--project`'s entry, or every project's when none was given (best-effort, schema/
+    08-appraisal.md `domains[].rationale`)."""
+    appraisals = rec.get("appraisals") or {}
+    if not isinstance(appraisals, dict):
+        return []
+    projects = [project] if project else list(appraisals.keys())
+    texts: list[str] = []
+    for proj in projects:
+        rel = appraisals.get(proj)
+        if not rel:
+            continue
+        path = Path(rel)
+        if not path.is_absolute():
+            path = repo_root / path
+        if not path.exists():
+            continue
+        data = _read_json_best_effort(path)
+        if not data:
+            continue
+        for domain in data.get("domains") or []:
+            if isinstance(domain, dict):
+                rationale = domain.get("rationale")
+                if isinstance(rationale, str) and rationale.strip():
+                    texts.append(rationale.strip())
+    return texts
+
+
+def _record_source_ids(rec: dict, extraction: dict | None) -> list[str]:
+    """`rec["sources"]`/`rec["source_ids"]` (best-effort — the field is not always
+    populated) plus every `source_id` named by the extraction's claim spans
+    (`_extraction_spans`)."""
+    ids: list[str] = []
+    for field in ("sources", "source_ids"):
+        val = rec.get(field)
+        if isinstance(val, list):
+            ids.extend(s for s in val if isinstance(s, str))
+    if extraction:
+        for span in _extraction_spans(extraction):
+            sid = span.get("source_id")
+            if isinstance(sid, str):
+                ids.append(sid)
+    seen: list[str] = []
+    for sid in ids:
+        if sid not in seen:
+            seen.append(sid)
+    return seen
+
+
+def _search_text_pieces(rec: dict, repo_root: Path, project: str | None) -> list[str]:
+    """Every text piece searched by `--q`, in the order a snippet should prefer them:
+    title, abstract, journal, extraction narrative fields, appraisal rationale, then
+    full-text snapshot bodies (plan §1 "Keyword search"). Missing/unreadable pieces are
+    skipped silently — best-effort, never a hard error."""
+    pieces: list[str] = []
+    for field in ("title", "abstract", "journal"):
+        val = rec.get(field)
+        if isinstance(val, str) and val.strip():
+            pieces.append(val.strip())
+
+    extraction = _extraction_data(rec, repo_root)
+    if extraction:
+        for field in ("population", "intervention", "comparator", "limitations", "extractor_notes"):
+            val = extraction.get(field)
+            if isinstance(val, str) and val.strip():
+                pieces.append(val.strip())
+
+    pieces.extend(_appraisal_texts(rec, repo_root, project))
+
+    for sid in _record_source_ids(rec, extraction):
+        try:
+            snapshot = _store.global_read_snapshot(repo_root, sid)
+        except Exception:
+            continue  # unresolvable source_id — best-effort, never fatal to search
+        text = snapshot.get("text") if isinstance(snapshot, dict) else None
+        if isinstance(text, str) and text.strip():
+            pieces.append(text)
+    return pieces
+
+
+def _snippet_for(pieces: list[str], terms: list[str]) -> str | None:
+    """~160-char context window around wherever the FIRST matched term was found,
+    scanning `pieces` in their given (preference) order."""
+    for piece in pieces:
+        lower = piece.lower()
+        for term in terms:
+            idx = lower.find(term)
+            if idx == -1:
+                continue
+            start = max(0, idx - _SEARCH_SNIPPET_RADIUS)
+            end = min(len(piece), idx + len(term) + _SEARCH_SNIPPET_RADIUS)
+            snippet = piece[start:end].strip()
+            if start > 0:
+                snippet = "…" + snippet
+            if end < len(piece):
+                snippet = snippet + "…"
+            return snippet
+    return None
+
+
+def _keyword_filter(records: list[dict], args) -> tuple[list[dict], dict[str, str]]:
+    """`--q "<terms>"`: lowercase-tokenized AND-match across every `_search_text_pieces`
+    source. Returns the surviving records plus a `{evidence_id: snippet}` map."""
+    if not args.q:
+        return records, {}
+    terms = [t for t in args.q.lower().split() if t]
+    if not terms:
+        return records, {}
+    repo_root = repo_paths(args.repo)["repo_root"]
+    out: list[dict] = []
+    snippets: dict[str, str] = {}
+    for rec in records:
+        pieces = _search_text_pieces(rec, repo_root, args.project)
+        haystack = "\n".join(pieces).lower()
+        if all(term in haystack for term in terms):
+            out.append(rec)
+            snippet = _snippet_for(pieces, terms)
+            if snippet:
+                snippets[rec["evidence_id"]] = snippet
+    return out, snippets
+
+
+def _similarity_rank(records: list[dict], args) -> tuple[list[dict], dict[str, float]] | int:
+    """`--similar-to <evidence_id>`: rank the surviving `records` by cosine similarity
+    against `embeddings.jsonl` (plan §1 "delegate to embeddings.py's similarity
+    function"). Returns `(ranked_records, {evidence_id: score})` on success, or an int
+    exit code on the "no embeddings yet" error path (mirrors `embeddings.py similar`'s
+    own message so the two commands fail the same way)."""
+    import embeddings as _embeddings
+
+    repo_root = repo_paths(args.repo)["repo_root"]
+    path = _embeddings.embeddings_path(repo_root)
+    if not path.exists():
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "search",
+              "error": f"no embeddings file at {path} — run `embeddings.py index` first"})
+        return 1
+    all_embeddings = _embeddings.read_embeddings(repo_root)
+    target = all_embeddings.get(args.similar_to)
+    if target is None:
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "search",
+              "error": f"no embedding for evidence_id {args.similar_to!r} — run "
+                       f"`embeddings.py index` first"})
+        return 1
+
+    target_vector = target["vector"]
+    scored: list[tuple[float, str]] = []
+    for eid, rec in all_embeddings.items():
+        if eid == args.similar_to:
+            continue
+        try:
+            score = _embeddings.cosine_similarity(target_vector, rec["vector"])
+        except ValueError:
+            continue
+        scored.append((score, eid))
+    scored.sort(key=lambda pair: (-pair[0], pair[1]))
+    rank = {eid: score for score, eid in scored}
+
+    by_eid = {r["evidence_id"]: r for r in records}
+    ranked = [by_eid[eid] for _, eid in scored if eid in by_eid]
+    scores = {eid: rank[eid] for eid in by_eid if eid in rank}
+    return ranked, scores
+
+
+def cmd_search(args) -> int:
+    """`registry.py search` (plan §1): facet filters + `--tag`/`--min-rating` (joined
+    against `annotations.jsonl`) + `--q` keyword search (title/abstract/journal/
+    extraction narrative/appraisal rationale/full-text snapshot bodies) + `--similar-to`
+    embeddings ranking. No filters/query at all behaves like a light `list` — every
+    registry record, respecting `--limit`."""
+    registry = Registry(args.repo)
+    records = sorted(registry.records.values(), key=lambda r: r.get("evidence_id") or "")
+
+    records = _facet_filter(records, args)
+    records = _annotation_filter(records, args)
+    records, snippets = _keyword_filter(records, args)
+
+    scores: dict[str, float] = {}
+    if args.similar_to:
+        result = _similarity_rank(records, args)
+        if isinstance(result, int):
+            return result
+        records, scores = result
+
+    if args.limit is not None:
+        records = records[: args.limit]
+
+    results = []
+    for rec in records:
+        eid = rec["evidence_id"]
+        entry = {
+            "evidence_id": eid,
+            "title": rec.get("title"),
+            "journal": rec.get("journal"),
+            "publication_date": rec.get("publication_date"),
+            "status": rec.get("status"),
+            "extraction_status": rec.get("extraction_status"),
+            "appraisal_status": rec.get("appraisal_status"),
+        }
+        if args.q:
+            entry["snippet"] = snippets.get(eid)
+        if args.similar_to:
+            entry["score"] = scores.get(eid)
+        results.append(entry)
+
+    emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "search",
+          "repo": str(registry.repo_root), "count": len(results), "results": results})
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="registry.py", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -796,6 +1087,27 @@ def build_parser() -> argparse.ArgumentParser:
                    help="skip evidence_id/span verification and copy extractions as-is "
                         "(the pre-priority-6 behavior; for migration/debugging)")
     s.set_defaults(func=cmd_promote)
+
+    s = sub.add_parser("search", help="faceted/keyword/similarity search over the registry")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--journal", help="case-insensitive substring match against journal")
+    s.add_argument("--year", help="YYYY or YYYY-YYYY, matched against publication_date")
+    s.add_argument("--status", choices=STATUS_VALUES)
+    s.add_argument("--extraction-status", dest="extraction_status", choices=EXTRACTION_STATUS_VALUES)
+    s.add_argument("--appraisal-status", dest="appraisal_status", choices=APPRAISAL_STATUS_VALUES)
+    s.add_argument("--tag", help="require this annotation tag (data/papers/annotations.jsonl)")
+    s.add_argument("--min-rating", dest="min_rating", type=int,
+                   help="require an annotation star rating >= N")
+    s.add_argument("--project",
+                   help="scope --appraisal-status appraised, and --q's appraisal-rationale "
+                        "search, to this project's own appraisal entry")
+    s.add_argument("--q", help="keyword search: lowercase AND-of-terms over title/abstract/"
+                              "journal/extraction narrative/appraisal rationale/full text")
+    s.add_argument("--similar-to", dest="similar_to",
+                   help="rank surviving results by embeddings.py cosine similarity to this "
+                        "evidence_id (requires `embeddings.py index` to have run)")
+    s.add_argument("--limit", type=int, help="cap the number of results (default: all)")
+    s.set_defaults(func=cmd_search)
 
     s = sub.add_parser("appraise-promote",
                        help="promote a run's appraisals into a project's appraisal store")

@@ -1,0 +1,67 @@
+TY  - GEN
+TI  - Zweite Unicode-Referenz mit PDF-Anhang
+DO  - 10.9999/compat-unicode-2
+UR  - https://doi.org/10.9999/compat-unicode-2
+ER  - 
+
+TY  - JOUR
+TI  - A Reference With No DOI, PMID, or PMCID
+T2  - Journal of Obscure Preprints
+PY  - 2022
+DA  - 2022
+ER  - 
+
+TY  - JOUR
+TI  - A Reference With a Preprint and a Published Version
+T2  - Journal of Compatibility Testing
+PY  - 2024
+DA  - 2024
+DO  - 10.9999/compat-version-1
+UR  - https://doi.org/10.9999/compat-version-1
+ER  - 
+
+TY  - JOUR
+AU  - Müller, J.
+AU  - Étienne, C.
+TI  - Über die Grundlagen — β-Analyse und deren Anwendung
+T2  - Zeitschrift für Beispiele
+PY  - 2021
+DA  - 2021
+DO  - 10.9999/compat-unicode-1
+UR  - https://doi.org/10.9999/compat-unicode-1
+ER  - 
+
+TY  - JOUR
+TI  - A Reference With a Supplementary File
+T2  - Journal of Compatibility Testing
+PY  - 2024
+DA  - 2024
+DO  - 10.9999/compat-supplement-1
+UR  - https://doi.org/10.9999/compat-supplement-1
+ER  - 
+
+TY  - JOUR
+AU  - Doe, J.
+AU  - Smith, A.
+TI  - A Fully Described Reference for ReadCube Import
+T2  - Journal of Compatibility Testing
+PY  - 2024
+DA  - 2024/06/15
+VL  - 12
+IS  - 3
+SP  - 101
+EP  - 110
+DO  - 10.9999/compat-full-1
+UR  - https://pubmed.ncbi.nlm.nih.gov/90000001/
+AB  - Full metadata record used to check RIS field preservation on import.
+AN  - 90000001
+ER  - 
+
+TY  - JOUR
+TI  - A Metadata-Only Reference With No Attachment
+T2  - Journal of Compatibility Testing
+PY  - 2023
+DA  - 2023
+DO  - 10.9999/compat-metaonly-1
+UR  - https://doi.org/10.9999/compat-metaonly-1
+ER  - 

@@ -453,6 +453,13 @@ even then the agent never handles the credential — the human completes SSO the
 not relax "Any user account, cookie jar, session token" below for anyone but that human, acting
 on their own licence, in their own browser session.
 
+A third, unrelated exception lives entirely outside this ladder: `scripts/embeddings.py`
+(semantic similarity search, `references/reference-manager.md`) has one optional third-party
+dependency, `sentence-transformers`, imported lazily inside that single script. It is a narrow,
+deliberate carve-out to the project's blanket "zero pip installs, ever" policy, scoped to that
+one script only — it does not relax the policy for full-text acquisition, extraction, appraisal,
+or anything else in this skill, all of which remain stdlib-plus-`requests`/`pdfminer` as before.
+
 | Forbidden | Why |
 |---|---|
 | Browser automation to defeat, bypass, or route around any access control (login, paywall, metering, captcha) | A browser rung exists to render JS pages, never to reach past a control a script was correctly refused by |

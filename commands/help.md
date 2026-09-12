@@ -14,6 +14,11 @@ Print this cheat sheet directly. Do not read SKILL.md or run any script.
 | `verify` | Consistency checks over a run, or one summary/summary-set | yes* |
 | `project` | Create/list manuscript projects (appraisals are project-scoped) | no |
 | `watch` | Read-only snapshot of a run's progress (`--once`, non-interactive) | yes |
+| `search` | Facet/keyword/similarity search over the registry | no |
+| `annotate` | Personal tags/rating/note on a paper (tag/rate/note/show/list) | no |
+| `embed` | Build/query the semantic-similarity index (`index`/`similar`) | no |
+| `okf-export` | Promote hand-picked registry papers into an OKF wiki bundle | no* |
+| `export` | Publish a ReadCube-importable bundle (RIS + PDFs) from the registry | no |
 
 For the full Stage 0–8 review pipeline (search → screen → extract → appraise →
 synthesize → report), use the `deep-research` skill directly (ask for "deep research on
@@ -31,7 +36,12 @@ X" or "a literature review") rather than these commands — they're deliberately
   minus the discovery/selection machinery).
 
 *`verify`'s `single-paper-summary`/`paper-summary-set` modes still require `--run-dir`
-even though they check a summary output, not a full pipeline run.
+even though they check a summary output, not a full pipeline run. `okf-export` needs no
+prior full pipeline run either, but each `--evidence-id` must already have an extraction
+on file (it synthesizes its own throwaway run directory internally). `export` distinct
+from `okf-export`: it publishes a ReadCube import bundle to a local folder, not an OKF
+wiki; it never touches wiki state and needs no extraction on file — metadata-only
+records export too (with a warning, or blocked if `--require-pdfs`).
 
 ## Everything needs `--repo`
 

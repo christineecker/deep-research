@@ -23,6 +23,8 @@ eutils = load_script("eutils.py")
 paper = load_script("paper.py")
 verify = load_script("verify.py")
 watch = load_script("watch.py")
+annotations = load_script("annotations.py")
+embeddings = load_script("embeddings.py")
 
 
 def status_parser() -> argparse.ArgumentParser:
@@ -113,6 +115,47 @@ class SlashCommandArgvTest(unittest.TestCase):
     def test_watch(self):
         watch.build_parser().parse_args(["--run-dir", "/tmp/demo-run", "--once"])
         watch.build_parser().parse_args(["--follow-latest", "/tmp/wiki", "--json"])
+
+    def test_search(self):
+        registry.build_parser().parse_args([
+            "search", "--repo", "/tmp/demo-repo",
+            "--journal", "radiology", "--year", "2020-2026", "--status", "included",
+            "--extraction-status", "extracted", "--appraisal-status", "appraised",
+            "--tag", "to-read", "--min-rating", "4", "--project", "autism-mrs",
+            "--q", "diagnostics", "--similar-to", "pmid:12345678", "--limit", "5",
+        ])
+
+    def test_annotate(self):
+        annotations.build_parser().parse_args([
+            "tag", "--repo", "/tmp/demo-repo", "--evidence-id", "pmid:12345678", "--add", "to-read",
+        ])
+        annotations.build_parser().parse_args([
+            "rate", "--repo", "/tmp/demo-repo", "--evidence-id", "pmid:12345678", "--stars", "4",
+        ])
+        annotations.build_parser().parse_args([
+            "note", "--repo", "/tmp/demo-repo", "--evidence-id", "pmid:12345678", "--set", "good paper",
+        ])
+        annotations.build_parser().parse_args([
+            "show", "--repo", "/tmp/demo-repo", "--evidence-id", "pmid:12345678",
+        ])
+        annotations.build_parser().parse_args([
+            "list", "--repo", "/tmp/demo-repo", "--tag", "to-read", "--min-rating", "3", "--limit", "10",
+        ])
+
+    def test_embed(self):
+        embeddings.build_parser().parse_args([
+            "index", "--repo", "/tmp/demo-repo", "--model", "all-MiniLM-L6-v2", "--limit", "50", "--force",
+        ])
+        embeddings.build_parser().parse_args([
+            "similar", "--repo", "/tmp/demo-repo", "--evidence-id", "pmid:12345678", "--k", "5",
+        ])
+
+    def test_okf_export(self):
+        research.build_parser().parse_args([
+            "okf-export", "--repo", "/tmp/demo-repo",
+            "--evidence-id", "pmid:12345678", "--evidence-id", "doi:10.1000/x",
+            "--wiki", "/tmp/wiki", "--project", "autism-mrs", "--no-keep-run",
+        ])
 
 
 if __name__ == "__main__":

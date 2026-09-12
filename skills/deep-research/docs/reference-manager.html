@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reference manager - deep-research</title>
+  <link rel="icon" href="assets/favicon.png" type="image/png">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="brand" href="index.html"><img src="assets/logo.png" alt="" width="36" height="36"><span class="brand-text"><strong>deep-research</strong><span>Skill documentation</span></span></a>
+      <nav class="nav" aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="quickstart.html">Quickstart</a>
+        <a href="questions.html">Scientific questions</a>
+        <a href="pipeline.html">Full pipeline</a>
+        <a href="paper-summaries.html">Paper summaries</a>
+        <a href="reference-manager.html" aria-current="page">Reference manager</a>
+        <a href="architecture.html">Repo architecture</a>
+        <a href="appraisal.html">Appraisal frameworks</a>
+        <a href="commands.html">Command reference</a>
+        <a href="../teach-deep-research/lessons/0001-what-is-deep-research.html">Guided course</a>
+        <a href="https://github.com/christineecker/deep-research">GitHub repo ↗</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <p class="eyebrow">Standalone repo, extended</p>
+        <h1>The standalone repo doubles as a personal reference manager: search, tag, rate, and export what you've registered.</h1>
+        <p class="lead">Registering and reading papers already worked. This adds faceted/keyword/semantic search over the registry, personal tags/star-ratings/notes, and a bridge from a hand-picked paper set into an OKF knowledge-graph bundle — all on top of the same <code>data/papers/</code> store, with no new skill and no changes to the wiki-backed review pipeline.</p>
+      </section>
+
+      <h2>What's New Vs. What Already Existed</h2>
+      <table>
+        <thead><tr><th>Capability</th><th>Status</th><th>Command</th></tr></thead>
+        <tbody>
+          <tr><td>Register a paper (PMID/DOI/PDF)</td><td>existing</td><td><code>/deep-research:pool-add</code>, <code>registry.py add</code></td></tr>
+          <tr><td>Look up / list registered papers</td><td>existing</td><td><code>registry.py list</code>, <code>/deep-research:pdf-lookup</code></td></tr>
+          <tr><td>Full-text acquisition (8-rung ladder)</td><td>existing</td><td><code>fulltext.py</code></td></tr>
+          <tr><td>Faceted, keyword, and similarity search</td><td><strong>new</strong></td><td><code>/deep-research:search</code>, <code>registry.py search</code></td></tr>
+          <tr><td>Tags, star rating, free-text notes</td><td><strong>new</strong></td><td><code>/deep-research:annotate</code>, <code>annotations.py</code></td></tr>
+          <tr><td>Semantic similarity index</td><td><strong>new</strong></td><td><code>/deep-research:embed</code>, <code>embeddings.py</code></td></tr>
+          <tr><td>Knowledge-graph export</td><td><strong>new</strong></td><td><code>/deep-research:okf-export</code>, <code>research.py okf-export</code></td></tr>
+        </tbody>
+      </table>
+
+      <h2>Search (<code>registry.py search</code>)</h2>
+      <p>One subcommand, three layers, all combinable in a single call:</p>
+      <ul>
+        <li><strong>Facet filters</strong> — <code>--journal</code>, <code>--year</code>, <code>--status</code>, <code>--extraction-status</code>, <code>--appraisal-status</code> — plain in-memory filters over fields the registry already carries.</li>
+        <li><strong>Annotation filters</strong> — <code>--tag</code>, <code>--min-rating</code> — join read-only against <code>annotations.jsonl</code>.</li>
+        <li><strong>Keyword search</strong> — <code>--q "text"</code> — a stdlib-only, lowercase AND-of-terms match over title, abstract, journal, extraction narrative, appraisal rationale (scope it to one review with <code>--project</code>), and the paper's full text.</li>
+        <li><strong>Similarity ranking</strong> — <code>--similar-to &lt;evidence-id&gt;</code> — re-ranks whatever the filters above surfaced by cosine similarity, using the cache built by <code>embeddings.py index</code>.</li>
+      </ul>
+      <pre><code>python3 scripts/registry.py search --repo ~/lit/ --tag to-read --min-rating 4 --q "biomarker"</code></pre>
+
+      <h2>Annotations (<code>annotations.py</code>)</h2>
+      <p>Tags, a 1-5 star rating, and a free-text note per paper — your own opinion, kept out of the canonical registry and out of project-scoped appraisal on purpose, the same way appraisal already stays separate from the registry. An annotation never requires the paper to be registered first.</p>
+      <pre><code>python3 scripts/annotations.py tag  --repo ~/lit/ --evidence-id pmid:38214501 --add to-read
+python3 scripts/annotations.py rate --repo ~/lit/ --evidence-id pmid:38214501 --stars 4
+python3 scripts/annotations.py note --repo ~/lit/ --evidence-id pmid:38214501 --set "Good discussion of threshold selection."
+python3 scripts/annotations.py show --repo ~/lit/ --evidence-id pmid:38214501
+python3 scripts/annotations.py list --repo ~/lit/ --tag to-read --min-rating 3</code></pre>
+
+      <h2>Semantic Similarity (<code>embeddings.py</code>)</h2>
+      <p>Build a cached embedding per paper from its title, abstract, and extraction narrative, then ask for nearest neighbors by cosine similarity, in pure Python — no re-embedding at query time.</p>
+      <pre><code>python3 scripts/embeddings.py index   --repo ~/lit/
+python3 scripts/embeddings.py similar --repo ~/lit/ --evidence-id pmid:38214501 --k 5
+
+# or fold similarity into a faceted/keyword search once the index exists:
+python3 scripts/registry.py search --repo ~/lit/ --similar-to pmid:38214501 --limit 5</code></pre>
+
+      <div class="callout">
+        <strong>Scoped pip-install exception.</strong> <code>embeddings.py index</code> requires the third-party package <code>sentence-transformers</code> (<code>pip install sentence-transformers</code>, default model <code>all-MiniLM-L6-v2</code>), imported lazily inside the one function that needs it. This is the <em>one</em> deliberate, narrow exception to deep-research's blanket "zero pip installs, ever" policy — scoped to this single script only. Nothing else in the skill needs any pip install: full-text acquisition, extraction, appraisal, and everything else stay stdlib-plus-<code>requests</code>/<code>pdfminer</code> as before, and <code>embeddings.py similar</code>/<code>registry.py search --similar-to</code> never need the package once <code>embeddings.jsonl</code> already exists.
+      </div>
+
+      <h2>OKF Knowledge-Graph Export (<code>research.py okf-export</code>)</h2>
+      <p>Pick N papers out of the registry by evidence_id and promote them into an existing OKF wiki bundle, reusing <code>okf.py promote</code>'s validator unmodified rather than hand-writing a second concept-emission path. Each evidence_id must already have an extraction on file (run <code>/deep-research:summarize</code> first if not).</p>
+      <pre><code>python3 scripts/research.py okf-export --repo ~/lit/ \
+  --evidence-id pmid:38214501 --evidence-id doi:10.1001/jama.2023.24567 \
+  --wiki ~/wiki/ --project diagnostics-review</code></pre>
+
+      <div class="callout">
+        <strong>Concepts land as <code>provisional</code>, not <code>stable</code>.</strong> <code>okf-export</code> synthesizes a throwaway run directory and runs the existing <code>verify.py</code>/<code>okf.py promote</code> over it unmodified. A registry-only selection has no real search log or PRISMA screening history behind it, so pipeline-completeness checks like <code>C-SEARCH-LOG</code> and <code>C-PRISMA</code> are expected to fail — that's why <code>okf-export</code> calls <code>okf.py promote</code> with <code>--force --allow-unverified</code>, and every concept it writes comes out <code>status: provisional</code>. Concept-level correctness (the full V1-V25 validator) is still enforced, unforced.
+      </div>
+
+      <h2>End-To-End Example</h2>
+      <pre><code>$ python3 scripts/research.py init ~/lit/
+{"status": "ok", "command": "init", "repo_root": "/home/you/lit"}
+
+$ python3 scripts/registry.py add --repo ~/lit/ --pmid 38214501
+{"status": "ok", "evidence_id": "pmid:38214501", ...}
+
+$ python3 scripts/registry.py add --repo ~/lit/ --doi 10.1001/jama.2023.24567
+{"status": "ok", "evidence_id": "doi:10.1001/jama.2023.24567", ...}
+
+$ python3 scripts/registry.py add-pdf --repo ~/lit/ --file ~/Downloads/smith2024.pdf
+{"status": "ok", "evidence_id": "pmid:39012233", ...}
+
+$ python3 scripts/annotations.py tag  --repo ~/lit/ --evidence-id pmid:38214501 --add diagnostics
+$ python3 scripts/annotations.py tag  --repo ~/lit/ --evidence-id pmid:38214501 --add to-read
+$ python3 scripts/annotations.py rate --repo ~/lit/ --evidence-id pmid:38214501 --stars 5
+$ python3 scripts/annotations.py note --repo ~/lit/ --evidence-id doi:10.1001/jama.2023.24567 \
+    --set "Good external validation cohort."
+
+$ python3 scripts/registry.py search --repo ~/lit/ --journal "JAMA" --min-rating 3
+{"status": "ok", "results": [ ... ]}
+
+$ python3 scripts/registry.py search --repo ~/lit/ --q "biomarker threshold" --tag diagnostics
+{"status": "ok", "results": [ ... ]}
+
+$ python3 scripts/embeddings.py index --repo ~/lit/
+{"status": "ok", "command": "index", "embedded": 3, "skipped_current": 0}
+
+$ python3 scripts/embeddings.py similar --repo ~/lit/ --evidence-id pmid:38214501 --k 5
+{"status": "ok", "results": [
+  {"evidence_id": "pmid:39012233", "title": "...", "score": 0.81},
+  {"evidence_id": "doi:10.1001/jama.2023.24567", "title": "...", "score": 0.74}
+]}
+
+$ python3 scripts/paper.py summarize --repo ~/lit/ --pmid 38214501
+{"status": "ok", ...}   # needed before okf-export: it requires an extraction on disk
+
+$ python3 scripts/research.py okf-export --repo ~/lit/ \
+    --evidence-id pmid:38214501 --wiki ~/wiki/
+{"status": "ok", "command": "okf-export", "promote_exit_code": 0, ...}</code></pre>
+
+      <h2>Storage Added</h2>
+      <table>
+        <thead><tr><th>File</th><th>Written by</th><th>Contents</th></tr></thead>
+        <tbody>
+          <tr><td><code>data/papers/registry.jsonl</code></td><td><code>registry.py</code> (existing)</td><td>Canonical bibliographic + intake lifecycle record, one per paper.</td></tr>
+          <tr><td><code>data/papers/annotations.jsonl</code></td><td><code>annotations.py</code></td><td>Personal tags/star-rating/note, one record per evidence_id, never merged into the registry.</td></tr>
+          <tr><td><code>data/papers/embeddings.jsonl</code></td><td><code>embeddings.py</code></td><td>Cached embedding vector per evidence_id, used only by <code>similar</code>/<code>search --similar-to</code>.</td></tr>
+        </tbody>
+      </table>
+
+      <footer class="footer">Slash commands: <code>commands/search.md</code>, <code>commands/annotate.md</code>, <code>commands/embed.md</code>, <code>commands/okf-export.md</code>. Full agent-facing spec: <code>references/reference-manager.md</code>. Annotation record schema: <code>references/schema/16-annotation.md</code>.</footer>
+    </main>
+  </div>
+</body>
+</html>
