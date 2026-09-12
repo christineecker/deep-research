@@ -22,7 +22,11 @@ A run under either root works end to end without the other. `pool.py migrate --f
   data/
     refmgr/
       library.sqlite3    refmgr's paper/identifier/asset/attachment store (`registry.py
-                         add-pdf`/`import-folder` route PDF bytes here, not `data/sources/`)
+                         add-pdf`/`import-folder` route PDF bytes here, not `data/sources/`),
+                         plus the derived search indexes mirrored from registry.jsonl
+                         (papers_fts, chunks_fts, paper_terms — all rebuildable with
+                         `registry.py reindex`) and saved searches (`alerts.py`, durable,
+                         not derived). See references/reference-manager.md.
       assets/            content-addressed PDFs: assets/sha256/<2-char-prefix>/<hash><ext>
     sources/
       sources/            JSON snapshots: src-<64 hex>.json  (store.global_sources_root)

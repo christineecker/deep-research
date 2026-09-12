@@ -56,7 +56,8 @@
         <thead><tr><th>Artifact</th><th>Location</th><th>Notes</th></tr></thead>
         <tbody>
           <tr><td>Paper metadata</td><td><code>data/papers/registry.jsonl</code></td><td>Canonical one-record-per-paper registry.</td></tr>
-          <tr><td>PDFs</td><td><code>data/sources/assets/</code></td><td>Content-addressed by sha256.</td></tr>
+          <tr><td>PDFs</td><td><code>data/refmgr/assets/</code></td><td>Content-addressed by sha256, attached to papers through <code>data/refmgr/library.sqlite3</code>. <code>data/sources/assets/</code> is the pre-cutover location: <code>research.py init</code> still creates it and an old record's <code>fulltext.local_path</code> may still point into it, but nothing writes there any more.</td></tr>
+          <tr><td>Search indexes</td><td><code>data/refmgr/library.sqlite3</code></td><td>Derived from the registry and the snapshots: metadata FTS, full-text chunks, and MeSH/author/article-type facets. Rebuildable with <code>registry.py reindex</code> — never a source of truth. Also holds saved searches, which are durable state.</td></tr>
           <tr><td>Source snapshots</td><td><code>data/sources/snapshots/</code></td><td>Write-once text snapshots used by spans; legacy reads may fall back to <code>data/sources/sources/</code>.</td></tr>
           <tr><td>Extractions</td><td><code>data/papers/extractions/</code></td><td>Reusable across runs and projects.</td></tr>
           <tr><td>Appraisals</td><td><code>data/papers/appraisals/&lt;project&gt;/</code></td><td>Scoped to the project question.</td></tr>

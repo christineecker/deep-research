@@ -30,7 +30,7 @@
       <section class="hero">
         <p class="eyebrow">Standalone repo, extended</p>
         <h1>The standalone repo doubles as a personal reference manager: search, tag, rate, and export what you've registered.</h1>
-        <p class="lead">Registering and reading papers already worked. This adds faceted/keyword/semantic search over the registry, personal tags/star-ratings/notes, and a bridge from a hand-picked paper set into an OKF knowledge-graph bundle — all on top of the same <code>data/papers/</code> store, with no new skill and no changes to the wiki-backed review pipeline.</p>
+        <p class="lead">Registering and reading papers already worked. This adds faceted/keyword/semantic search over the registry, questions answered from what you already hold, saved PubMed searches, personal tags/star-ratings/notes, and a bridge from a hand-picked paper set into an OKF knowledge-graph bundle — all on top of the same <code>data/papers/</code> store, with no new skill and no changes to the wiki-backed review pipeline.</p>
       </section>
 
       <div class="callout">
@@ -48,6 +48,11 @@
           <tr><td>Tags, star rating, free-text notes</td><td><strong>new</strong></td><td><code>/deep-research:annotate</code>, <code>annotations.py</code></td></tr>
           <tr><td>Semantic similarity index</td><td><strong>new</strong></td><td><code>/deep-research:embed</code>, <code>embeddings.py</code></td></tr>
           <tr><td>Knowledge-graph export</td><td><strong>new</strong></td><td><code>/deep-research:okf-export</code>, <code>research.py okf-export</code></td></tr>
+          <tr><td>Ranked full-text search (bm25 over chunks)</td><td><strong>new</strong></td><td><code>registry.py search --q</code>, <code>registry.py reindex</code></td></tr>
+          <tr><td>MeSH / author / article-type facets</td><td><strong>new</strong></td><td><code>registry.py search --mesh</code>, <code>registry.py facets</code></td></tr>
+          <tr><td>Answer a question from the library</td><td><strong>new</strong></td><td><code>/deep-research:ask</code>, <code>ask.py retrieve</code></td></tr>
+          <tr><td>Saved searches / what's new</td><td><strong>new</strong></td><td><code>/deep-research:alerts</code>, <code>alerts.py</code></td></tr>
+          <tr><td>Integrity check</td><td><strong>new</strong></td><td><code>/deep-research:doctor</code>, <code>registry.py doctor</code></td></tr>
         </tbody>
       </table>
 
