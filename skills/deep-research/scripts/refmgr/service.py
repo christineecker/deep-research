@@ -19,6 +19,7 @@ from . import db
 from .repositories.assets import AssetRepository
 from .repositories.attachments import AttachmentRepository
 from .repositories.audit import AuditRepository
+from .repositories.chunks import ChunkRepository
 from .repositories.identifiers import IdentifierConflictError, IdentifierRepository
 from .repositories.organization import OrganizationRepository
 from .repositories.papers import PaperRepository
@@ -37,6 +38,7 @@ class ReferenceManagerService:
         self.organization = OrganizationRepository(self.conn)
         self.audit = AuditRepository(self.conn)
         self.search = SearchRepository(self.conn)
+        self.chunks = ChunkRepository(self.conn)
         self.saved_searches = SavedSearchRepository(self.conn)
 
     def reindex_paper(self, paper_id: str) -> None:

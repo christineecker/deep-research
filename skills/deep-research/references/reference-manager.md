@@ -11,10 +11,32 @@ reads/writes the same `data/papers/registry.jsonl` and its neighbors described i
 
 | Piece | Script | Storage | What it does |
 |---|---|---|---|
-| Search | `registry.py search` | none new — reads `registry.jsonl`, `annotations.jsonl`, snapshots | Facet filters + full-text keyword search + optional similarity ranking, all in one subcommand |
+| Search | `registry.py search` | reads `registry.jsonl`, `annotations.jsonl`, refmgr's indexes | Facet filters + full-text keyword search + optional similarity ranking, all in one subcommand |
+| Index | `registry.py reindex` | `data/refmgr/library.sqlite3` (`papers_fts`, `chunks_fts`) | Rebuilds both derived indexes from the registry and the snapshot store |
+| Ask | `ask.py retrieve` | none new | Hybrid retrieval over the indexes, every hit re-verified as a span; the answering command writes prose from the result |
 | Annotations | `annotations.py` | `data/papers/annotations.jsonl` | Personal tags/star-rating/note per `evidence_id`, kept separate from the registry and from project-scoped appraisal |
 | Embeddings | `embeddings.py` | `data/papers/embeddings.jsonl` | Cached per-paper embedding vectors + cosine-similarity nearest-neighbour lookup |
 | OKF export | `research.py okf-export` | a synthetic `runs/<slug>-okf-export-<ts>/` | Promotes a hand-picked evidence_id set into an existing OKF wiki bundle via `okf.py promote`, unmodified |
+
+## Storage split: truth vs index
+
+`data/papers/registry.jsonl` is the **source of truth** for bibliographic metadata and
+lifecycle. `data/refmgr/library.sqlite3` is an **index built from it** — every mutating
+registry command mirrors its changed records into refmgr's `papers`/`identifiers` tables
+and reindexes them (`Registry.commit`), and the full-text `chunks_fts` index is built from
+the snapshots in `data/sources/snapshots/`.
+
+Consequences worth knowing:
+
+- **Nothing is lost if the database is.** `registry.py reindex --repo <path>` rebuilds
+  both indexes from scratch. It is also the backfill path for a repo whose records were
+  registered before the mirror existed, and it is safe to re-run: an unchanged snapshot
+  is skipped rather than re-split.
+- **Search degrades, never fails.** No database, an empty chunk table, or a corrupt file
+  makes `--q` fall back to scanning snapshot bodies exactly as it did before the index
+  existed — slower, same answers, with a note on stderr.
+- **`refmgr_paper_id` on a registry record is the link** between the two stores, and the
+  idempotency key for records with no identifier refmgr can match on.
 
 ## Search (`registry.py search`)
 
@@ -37,9 +59,11 @@ python3 scripts/registry.py search --repo <path> \
   journal, the extraction's claim sentences and outcome names (`spans[].claim`,
   `outcomes[].name`/`timepoint`/`effect_measure`/`direction`), extraction narrative
   fields, appraisal rationale (scoped to `--project` when given), and the paper's full
-  text resolved from the global snapshot store (`store.py`'s `global_read_snapshot`
-  function). Pieces are searched in that order, so a snippet quotes an extracted claim
-  in preference to raw full text whenever both match. No persisted search index — it scans the pool at query
+  text. Pieces are searched in that order, so a snippet quotes an extracted claim
+  in preference to raw full text whenever both match. Metadata and claims are matched in
+  memory; **full text is served by refmgr's `chunks_fts` index** (bm25, one query per
+  term intersected so document-level AND still means AND), falling back to reading every
+  snapshot body via `store.py`'s `global_read_snapshot` when no index is available. No persisted search index — it scans the pool at query
   time, which is fine at personal-library scale.
 - **`--similar-to <evidence-id>`** ranks whatever the facet/keyword filters already
   surfaced by cosine similarity, delegating to `embeddings.py`'s cached vectors. It
@@ -103,6 +127,42 @@ isn't installed, `index` fails fast with a one-line message pointing at
 `pip install sentence-transformers`; `similar` and `registry.py search --similar-to` never
 need it once `embeddings.jsonl` already exists. `query` does need it — it has to embed the
 question before it can rank anything.
+
+## Asking the library a question (`ask.py`)
+
+```bash
+python3 scripts/ask.py retrieve --repo <path> --question "<question>" \
+  [--k N] [--passages-per-paper N] [--project <slug>] [--no-semantic]
+```
+
+The third answering path in this skill, alongside the full pipeline and
+`paper.py summarize`: it answers *from what the repo already holds*, with no run, no
+network, and no new extraction. It cannot find a paper the repo has never seen — when
+the library is thin, the honest answer is that the library is thin, and the pipeline is
+what goes looking.
+
+**The script retrieves and verifies; it does not write prose.** It returns candidate
+claims and passages, each with its `(source_id, start, end)` span and the result of
+re-verifying that span against the snapshot store; `commands/ask.md` is the contract the
+agent follows when turning that into an answer. No model is called anywhere in the
+script — that split is why the evidence bundle is auditable on its own.
+
+Retrieval is hybrid and fused by reciprocal rank:
+
+| Leg | Source | When it is skipped |
+|---|---|---|
+| lexical | `chunks_fts` bm25 over full-text snapshots | no chunk index — reported in `notes` |
+| semantic | `embeddings.jsonl` vectors, queried with the question | `--no-semantic`, no embeddings file, mixed models, or `sentence-transformers` not installed |
+
+Both legs are optional in the sense that missing one degrades the result and says so;
+neither is an error. Ranking uses rank positions, not raw scores: bm25 and cosine are
+not on a comparable scale and normalizing them would invent a relationship.
+
+**Verification is the point.** Every span goes back through `store.py`'s `verify_span`
+(`references/evidence-kernel.md`) at retrieval time. A span whose snapshot no longer
+hashes, whose offsets no longer fit, or whose text no longer matches is moved to
+`unverified` with its `reason_code` and must not be cited. This is the same gate the
+assembler applies to a run, pointed at a retrieval result instead of a corpus.
 
 ## OKF export (`research.py okf-export`)
 

@@ -79,9 +79,13 @@ python3 scripts/registry.py appraise-promote --repo &lt;path&gt; --run-dir &lt;r
 /deep-research:annotate list --repo &lt;path&gt; --tag to-read --min-rating 3
 /deep-research:embed index   --repo &lt;path&gt;
 /deep-research:embed similar --repo &lt;path&gt; --evidence-id pmid:38214501 --k 5
+/deep-research:embed query   --repo &lt;path&gt; --text "does X reduce Y?" --k 10
+/deep-research:ask --repo &lt;path&gt; "does exercise reduce depressive symptoms in adolescents?"
 /deep-research:okf-export --repo &lt;path&gt; --evidence-id pmid:38214501 --wiki &lt;wiki-root&gt;</code></pre>
-      <p><code>embed index</code> requires the optional third-party package <code>sentence-transformers</code>
-      — the one scoped exception to the skill's no-pip-installs policy. <code>okf-export</code> requires each
+      <p><code>embed index</code> and <code>embed query</code> require the optional third-party package <code>sentence-transformers</code>
+      — the one scoped exception to the skill's no-pip-installs policy; <code>ask</code> runs without it, on lexical
+      retrieval alone. <code>ask</code> answers only from spans that verify against the snapshot store, and only from
+      papers the repo already holds — it is not a literature search. <code>okf-export</code> requires each
       <code>--evidence-id</code> to already have an extraction on file. Details:
       <a href="reference-manager.html">Reference manager</a>.</p>
 

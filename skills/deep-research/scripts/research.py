@@ -119,8 +119,7 @@ def _import_from_wiki(wiki_root: Path, repo_root: Path) -> dict:
                     continue
                 reg.register(rec)
                 count += 1
-        reg.save()
-        reg.generate_pool()
+        reg.commit()
     return {"wiki_root": str(wiki_root), "legacy_pool_found": True, "registered": count}
 
 

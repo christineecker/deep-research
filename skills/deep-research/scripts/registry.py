@@ -86,15 +86,21 @@ def _refmgr_service(repo_root: Path):
 
 
 def _refmgr_identifiers(raw: dict) -> list[tuple[str, str]]:
-    """`{pmid, doi, pmcid}` -> refmgr `(scheme, raw_value)` pairs, skipping
+    """`{pmid, doi, pmcid, url}` -> refmgr `(scheme, raw_value)` pairs, skipping
     values that don't normalize (refmgr's own normalizers are the authority,
     not `corpus.py`'s — the two identity models are deliberately independent,
-    see plan "Known issues and standing decisions")."""
+    see plan "Known issues and standing decisions").
+
+    `url` is included for records that carry one as an extra field. A `url:<digest>`
+    *evidence_id* is not a URL and yields no identifier at all; those records dedupe
+    on the registry record's own `refmgr_paper_id` instead (see `_refmgr_paper_id`),
+    which is why the mirror persists that id before rewriting `registry.jsonl`.
+    """
     import refmgr.identity as _identity
 
     pairs = []
     for scheme, value in (("pmid", raw.get("pmid")), ("doi", raw.get("doi")),
-                          ("pmcid", raw.get("pmcid"))):
+                          ("pmcid", raw.get("pmcid")), ("url", raw.get("url"))):
         if not value:
             continue
         try:
@@ -148,6 +154,27 @@ def _import_pdf_attachment(service, paper_id: str, pdf: Path, *,
     }
 
 
+#: Registry fields mirrored into a refmgr paper's `metadata_json`. `evidence_id` is
+#: carried so a refmgr row can always be traced back to the registry record that owns
+#: it; the rest is what `papers_fts` indexes or what search filters read.
+_REFMGR_METADATA_FIELDS = (
+    "evidence_id", "journal", "publication_date", "abstract", "authors",
+    "article_types", "mesh_terms", "keywords", "is_preprint", "retraction_status",
+)
+
+
+def _refmgr_metadata(rec: dict) -> dict:
+    """The `metadata_json` payload for a mirrored paper. Empty values are dropped so a
+    partial registry record never overwrites richer refmgr metadata with nulls."""
+    out = {}
+    for field in _REFMGR_METADATA_FIELDS:
+        val = rec.get(field)
+        if val in (None, "", [], {}):
+            continue
+        out[field] = val
+    return out
+
+
 @contextlib.contextmanager
 def advisory_lock(repo_root: Path, name: str):
     """Cross-process exclusive lock, repo-scoped (`corpus.py advisory_lock` is run-scoped)."""
@@ -171,6 +198,10 @@ class Registry:
         self.repo_root = self.paths["repo_root"]
         self.path = self.paths["registry"]
         self.records: dict[str, dict] = {}
+        #: evidence_ids mutated since the last `commit()` — what the refmgr mirror
+        #: has to catch up on. A plain set, not a timestamp scan: `updated_at` has
+        #: second granularity and two writes can share one.
+        self._dirty: set[str] = set()
         self._load()
 
     def _load(self) -> None:
@@ -192,6 +223,7 @@ class Registry:
     def reload(self) -> None:
         """Re-read `registry.jsonl`, discarding whatever is in memory."""
         self.records = {}
+        self._dirty = set()
         self._load()
 
     @contextlib.contextmanager
@@ -285,6 +317,7 @@ class Registry:
         )
         target["updated_at"] = utcnow()
         self.records[target["evidence_id"]] = target
+        self._dirty.add(target["evidence_id"])
         return target, is_new
 
     def set_asset(self, evidence_id: str, asset: dict) -> dict:
@@ -297,6 +330,7 @@ class Registry:
         rec["asset"] = asset
         rec["asset_status"] = "available"
         rec["updated_at"] = utcnow()
+        self._dirty.add(evidence_id)
         return rec
 
     def set_extraction(self, evidence_id: str, extraction_path: str) -> dict:
@@ -309,6 +343,7 @@ class Registry:
         rec["extraction_path"] = extraction_path
         rec["extraction_status"] = "extracted"
         rec["updated_at"] = utcnow()
+        self._dirty.add(evidence_id)
         return rec
 
     def set_appraisal(self, evidence_id: str, project: str, appraisal_path: str) -> dict:
@@ -325,7 +360,78 @@ class Registry:
         appraisals[project] = appraisal_path
         rec["appraisal_status"] = "appraised"
         rec["updated_at"] = utcnow()
+        self._dirty.add(evidence_id)
         return rec
+
+    def mirror_to_refmgr(self, evidence_ids=None, *, service=None) -> dict:
+        """Mirror registry records into refmgr's `papers`/`identifiers` + `papers_fts`.
+
+        `registry.jsonl` stays the source of truth and the durable append log; refmgr
+        is the *index* built from it (OPTIMIZATION_PLAN.md item 4, resolving the v2
+        plan's "Open decision 1" as mirror rather than cutover). Nothing that reads
+        `registry.jsonl` has to change, and a lost or corrupt refmgr database is
+        rebuilt with `registry.py reindex`, never restored from backup.
+
+        Defaults to the dirty set; pass `evidence_ids` to mirror a chosen subset (or
+        `self.records` for a full pass). Returns a report — a paper that fails to
+        mirror is collected in `errors`, never raised, so one bad record cannot block
+        the rest of a bulk import.
+        """
+        ids = sorted(self._dirty if evidence_ids is None else evidence_ids)
+        report = {"mirrored": 0, "linked": 0, "errors": []}
+        if not ids:
+            return report
+
+        own_service = service is None
+        if own_service:
+            service = _refmgr_service(self.repo_root)
+        try:
+            for eid in ids:
+                rec = self.records.get(eid)
+                if rec is None:
+                    continue
+                try:
+                    had_paper_id = bool(rec.get("refmgr_paper_id"))
+                    title = rec.get("title") or eid
+                    paper_id = _refmgr_paper_id(service, rec, rec, title)
+                    if not had_paper_id:
+                        report["linked"] += 1
+                    rec["refmgr_paper_id"] = paper_id
+                    service.papers.update_title(paper_id, title)
+                    metadata = _refmgr_metadata(rec)
+                    if metadata:
+                        service.papers.update_metadata(paper_id, metadata)
+                    # `update_title`/`update_metadata` deliberately do not auto-reindex
+                    # (see ReferenceManagerService.reindex_paper); the mirror is the
+                    # writer here, so it owns keeping the index current.
+                    service.reindex_paper(paper_id)
+                    report["mirrored"] += 1
+                except Exception as exc:  # one bad record must not abort a bulk import
+                    report["errors"].append({"evidence_id": eid, "error": str(exc)})
+        finally:
+            if own_service:
+                service.close()
+
+        self._dirty -= set(ids)
+        return report
+
+    def commit(self, *, mirror: bool = True, service=None) -> dict:
+        """Persist everything a mutating command changed: mirror into refmgr, then
+        rewrite `registry.jsonl` and `pool.jsonl`.
+
+        Mirror **before** save so a newly minted `refmgr_paper_id` is part of the same
+        durable write — otherwise a record with no usable identifier (a `url:<digest>`
+        evidence_id) would mint a second refmgr paper on the next pass.
+        """
+        report = self.mirror_to_refmgr(service=service) if mirror else {
+            "mirrored": 0, "linked": 0, "errors": [], "skipped": True}
+        self.save()
+        self.generate_pool()
+        if report.get("errors"):
+            print(f"registry.py: {len(report['errors'])} record(s) failed to mirror into "
+                  f"refmgr; run `registry.py reindex --repo {self.repo_root}` to retry",
+                  file=sys.stderr)
+        return report
 
     def generate_pool(self) -> list[dict]:
         """Regenerate `pool.jsonl` as a search-optimized projection of the registry.
@@ -398,8 +504,9 @@ def add_pdf_to_registry(registry: "Registry", service, pdf: Path, *,
     old flat `data/sources/assets/sha256-<hash>.pdf` store. The single PDF-intake
     implementation shared by `cmd_add_pdf` (CLI) and `paper.py`'s `--pdf` ingestion
     path (Phase 5: there is exactly one of these, not two independently
-    maintained copies). Caller owns `registry.save()`/`generate_pool()` and the
-    `advisory_lock`/`service` lifecycle."""
+    maintained copies). Caller owns `registry.commit()` and the
+    `advisory_lock`/`service` lifecycle — pass the same `service` to `commit()` so the
+    refmgr mirror reuses this connection instead of opening a second one."""
     import library as _library_mod
     digest = _library_mod.sha256_file(pdf)
     pages = _library_mod.pdf_pages(pdf)
@@ -429,8 +536,7 @@ def cmd_add_pdf(args) -> int:
             rec, is_new = add_pdf_to_registry(
                 registry, service, pdf, pmid=args.pmid, doi=args.doi, pmcid=args.pmcid,
                 title=args.title, move=args.move)
-            registry.save()
-            registry.generate_pool()
+            registry.commit(service=service)
     finally:
         service.close()
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "add-pdf",
@@ -516,8 +622,7 @@ def cmd_import_bib(args) -> int:
             rec, is_new = registry.register(raw)
             results.append({"citekey": entry["citekey"], "status": "ok",
                             "evidence_id": rec["evidence_id"], "is_new": is_new})
-        registry.save()
-        registry.generate_pool()
+        registry.commit()
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "import-bib",
           "repo": str(registry.repo_root), "file": str(path), "entries_seen": len(parsed),
           "registered": sum(1 for r in results if r["status"] == "ok"),
@@ -541,8 +646,7 @@ def cmd_import_folder(args) -> int:
                 rec, is_new = add_pdf_to_registry(registry, service, pdf)
                 results.append({"file": str(pdf), "evidence_id": rec["evidence_id"],
                                "is_new": is_new})
-            registry.save()
-            registry.generate_pool()
+            registry.commit(service=service)
     finally:
         service.close()
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "import-folder",
@@ -575,8 +679,7 @@ def cmd_add(args) -> int:
         return 1
     with registry.locked():
         rec, is_new = registry.register(raw)
-        registry.save()
-        registry.generate_pool()
+        registry.commit()
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "add",
           "evidence_id": rec["evidence_id"], "is_new": is_new, "record": rec})
     return 0
@@ -707,8 +810,7 @@ def cmd_promote(args) -> int:
                 rec["extraction_path"] = canonical_rel
             promoted.append({"evidence_id": eid, "canonical_path": str(dest_path)})
         if not args.dry_run:
-            registry.save()
-            registry.generate_pool()
+            registry.commit()
             corpus.save()
 
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "promote",
@@ -751,8 +853,7 @@ def cmd_appraise_promote(args) -> int:
                 rec["appraisal_path"] = canonical_rel
             promoted.append({"evidence_id": eid, "canonical_path": str(dest_path)})
         if not args.dry_run:
-            registry.save()
-            registry.generate_pool()
+            registry.commit()
             corpus.save()
 
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "appraise-promote",
@@ -770,6 +871,87 @@ def cmd_pool(args) -> int:
           "repo": str(registry.repo_root), "pool": str(registry.paths["pool"]),
           "count": len(entries)})
     return 0
+
+
+def index_chunks(registry: "Registry", service, evidence_ids=None) -> dict:
+    """Index every full-text snapshot a registry record cites into `chunks_fts`.
+
+    The snapshots in the global source store stay canonical; this builds the
+    rebuildable chunk index over them (OPTIMIZATION_PLAN.md item 5). A record with no
+    refmgr paper is skipped rather than mirrored implicitly — run the mirror first
+    (`Registry.mirror_to_refmgr`) so paper identity is settled before text is attached
+    to it. Unreadable or unchanged snapshots are counted, never fatal.
+    """
+    repo_root = registry.repo_root
+    ids = sorted(registry.records) if evidence_ids is None else sorted(evidence_ids)
+    report = {"papers": 0, "sources_indexed": 0, "sources_current": 0,
+              "chunks": 0, "no_paper_id": 0, "unreadable": []}
+
+    for eid in ids:
+        rec = registry.records.get(eid)
+        if rec is None:
+            continue
+        paper_id = rec.get("refmgr_paper_id")
+        if not paper_id:
+            report["no_paper_id"] += 1
+            continue
+        extraction = _extraction_data(rec, repo_root)
+        source_ids = _record_source_ids(rec, extraction)
+        if not source_ids:
+            continue
+        touched = False
+        for source_id in source_ids:
+            try:
+                snapshot = _store.global_read_snapshot(repo_root, source_id)
+            except Exception as exc:
+                report["unreadable"].append({"evidence_id": eid, "source_id": source_id,
+                                             "error": str(exc)})
+                continue
+            text = snapshot.get("text") if isinstance(snapshot, dict) else None
+            if not isinstance(text, str) or not text.strip():
+                continue
+            content_hash = snapshot.get("content_hash") or _store.compute_content_hash(text)
+            result = service.chunks.index_source(paper_id, source_id, text, content_hash)
+            if result["skipped"]:
+                report["sources_current"] += 1
+            else:
+                report["sources_indexed"] += 1
+                report["chunks"] += result["indexed"]
+            touched = True
+        if touched:
+            report["papers"] += 1
+    return report
+
+
+def cmd_reindex(args) -> int:
+    """Rebuild refmgr's derived indexes from `registry.jsonl` and the snapshot store.
+
+    Both indexes are rebuildable by design, so this is always safe to re-run: it is
+    the repair path for a refmgr database that was deleted, corrupted, or simply
+    never populated (every record registered before the mirror existed).
+    """
+    registry = Registry(args.repo)
+    do_papers = not args.chunks_only
+    do_chunks = not args.papers_only
+    service = _refmgr_service(args.repo)
+    payload = {"schema_version": SCHEMA_VERSION, "status": "ok", "command": "reindex",
+               "repo": str(registry.repo_root), "records": len(registry.records)}
+    try:
+        with registry.locked():
+            if do_papers:
+                payload["papers"] = registry.mirror_to_refmgr(
+                    registry.records.keys(), service=service)
+                registry.save()
+                registry.generate_pool()
+            if do_chunks:
+                payload["chunks"] = index_chunks(registry, service)
+            payload["coverage"] = {"papers_fts": service.search.coverage(),
+                                   "chunks": service.chunks.coverage()}
+    finally:
+        service.close()
+    emit(payload)
+    errors = (payload.get("papers") or {}).get("errors") or []
+    return 1 if errors else 0
 
 
 def cmd_bib(args) -> int:
@@ -966,11 +1148,16 @@ def _extraction_claim_texts(extraction: dict) -> list[str]:
     return texts
 
 
-def _search_text_pieces(rec: dict, repo_root: Path, project: str | None) -> list[str]:
+def _search_text_pieces(rec: dict, repo_root: Path, project: str | None,
+                        *, include_fulltext: bool = True) -> list[str]:
     """Every text piece searched by `--q`, in the order a snippet should prefer them:
     title, abstract, journal, extraction claims/outcomes, extraction narrative fields,
     appraisal rationale, then full-text snapshot bodies (plan §1 "Keyword search").
-    Missing/unreadable pieces are skipped silently — best-effort, never a hard error."""
+    Missing/unreadable pieces are skipped silently — best-effort, never a hard error.
+
+    `include_fulltext=False` leaves out the snapshot bodies: that is the expensive part
+    (every cited snapshot re-read and lowercased per query), and it is redundant once
+    the chunk index covers the corpus — see `_keyword_filter`."""
     pieces: list[str] = []
     for field in ("title", "abstract", "journal"):
         val = rec.get(field)
@@ -986,6 +1173,9 @@ def _search_text_pieces(rec: dict, repo_root: Path, project: str | None) -> list
                 pieces.append(val.strip())
 
     pieces.extend(_appraisal_texts(rec, repo_root, project))
+
+    if not include_fulltext:
+        return pieces
 
     for sid in _record_source_ids(rec, extraction):
         try:
@@ -1018,25 +1208,72 @@ def _snippet_for(pieces: list[str], terms: list[str]) -> str | None:
     return None
 
 
+def _chunk_index_hits(repo_root: Path, terms: list[str], query: str) -> dict | None:
+    """Full-text matches from refmgr's chunk index, or None when it cannot serve them.
+
+    Returns `{"papers": {paper_id, ...}, "snippets": {paper_id: snippet}}`. None means
+    "no usable index" — no refmgr database, or an empty chunk table — and the caller
+    falls back to scanning snapshot bodies (OPTIMIZATION_PLAN.md item 5: the index is
+    an accelerator, never a new precondition for searching).
+    """
+    if not (repo_paths(repo_root)["refmgr"] / "library.sqlite3").exists():
+        return None
+    service = None
+    try:
+        service = _refmgr_service(repo_root)
+        if service.chunks.coverage()["chunks"] == 0:
+            return None
+        papers = service.chunks.papers_matching_all(terms)
+        snippets: dict[str, str] = {}
+        if papers:
+            for hit in service.chunks.search(query, limit=len(papers) * 2):
+                snippets.setdefault(hit["paper_id"], hit["snippet"])
+        return {"papers": papers, "snippets": snippets}
+    except Exception as exc:  # a broken index must degrade to the scan, not fail the search
+        print(f"registry.py: chunk index unusable ({exc}); falling back to a full scan "
+              f"— `registry.py reindex --repo {repo_root}` rebuilds it", file=sys.stderr)
+        return None
+    finally:
+        if service is not None:
+            service.close()
+
+
 def _keyword_filter(records: list[dict], args) -> tuple[list[dict], dict[str, str]]:
     """`--q "<terms>"`: lowercase-tokenized AND-match across every `_search_text_pieces`
-    source. Returns the surviving records plus a `{evidence_id: snippet}` map."""
+    source. Returns the surviving records plus a `{evidence_id: snippet}` map.
+
+    Metadata, claims and appraisal rationale are matched in memory, as before. Full
+    text is served by refmgr's bm25 chunk index when it has rows, which is what keeps
+    the query off the "re-read every snapshot body" path; without an index the old
+    scan still runs, so behavior is identical, only slower.
+    """
     if not args.q:
         return records, {}
     terms = [t for t in args.q.lower().split() if t]
     if not terms:
         return records, {}
     repo_root = repo_paths(args.repo)["repo_root"]
+    index = _chunk_index_hits(repo_root, terms, args.q)
+
     out: list[dict] = []
     snippets: dict[str, str] = {}
     for rec in records:
-        pieces = _search_text_pieces(rec, repo_root, args.project)
+        pieces = _search_text_pieces(rec, repo_root, args.project,
+                                     include_fulltext=index is None)
         haystack = "\n".join(pieces).lower()
-        if all(term in haystack for term in terms):
-            out.append(rec)
-            snippet = _snippet_for(pieces, terms)
-            if snippet:
-                snippets[rec["evidence_id"]] = snippet
+        matched = all(term in haystack for term in terms)
+        chunk_snippet = None
+        if not matched and index is not None:
+            paper_id = rec.get("refmgr_paper_id")
+            if paper_id and paper_id in index["papers"]:
+                matched = True
+                chunk_snippet = index["snippets"].get(paper_id)
+        if not matched:
+            continue
+        out.append(rec)
+        snippet = _snippet_for(pieces, terms) or chunk_snippet
+        if snippet:
+            snippets[rec["evidence_id"]] = snippet
     return out, snippets
 
 
@@ -1177,6 +1414,15 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("pool", help="regenerate data/papers/pool.jsonl from the registry")
     s.add_argument("--repo", required=True)
     s.set_defaults(func=cmd_pool)
+
+    s = sub.add_parser("reindex", help="rebuild refmgr's paper and chunk indexes from "
+                                       "the registry and the snapshot store")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--papers-only", action="store_true",
+                   help="mirror papers/identifiers into refmgr, skip the chunk index")
+    s.add_argument("--chunks-only", action="store_true",
+                   help="rebuild the full-text chunk index only")
+    s.set_defaults(func=cmd_reindex)
 
     s = sub.add_parser("bib", help="export repo-wide or scoped BibTeX from the registry")
     s.add_argument("--repo", required=True)

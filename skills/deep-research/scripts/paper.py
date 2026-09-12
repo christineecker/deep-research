@@ -140,8 +140,7 @@ def resolve_paper(repo_root: Path, args) -> dict:
                 rec, _is_new = _registry.add_pdf_to_registry(
                     registry, service, pdf_path, pmid=args.pmid, doi=args.doi,
                     pmcid=args.pmcid, title=args.title)
-                registry.save()
-                registry.generate_pool()
+                registry.commit(service=service)
         finally:
             service.close()
         return rec
@@ -168,8 +167,7 @@ def resolve_paper(repo_root: Path, args) -> dict:
             "`registry.py add --title ...` first")
     with registry.locked():
         rec, _is_new = registry.register(raw)
-        registry.save()
-        registry.generate_pool()
+        registry.commit()
     return rec
 
 
@@ -451,8 +449,7 @@ def _promote(repo_root: Path, run_dir: Path, evidence_id: str, project: str | No
                 dest.write_text(json.dumps(extraction, indent=2, ensure_ascii=False) + "\n",
                                 encoding="utf-8")
                 registry.set_extraction(evidence_id, str(dest.relative_to(registry.repo_root)))
-                registry.save()
-                registry.generate_pool()
+                registry.commit()
     if project:
         appraisal_src = run_dir / "workspace" / "appraisals" / f"{slug}.json"
         if appraisal_src.exists():
@@ -463,8 +460,7 @@ def _promote(repo_root: Path, run_dir: Path, evidence_id: str, project: str | No
                 dest.write_text(appraisal_src.read_text(encoding="utf-8"), encoding="utf-8")
                 registry.set_appraisal(evidence_id, project,
                                        str(dest.relative_to(registry.repo_root)))
-                registry.save()
-                registry.generate_pool()
+                registry.commit()
 
 
 def _copy_project_export(repo_root: Path, project: str, subdir: str, evidence_id: str,

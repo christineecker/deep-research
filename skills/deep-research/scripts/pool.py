@@ -610,8 +610,7 @@ def cmd_migrate(args) -> int:
                                     encoding="utf-8")
                     registry.set_appraisal(eid, project, str(dest.relative_to(registry.repo_root)))
                     appraisals_copied += 1
-        registry.save()
-        registry.generate_pool()
+        registry.commit()
 
     emit({
         "schema_version": SCHEMA_VERSION, "status": "ok", "command": "migrate",

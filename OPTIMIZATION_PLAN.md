@@ -176,7 +176,15 @@ and no change to the policy in `references/acquisition.md` §9.
 **Done when**: `embeddings.py query --repo <p> --text "<question>" -k 10`
 returns ranked evidence_ids, and `/deep-research:embed` documents it.
 
-### 4. Mirror registry writes into `refmgr` — M
+### 4. Mirror registry writes into `refmgr` — M — **done**
+
+Shipped as `Registry.mirror_to_refmgr` + `Registry.commit` (`registry.py`), which every
+mutating command now calls in place of `save()` + `generate_pool()`, plus
+`registry.py reindex` for backfill and repair. `PaperRepository.update_title` was added
+so a corrected title reaches `papers_fts`. Resolved as **mirror**: `registry.jsonl`
+stays truth, refmgr is the index. Tests: `tests/test_registry_mirror.py`.
+
+Original scope:
 
 Route every `Registry` mutation that creates or updates a paper through
 `refmgr`'s `papers` / `identifiers` repositories, reusing the helpers already
@@ -194,7 +202,17 @@ no existing consumer of `registry.jsonl` has to change.
 `SearchRepository.search`, and `reindex` is idempotent over a repo built
 before this change.
 
-### 5. `chunks_fts` — full text, ranked — M
+### 5. `chunks_fts` — full text, ranked — M — **done**
+
+Shipped as `migrations/0003_chunks.sql` + `refmgr/repositories/chunks.py`, wired into
+`registry.py search --q` through `_chunk_index_hits`. Two query paths, deliberately
+different: `search()` matches any term and ranks by bm25 (what a question needs),
+`papers_matching_all()` intersects per-term hits to preserve `--q`'s document-level AND.
+No index, an empty one, or a corrupt file falls back to the old snapshot scan with a
+note on stderr. Tests: `tests/test_refmgr_chunks.py`,
+`tests/test_registry_mirror.py::SearchThroughTheChunkIndexTest`.
+
+Original scope:
 
 New migration adding a chunk index over snapshot text:
 
@@ -215,7 +233,18 @@ keeps working on un-mirrored repos.
 **Done when**: `--q` returns bm25-ranked results with snapshot offsets, and a
 corpus-scale fixture shows query cost independent of total corpus bytes.
 
-### 6. `ask` — answer from the library — M
+### 6. `ask` — answer from the library — M — **done**
+
+Shipped as `scripts/ask.py retrieve` + `commands/ask.md`. One design point worth
+recording, because it differs from the sketch below: the **script retrieves and
+verifies, the agent writes the answer**. `ask.py` calls no model — it returns a bundle
+of claims and passages with their spans re-verified through `store.py`'s `verify_span`,
+and `commands/ask.md` carries the answering contract (cite by `evidence_id`, quote the
+verified bytes, never cite `unverified[]`, say "nothing here" rather than answering from
+memory). That keeps it consistent with the rest of the skill, where scripts do state and
+network work and the agent does the reasoning. Tests: `tests/test_ask.py`.
+
+Original scope:
 
 New command, the actual deliverable of this plan:
 
@@ -286,8 +315,8 @@ with a missing asset. Read-only, no repair — reporting first.
 | Step | Items | Rationale |
 |---|---|---|
 | ~~Now~~ done | 1, 2, 3 | Independent, small, each immediately useful |
-| Next | 4, 5, 6 | One arc: make `refmgr` the index, index the text, answer from the index |
-| Then | 7, 8 | Ongoing use, and the CI that keeps 1–7 honest |
+| ~~Next~~ done | 4, 5, 6 | One arc: make `refmgr` the index, index the text, answer from the index |
+| Now | 7, 8 | Ongoing use, and the CI that keeps 1–7 honest |
 | Later | 9, 10 | Polish and integrity |
 
 Item 8 is placed after the first arc only because the arc is what makes the
@@ -307,16 +336,21 @@ suite worth gating on; moving it first is a defensible reordering.
 
 ## Open questions
 
-1. **Chunking strategy for item 5** — fixed-size with overlap is the simplest
-   thing that preserves offsets; section-aware chunking off JATS structure
-   would be better for `ask` but only helps papers that arrived via rung 3.
-   Start fixed-size, revisit once `ask` has real queries to evaluate against.
-2. **Vector storage** — vectors are currently JSON float arrays in
-   `embeddings.jsonl`. Moving them to float32 BLOBs in `refmgr` would cut
-   size roughly tenfold and load time more, still with no numpy. Worth doing
-   with item 5's migration, but it changes `embeddings.py`'s file contract, so
-   it is called out rather than assumed.
-3. **Wiki mode parity** — items 4–6 are written against repo mode
-   (`registry.py` / `refmgr`). Wiki mode's `pool.jsonl` has no equivalent
-   index. Either mirror the pool into a wiki-local `refmgr` database or accept
-   that `ask` is repo-mode only at first; the second is cheaper and reversible.
+1. **Chunking strategy for item 5** — *settled for now*: fixed-size (1200 chars) with
+   150-char overlap, cut at a paragraph or sentence boundary when one falls within 300
+   chars of the target. Section-aware chunking off JATS structure would be better for
+   `ask` but only helps papers that arrived via ladder rung 3. Revisit once `ask` has
+   real queries to evaluate against.
+2. **Vector storage** — still open, and now the main scaling limit of `ask`'s semantic
+   leg: vectors remain JSON float arrays in `embeddings.jsonl`, loaded and scored in
+   pure Python on every query. Moving them to float32 BLOBs in `refmgr` would cut size
+   roughly tenfold and load time more, still with no numpy. Deferred because it changes
+   `embeddings.py`'s file contract; item 5's migration shipped without it.
+3. **Wiki mode parity** — *settled*: items 4–6 are repo-mode only. Wiki mode's
+   `pool.jsonl` has no refmgr database, so `search --q` there still scans snapshots and
+   `ask.py` requires `--repo`. Mirroring the wiki pool into a wiki-local refmgr database
+   remains possible; nothing in items 4–6 forecloses it.
+4. **Semantic retrieval is still paper-level** (new). The chunk index gives `ask` passage
+   granularity on the lexical leg, but the semantic leg still ranks whole papers from a
+   single title+abstract+narrative vector. Chunk-level embeddings — the rest of the
+   paused Phase 4 embedding rework — would make the two legs symmetric. Not scheduled.

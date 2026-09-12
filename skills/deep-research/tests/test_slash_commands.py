@@ -25,6 +25,7 @@ verify = load_script("verify.py")
 watch = load_script("watch.py")
 annotations = load_script("annotations.py")
 embeddings = load_script("embeddings.py")
+ask = load_script("ask.py")
 
 
 def status_parser() -> argparse.ArgumentParser:
@@ -149,6 +150,25 @@ class SlashCommandArgvTest(unittest.TestCase):
         embeddings.build_parser().parse_args([
             "similar", "--repo", "/tmp/demo-repo", "--evidence-id", "pmid:12345678", "--k", "5",
         ])
+        embeddings.build_parser().parse_args([
+            "query", "--repo", "/tmp/demo-repo", "--text", "does X reduce Y?", "--k", "10",
+            "--model", "all-MiniLM-L6-v2",
+        ])
+
+    def test_ask(self):
+        ask.build_parser().parse_args([
+            "retrieve", "--repo", "/tmp/demo-repo", "--question", "does X reduce Y?",
+        ])
+        ask.build_parser().parse_args([
+            "retrieve", "--repo", "/tmp/demo-repo", "--question", "does X reduce Y?",
+            "--k", "8", "--passages-per-paper", "3", "--project", "autism-mrs",
+            "--no-semantic",
+        ])
+
+    def test_reindex(self):
+        registry.build_parser().parse_args(["reindex", "--repo", "/tmp/demo-repo"])
+        registry.build_parser().parse_args(["reindex", "--repo", "/tmp/demo-repo", "--papers-only"])
+        registry.build_parser().parse_args(["reindex", "--repo", "/tmp/demo-repo", "--chunks-only"])
 
     def test_okf_export(self):
         research.build_parser().parse_args([

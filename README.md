@@ -47,6 +47,7 @@ matching script directly, no pipeline negotiation:
 | `/deep-research:project` | Create/list manuscript projects |
 | `/deep-research:watch` | Read-only snapshot of a run's progress |
 | `/deep-research:search` | Facet/keyword/similarity search over the registry |
+| `/deep-research:ask` | Answer a question from papers the repo already holds, with verified citations |
 | `/deep-research:annotate` | Personal tags/rating/note on a paper |
 | `/deep-research:embed` | Build/query the semantic-similarity index |
 | `/deep-research:okf-export` | Promote hand-picked registry papers into an OKF wiki bundle |
@@ -97,10 +98,11 @@ repo mode) so no later run — even on a different question — re-extracts it. 
 ## Reference manager
 
 The standalone repo doubles as a personal reference manager on top of the same registry:
-facet/keyword/similarity search (`/deep-research:search`), personal tags/star-ratings/
-notes kept separate from the registry and from appraisal (`/deep-research:annotate`), and
-a bridge from a hand-picked paper set into an OKF knowledge-graph bundle
-(`/deep-research:okf-export`). Details, with a worked example:
+facet/keyword/similarity search (`/deep-research:search`), answering a question from the
+papers it already holds with span-verified citations (`/deep-research:ask`), personal
+tags/star-ratings/notes kept separate from the registry and from appraisal
+(`/deep-research:annotate`), and a bridge from a hand-picked paper set into an OKF
+knowledge-graph bundle (`/deep-research:okf-export`). Details, with a worked example:
 [`docs/reference-manager.html`](skills/deep-research/docs/reference-manager.html),
 `references/reference-manager.md`.
 

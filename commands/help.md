@@ -15,8 +15,9 @@ Print this cheat sheet directly. Do not read SKILL.md or run any script.
 | `project` | Create/list manuscript projects (appraisals are project-scoped) | no |
 | `watch` | Read-only snapshot of a run's progress (`--once`, non-interactive) | yes |
 | `search` | Facet/keyword/similarity search over the registry | no |
+| `ask` | Answer a question from papers the repo already holds, citing verified spans | no |
 | `annotate` | Personal tags/rating/note on a paper (tag/rate/note/show/list) | no |
-| `embed` | Build/query the semantic-similarity index (`index`/`similar`) | no |
+| `embed` | Build/query the semantic-similarity index (`index`/`similar`/`query`) | no |
 | `okf-export` | Promote hand-picked registry papers into an OKF wiki bundle | no* |
 | `export` | Publish a ReadCube-importable bundle (RIS + PDFs) from the registry | no |
 
@@ -34,6 +35,10 @@ X" or "a literature review") rather than these commands — they're deliberately
   `summarize-set --select-only` first, then re-run without it once the set looks right.
 - Already know it's exactly one paper? → `summarize` (same flags as `summarize-set`,
   minus the discovery/selection machinery).
+- Have a *question* rather than a paper set, and the repo has already read the relevant
+  papers? → `ask`. It answers from what is on the shelf, with verified citations; it never
+  goes to PubMed, so if the shelf is empty the answer is "nothing here", and a full
+  `deep-research` run is what goes looking.
 
 *`verify`'s `single-paper-summary`/`paper-summary-set` modes still require `--run-dir`
 even though they check a summary output, not a full pipeline run. `okf-export` needs no

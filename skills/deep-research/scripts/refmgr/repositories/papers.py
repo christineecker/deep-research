@@ -115,6 +115,36 @@ class PaperRepository:
             reversible=True,
         )
 
+    def update_title(self, paper_id: str, title: str) -> bool:
+        """Correct a paper's title. Returns True when the stored value changed.
+
+        Title is descriptive, not identity: `id` and `created_at` stay immutable, and
+        nothing keyed on the paper moves. This exists so a store that mirrors an
+        external source of truth (`registry.py`'s `registry.jsonl`) can keep the
+        search index honest when that source corrects a title -- `update_metadata`
+        cannot, since title is a column, not a `metadata_json` key.
+        """
+        with db.transaction(self.conn):
+            row = self._get_raw(paper_id)
+            if row is None:
+                raise KeyError(paper_id)
+            if row["title"] == title:
+                return False
+            now = _now()
+            self.conn.execute(
+                "UPDATE papers SET title = ?, updated_at = ? WHERE id = ?",
+                (title, now, paper_id),
+            )
+            self._audit.record(
+                entity_type="paper",
+                entity_id=paper_id,
+                action="update_title",
+                before={"title": row["title"]},
+                after={"title": title},
+                reversible=True,
+            )
+            return True
+
     def set_citation_key(self, paper_id: str, key: str, force: bool = False) -> None:
         """Set a paper's citation_key.
 
