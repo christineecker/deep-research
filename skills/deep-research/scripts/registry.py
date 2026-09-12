@@ -378,9 +378,13 @@ class Registry:
         the rest of a bulk import.
         """
         ids = sorted(self._dirty if evidence_ids is None else evidence_ids)
-        report = {"mirrored": 0, "linked": 0, "errors": []}
+        report = {"mirrored": 0, "linked": 0, "terms": 0, "errors": []}
         if not ids:
             return report
+
+        # Lazy, like every other refmgr import here: nothing in this module pulls the
+        # package in until a caller actually touches the library.
+        import refmgr.repositories.terms as _refmgr_terms
 
         own_service = service is None
         if own_service:
@@ -405,6 +409,8 @@ class Registry:
                     # (see ReferenceManagerService.reindex_paper); the mirror is the
                     # writer here, so it owns keeping the index current.
                     service.reindex_paper(paper_id)
+                    report["terms"] += service.terms.set_terms(
+                        paper_id, _refmgr_terms.terms_from_metadata(rec))
                     report["mirrored"] += 1
                 except Exception as exc:  # one bad record must not abort a bulk import
                     report["errors"].append({"evidence_id": eid, "error": str(exc)})
@@ -424,7 +430,7 @@ class Registry:
         evidence_id) would mint a second refmgr paper on the next pass.
         """
         report = self.mirror_to_refmgr(service=service) if mirror else {
-            "mirrored": 0, "linked": 0, "errors": [], "skipped": True}
+            "mirrored": 0, "linked": 0, "terms": 0, "errors": [], "skipped": True}
         self.save()
         self.generate_pool()
         if report.get("errors"):
@@ -946,12 +952,68 @@ def cmd_reindex(args) -> int:
             if do_chunks:
                 payload["chunks"] = index_chunks(registry, service)
             payload["coverage"] = {"papers_fts": service.search.coverage(),
-                                   "chunks": service.chunks.coverage()}
+                                   "chunks": service.chunks.coverage(),
+                                   "terms": service.terms.coverage()}
     finally:
         service.close()
     emit(payload)
     errors = (payload.get("papers") or {}).get("errors") or []
     return 1 if errors else 0
+
+
+def cmd_facets(args) -> int:
+    """What controlled vocabulary this library actually contains, with paper counts.
+
+    The complement to `search --mesh/--author/--article-type`: those filter by a term you
+    already have in mind, this shows which terms exist to filter on.
+    """
+    repo_root = repo_paths(args.repo)["repo_root"]
+    import refmgr.repositories.terms as _terms_mod
+
+    scheme = args.scheme
+    if scheme not in _terms_mod.SCHEMES:
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "facets",
+              "error": f"unknown scheme {scheme!r} (known: {', '.join(_terms_mod.SCHEMES)})"})
+        return 2
+    if not (repo_paths(repo_root)["refmgr"] / "library.sqlite3").exists():
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "facets",
+              "error": f"no refmgr library yet — run `registry.py reindex --repo {repo_root}`"})
+        return 1
+
+    service = _refmgr_service(repo_root)
+    try:
+        values = service.terms.facets(scheme, limit=args.limit)
+        coverage = service.terms.coverage()
+    finally:
+        service.close()
+    emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "facets",
+          "repo": str(repo_root), "scheme": scheme, "count": len(values),
+          "values": values, "coverage": coverage})
+    return 0
+
+
+def cmd_doctor(args) -> int:
+    """Read-only integrity report over the refmgr library (OPTIMIZATION_PLAN.md item 10).
+
+    Exits 1 when something is actually wrong — a missing or corrupt asset, a dangling
+    attachment — not merely un-indexed, so this is usable as a cron check.
+    """
+    repo_root = repo_paths(args.repo)["repo_root"]
+    if not (repo_paths(repo_root)["refmgr"] / "library.sqlite3").exists():
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "doctor",
+              "error": f"no refmgr library at {repo_paths(repo_root)['refmgr']} — nothing "
+                       f"to check; `registry.py reindex` creates one"})
+        return 1
+    import refmgr.doctor as _doctor
+
+    service = _refmgr_service(repo_root)
+    try:
+        report = _doctor.run(service, deep=args.deep)
+    finally:
+        service.close()
+    emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "doctor",
+          "repo": str(repo_root), "deep": bool(args.deep), **report})
+    return 0 if report["healthy"] else 1
 
 
 def cmd_bib(args) -> int:
@@ -1037,6 +1099,57 @@ def _facet_filter(records: list[dict], args) -> list[dict]:
             out = [r for r in out if (r.get("appraisals") or {}).get(args.project)]
         else:
             out = [r for r in out if r.get("appraisal_status") == args.appraisal_status]
+    return out
+
+
+#: `--<flag>` -> `paper_terms.scheme` for the controlled-vocabulary facets.
+_TERM_FACET_ARGS = {"mesh": "mesh", "author": "author", "article_type": "article_type"}
+
+
+def _term_facet_filter(records: list[dict], args) -> list[dict]:
+    """`--mesh`/`--author`/`--article-type`, served by refmgr's `paper_terms` index.
+
+    Falls back to the record's own metadata lists when the index is unavailable — same
+    contract as the chunk index: an accelerator, never a precondition. The fallback is
+    exact on normalized values *contained in* the record, so both paths agree on what
+    matches.
+    """
+    import refmgr.repositories.terms as _terms_mod
+
+    requested = [(scheme, getattr(args, arg, None))
+                 for arg, scheme in _TERM_FACET_ARGS.items()
+                 if getattr(args, arg, None)]
+    if not requested:
+        return records
+
+    repo_root = repo_paths(args.repo)["repo_root"]
+    service = None
+    if (repo_paths(repo_root)["refmgr"] / "library.sqlite3").exists():
+        try:
+            service = _refmgr_service(repo_root)
+        except Exception:
+            service = None
+
+    out = records
+    try:
+        for scheme, needle in requested:
+            if service is not None:
+                try:
+                    paper_ids = service.terms.papers_with_term(scheme, needle)
+                    out = [r for r in out if r.get("refmgr_paper_id") in paper_ids]
+                    continue
+                except Exception:
+                    print(f"registry.py: term index unusable; filtering {scheme} in "
+                          f"memory — `registry.py reindex --repo {repo_root}` rebuilds it",
+                          file=sys.stderr)
+            field = _terms_mod.SCHEME_FIELDS[scheme]
+            norm_needle = _terms_mod.normalize(needle)
+            out = [r for r in out
+                   if any(norm_needle in _terms_mod.normalize(v)
+                          for v in (r.get(field) or []) if isinstance(v, str))]
+    finally:
+        if service is not None:
+            service.close()
     return out
 
 
@@ -1329,6 +1442,7 @@ def cmd_search(args) -> int:
     records = sorted(registry.records.values(), key=lambda r: r.get("evidence_id") or "")
 
     records = _facet_filter(records, args)
+    records = _term_facet_filter(records, args)
     records = _annotation_filter(records, args)
     records, snippets = _keyword_filter(records, args)
 
@@ -1424,6 +1538,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="rebuild the full-text chunk index only")
     s.set_defaults(func=cmd_reindex)
 
+    s = sub.add_parser("facets", help="most common MeSH/keyword/article-type/author "
+                                      "values in the library, with paper counts")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--scheme", default="mesh",
+                   choices=("mesh", "keyword", "article_type", "author"))
+    s.add_argument("--limit", type=int, default=50)
+    s.set_defaults(func=cmd_facets)
+
+    s = sub.add_parser("doctor", help="read-only integrity report over the refmgr library")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--deep", action="store_true",
+                   help="re-hash every asset instead of trusting a matching file size")
+    s.set_defaults(func=cmd_doctor)
+
     s = sub.add_parser("bib", help="export repo-wide or scoped BibTeX from the registry")
     s.add_argument("--repo", required=True)
     s.add_argument("--out", required=True, help="output .bib path")
@@ -1452,6 +1580,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--status", choices=STATUS_VALUES)
     s.add_argument("--extraction-status", dest="extraction_status", choices=EXTRACTION_STATUS_VALUES)
     s.add_argument("--appraisal-status", dest="appraisal_status", choices=APPRAISAL_STATUS_VALUES)
+    s.add_argument("--mesh", help="require a MeSH heading containing this text")
+    s.add_argument("--author", help="require an author whose name contains this text")
+    s.add_argument("--article-type", dest="article_type",
+                   help="require an article type containing this text (e.g. 'randomized')")
     s.add_argument("--tag", help="require this annotation tag (data/papers/annotations.jsonl)")
     s.add_argument("--min-rating", dest="min_rating", type=int,
                    help="require an annotation star rating >= N")

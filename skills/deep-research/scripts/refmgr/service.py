@@ -25,6 +25,7 @@ from .repositories.organization import OrganizationRepository
 from .repositories.papers import PaperRepository
 from .repositories.saved_searches import SavedSearchRepository
 from .repositories.search import SearchRepository
+from .repositories.terms import TermRepository
 
 
 class ReferenceManagerService:
@@ -39,6 +40,7 @@ class ReferenceManagerService:
         self.audit = AuditRepository(self.conn)
         self.search = SearchRepository(self.conn)
         self.chunks = ChunkRepository(self.conn)
+        self.terms = TermRepository(self.conn)
         self.saved_searches = SavedSearchRepository(self.conn)
 
     def reindex_paper(self, paper_id: str) -> None:

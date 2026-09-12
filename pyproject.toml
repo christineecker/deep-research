@@ -1,0 +1,28 @@
+# Test/dev configuration only.
+#
+# This project ships as a Claude Code plugin, not as an installable Python
+# package: the scripts under skills/deep-research/scripts/ are run directly and
+# are stdlib-only by policy (references/acquisition.md §9). Nothing here changes
+# that — there is no [project] table and no build backend, because there is
+# nothing to build or install.
+#
+# What this file does provide is the one thing the repo was missing: a
+# reproducible way to run the test suite (OPTIMIZATION_PLAN.md item 8).
+#
+#     uv venv --python 3.11 .venv
+#     uv pip install --python .venv/bin/python -r requirements-dev.txt
+#     .venv/bin/python -m pytest
+#
+# Runtime dependencies are deliberately NOT declared here. `requests` and
+# `pdfminer.six` are needed by the full-text ladder at runtime and appear in
+# requirements-dev.txt so the suite can import those modules; installing them is
+# the user's environment decision, not something this repo imposes.
+# `sentence-transformers` stays optional in every sense — the suite skips the
+# tests that need it (see tests/test_embeddings.py).
+
+[tool.pytest.ini_options]
+testpaths = ["skills/deep-research/tests"]
+# The suite's own helpers (helpers.py) and the refmgr package are imported by
+# module name, so both directories have to be importable.
+pythonpath = ["skills/deep-research/tests", "skills/deep-research/scripts"]
+addopts = "-q"

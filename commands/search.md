@@ -9,6 +9,11 @@ Parse `$ARGUMENTS` for:
 - `--status registered|screening|included|excluded`
 - `--extraction-status not_started|in_progress|extracted`
 - `--appraisal-status not_appraised|in_progress|appraised`
+- `--mesh <text>` — requires a MeSH heading containing this text (case-insensitive
+  substring, so `--mesh depress` matches "Depressive Disorder, Major").
+- `--author <text>` — requires an author name containing this text.
+- `--article-type <text>` — requires an article type containing this text, e.g.
+  `--article-type randomized`.
 - `--tag <tag>` — requires this annotation tag (`data/papers/annotations.jsonl`).
 - `--min-rating N` — requires an annotation star rating >= N.
 - `--project <slug>` — scopes `--appraisal-status appraised` and `--q`'s appraisal-rationale
@@ -24,7 +29,13 @@ Parse `$ARGUMENTS` for:
 Steps:
 1. Print, then run:
    ```
-   python3 "${CLAUDE_PLUGIN_ROOT}/skills/deep-research/scripts/registry.py" search --repo <path> [--journal <substr>] [--year <spec>] [--status <s>] [--extraction-status <s>] [--appraisal-status <s>] [--tag <tag>] [--min-rating N] [--project <slug>] [--q "<text>"] [--similar-to <evidence-id>] [--limit N]
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/deep-research/scripts/registry.py" search --repo <path> [--journal <substr>] [--year <spec>] [--status <s>] [--extraction-status <s>] [--appraisal-status <s>] [--mesh <text>] [--author <text>] [--article-type <text>] [--tag <tag>] [--min-rating N] [--project <slug>] [--q "<text>"] [--similar-to <evidence-id>] [--limit N]
+   ```
+
+   To see which MeSH headings, authors or article types the library actually holds
+   before filtering on one:
+   ```
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/deep-research/scripts/registry.py" facets --repo <path> --scheme mesh|keyword|article_type|author [--limit N]
    ```
 2. Print the script's own output verbatim. If nothing matches, say so plainly — that's the
    answer, not an error.

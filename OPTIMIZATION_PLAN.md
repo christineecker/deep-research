@@ -271,7 +271,23 @@ remains the only thing that adjudicates.
 carrying a verified span, and refuses (visibly) when retrieval returns
 nothing relevant.
 
-### 7. `search-rerun` — new-hits alerting — S
+### 7. `search-rerun` — new-hits alerting — S — **done**
+
+Shipped as `scripts/alerts.py` (`save`/`list`/`delete`/`run`) + `commands/alerts.md`,
+storing specs in refmgr's existing `saved_searches` table. Two deviations from the
+sketch below, both deliberate:
+
+- **Entry date, not `mindate`/`reldate`.** A rerun appends
+  `AND ("<since>"[edat] : "3000"[edat])` to the saved query. The alert question is "what
+  is new *to me*", which is an indexing event, not a publication date.
+- **Not registered in the query log.** `corpus.py query-register` is run-scoped and an
+  alert has no run, so the baseline lives in the saved search's own `last_run` state
+  instead. Forcing a synthetic run directory just to log a rerun would have been
+  bookkeeping for its own sake.
+
+Tests: `tests/test_alerts.py` (network patched, never live).
+
+Original scope:
 
 Execute stored saved searches: esearch with `mindate` / `reldate` plus the
 normalized query hash the query log already keeps (`corpus.py query-register`
@@ -281,7 +297,16 @@ daemon; one command the user or a cron runs.
 **Done when**: re-running a saved search over a fixture reports only records
 absent from the registry, and registers the query in the log like any other.
 
-### 8. Test infrastructure and CI — S
+### 8. Test infrastructure and CI — S — **done**
+
+Shipped as `pyproject.toml` (test configuration only — no `[project]` table, because
+this repo is a plugin and not an installable package), `requirements-dev.txt`, and
+`.github/workflows/tests.yml` running the suite on push and pull request against
+Python 3.11. `pytest` now needs no arguments from the repo root; verified from a clean
+copy with a fresh environment. `sentence-transformers` stays out of CI — the tests that
+need it skip rather than pulling a torch stack into every run.
+
+Original scope:
 
 - `pyproject.toml` (or a minimal `requirements-dev.txt`) declaring `pytest`
   and the interpreter, matching the uv-managed 3.11.15 target the v2 plan
@@ -294,7 +319,16 @@ absent from the registry, and registers the query in the log like any other.
 **Done when**: a clean checkout runs the full suite with two documented
 commands, and CI fails on a failing test.
 
-### 9. Term and facet tables — M
+### 9. Term and facet tables — M — **done**
+
+Shipped as `migrations/0004_terms.sql` + `refmgr/repositories/terms.py`, populated by the
+same mirror as everything else, with `--mesh`/`--author`/`--article-type` on
+`registry.py search` and a `registry.py facets` command for "what is actually in this
+library". Matching is case-insensitive substring on a normalized value — MeSH headings
+are long and people type fragments — and falls back to the record's own metadata lists
+when the index is absent, with identical results. Tests: `tests/test_refmgr_terms.py`.
+
+Original scope:
 
 Normalized `paper_terms(paper_id, scheme, value)` for MeSH terms, keywords,
 article types and authors, populated from the same source as the mirror in
@@ -302,7 +336,22 @@ item 4. Adds `--mesh`, `--author`, `--article-type` facets to
 `registry.py search` and makes hedge recall auditable against what was
 actually indexed.
 
-### 10. `refmgr doctor` — S
+### 10. `refmgr doctor` — S — **done**
+
+Shipped as `refmgr/doctor.py` + `registry.py doctor` + `commands/doctor.md`, read-only as
+planned. Two decisions worth recording:
+
+- **Exit code distinguishes loss from staleness.** Missing files, corrupt assets and
+  dangling attachments exit 1; un-indexed papers and orphan index rows do not, since
+  `reindex` fixes those. That makes it usable from cron without crying wolf over a
+  library that simply has no PDFs yet.
+- **`--deep` is opt-in.** The default trusts a matching file size and hashes only what
+  already looks wrong, so it stays cheap enough to run often; a shallow clean result is
+  reported as "nothing obviously wrong", not "verified".
+
+Tests: `tests/test_refmgr_doctor.py`, including a read-only assertion over file mtimes.
+
+Original scope:
 
 Minimal integrity check pulled out of Phase 6: verify every attachment's
 recorded hash against the file on disk, list assets with no paper and papers
@@ -316,8 +365,12 @@ with a missing asset. Read-only, no repair — reporting first.
 |---|---|---|
 | ~~Now~~ done | 1, 2, 3 | Independent, small, each immediately useful |
 | ~~Next~~ done | 4, 5, 6 | One arc: make `refmgr` the index, index the text, answer from the index |
-| Now | 7, 8 | Ongoing use, and the CI that keeps 1–7 honest |
-| Later | 9, 10 | Polish and integrity |
+| ~~Now~~ done | 7, 8 | Ongoing use, and the CI that keeps 1–7 honest |
+| ~~Later~~ done | 9, 10 | Polish and integrity |
+
+Every item in this plan is now shipped. What remains is in "Open questions" below, plus
+the paused Phase 4 scope in `REFERENCE_MANAGER_V2_PLAN.md`, which this plan deliberately
+did not restart.
 
 Item 8 is placed after the first arc only because the arc is what makes the
 suite worth gating on; moving it first is a defensible reordering.

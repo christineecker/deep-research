@@ -12,8 +12,11 @@ reads/writes the same `data/papers/registry.jsonl` and its neighbors described i
 | Piece | Script | Storage | What it does |
 |---|---|---|---|
 | Search | `registry.py search` | reads `registry.jsonl`, `annotations.jsonl`, refmgr's indexes | Facet filters + full-text keyword search + optional similarity ranking, all in one subcommand |
-| Index | `registry.py reindex` | `data/refmgr/library.sqlite3` (`papers_fts`, `chunks_fts`) | Rebuilds both derived indexes from the registry and the snapshot store |
+| Index | `registry.py reindex` | `data/refmgr/library.sqlite3` (`papers_fts`, `chunks_fts`, `paper_terms`) | Rebuilds every derived index from the registry and the snapshot store |
+| Facets | `registry.py facets` | `paper_terms` | What MeSH headings / keywords / article types / authors the library actually holds, with counts |
+| Health | `registry.py doctor` | none — read-only | Missing or corrupt assets, dangling attachments, stale index rows |
 | Ask | `ask.py retrieve` | none new | Hybrid retrieval over the indexes, every hit re-verified as a span; the answering command writes prose from the result |
+| Alerts | `alerts.py` | refmgr's `saved_searches` table | Saved PubMed queries, re-run on demand to report (or register) what the repo has not seen |
 | Annotations | `annotations.py` | `data/papers/annotations.jsonl` | Personal tags/star-rating/note per `evidence_id`, kept separate from the registry and from project-scoped appraisal |
 | Embeddings | `embeddings.py` | `data/papers/embeddings.jsonl` | Cached per-paper embedding vectors + cosine-similarity nearest-neighbour lookup |
 | OKF export | `research.py okf-export` | a synthetic `runs/<slug>-okf-export-<ts>/` | Promotes a hand-picked evidence_id set into an existing OKF wiki bundle via `okf.py promote`, unmodified |
@@ -53,6 +56,12 @@ python3 scripts/registry.py search --repo <path> \
 - **Facet filters** (`--journal`, `--year`, `--status`, `--extraction-status`,
   `--appraisal-status`) operate purely in-memory over fields the registry already carries
   (`pool-architecture.md` "Registry lifecycle fields") — no new storage, no index to build.
+- **Controlled-vocabulary filters** (`--mesh`, `--author`, `--article-type`) match a
+  case-insensitive *substring* of a term, because MeSH headings are long and people type
+  fragments: `--mesh depress` finds "Depressive Disorder, Major". They are served by the
+  `paper_terms` index and fall back to the record's own metadata lists when it is absent,
+  with identical results either way. `registry.py facets --scheme mesh|keyword|
+  article_type|author` lists what is available to filter on, with paper counts.
 - **`--tag`/`--min-rating`** join against `data/papers/annotations.jsonl` read-only; search
   never writes to it.
 - **`--q`** is a stdlib-only, lowercase AND-of-terms keyword search over title, abstract,
@@ -163,6 +172,62 @@ not on a comparable scale and normalizing them would invent a relationship.
 hashes, whose offsets no longer fit, or whose text no longer matches is moved to
 `unverified` with its `reason_code` and must not be cited. This is the same gate the
 assembler applies to a run, pointed at a retrieval result instead of a corpus.
+
+## Health checks (`registry.py doctor`)
+
+```bash
+python3 scripts/registry.py doctor --repo <path> [--deep]
+```
+
+Read-only. Content-addressed storage fails quietly — a PDF deleted out from under the
+database stays invisible until an export or a reader tries to open it — so this looks for
+that on purpose: missing asset files, assets whose bytes no longer hash to their name,
+attachments pointing at absent assets or papers, orphan assets, and stale/orphaned index
+rows.
+
+Two distinctions the output depends on:
+
+- **Exit code 1 means data loss, not staleness.** Missing files, corrupt assets and
+  dangling attachments make the report unhealthy; un-indexed papers and orphan index rows
+  do not, because `registry.py reindex` fixes those and nothing is at risk. A library with
+  no PDFs attached yet is healthy.
+- **`--deep` re-hashes every asset**; the default trusts a matching file size and only
+  hashes what already looks wrong. A shallow clean result means "nothing obviously wrong",
+  not "every byte verified" — which is the trade that makes it cheap enough to run often.
+
+Nothing here repairs anything. A missing or corrupt original cannot be rebuilt from the
+registry (originals are immutable by design), so the response is a restore or a
+re-import, and that is the user's call, not the script's.
+
+## Saved searches and alerts (`alerts.py`)
+
+```bash
+python3 scripts/alerts.py save   --repo <path> --name <name> --query "<pubmed query>" \
+  [--filters-json '<json>'] [--force]
+python3 scripts/alerts.py list   --repo <path>
+python3 scripts/alerts.py delete --repo <path> --name <name>
+python3 scripts/alerts.py run    --repo <path> [--name <name>] [--since YYYY/MM/DD] \
+  [--retmax N] [--register] [--dry-run]
+```
+
+Storage is refmgr's existing `saved_searches` table — no new file. Each row's
+`query_json` holds `{kind: "pubmed", query, filters, last_run}`; `last_run` is the
+script's own bookkeeping (when it ran, what floor it used, how many were new).
+
+Three things are worth being precise about:
+
+- **Entry date, not publication date.** A rerun appends
+  `AND ("<since>"[edat] : "3000"[edat])` — records *entered into PubMed* since the search
+  last ran. A 2019 paper indexed last week is new to you and is reported as such.
+  `--filters-json`'s `years` still means publication date, as everywhere else.
+- **"New" means absent from `registry.jsonl`**, checked against both the `pmid` field and
+  `pmid:` evidence_ids. Without `--register` nothing is added, so the same papers appear
+  again on the next run from a later floor; `--register` adds them (through
+  `Registry.commit`, so they are mirrored and indexed like any other record) and moves
+  the baseline.
+- **No daemon.** `run` is a command the user or their own cron invokes. Nothing here
+  schedules itself, and the run is not recorded in a run's query log — the query log is
+  run-scoped (`corpus.py query-register`) and an alert has no run.
 
 ## OKF export (`research.py okf-export`)
 

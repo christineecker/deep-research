@@ -57,6 +57,7 @@
         <li><strong>Facet filters</strong> — <code>--journal</code>, <code>--year</code>, <code>--status</code>, <code>--extraction-status</code>, <code>--appraisal-status</code> — plain in-memory filters over fields the registry already carries.</li>
         <li><strong>Annotation filters</strong> — <code>--tag</code>, <code>--min-rating</code> — join read-only against <code>annotations.jsonl</code>.</li>
         <li><strong>Keyword search</strong> — <code>--q "text"</code> — a stdlib-only, lowercase AND-of-terms match over title, abstract, journal, the extraction's claim sentences and outcome names, extraction narrative, appraisal rationale (scope it to one review with <code>--project</code>), and the paper's full text. Claims are searched ahead of raw full text, so a snippet quotes the extracted finding whenever both match.</li>
+        <li><strong>Controlled vocabulary</strong> — <code>--mesh</code>, <code>--author</code>, <code>--article-type</code> — case-insensitive substring match against MeSH headings, author names and article types, so <code>--mesh depress</code> finds "Depressive Disorder, Major". <code>registry.py facets --scheme mesh</code> lists what the library actually holds, with paper counts.</li>
         <li><strong>Similarity ranking</strong> — <code>--similar-to &lt;evidence-id&gt;</code> — re-ranks whatever the filters above surfaced by cosine similarity, using the cache built by <code>embeddings.py index</code>.</li>
       </ul>
       <pre><code>python3 scripts/registry.py search --repo ~/lit/ --tag to-read --min-rating 4 --q "biomarker"</code></pre>
@@ -92,11 +93,23 @@ python3 scripts/registry.py search --repo ~/lit/ --similar-to pmid:38214501 --li
         <strong>The script retrieves; the agent writes.</strong> <code>ask.py</code> calls no model. It returns a bundle of verified evidence, and <code>commands/ask.md</code> is the contract for turning that into an answer — cite by <code>evidence_id</code>, quote the verified bytes, and when nothing survives verification, say the library has nothing on the question rather than answering from memory. It is not a literature search: it cannot find a paper the repo has never seen.
       </div>
 
+      <h2>Saved Searches And Alerts (<code>alerts.py</code>)</h2>
+      <p>Save a PubMed query, then re-run it whenever you want to know what has appeared since last time. Storage is refmgr's existing saved-searches table — no new file, no daemon, no background polling: <code>run</code> is a command you (or your own cron) invoke.</p>
+      <pre><code>python3 scripts/alerts.py save --repo ~/lit/ --name cbt --query "CBT AND adolescents"
+python3 scripts/alerts.py run  --repo ~/lit/ --register</code></pre>
+      <p>Each rerun is bounded by <em>entry date</em> — records added to PubMed since that search last ran — because the question is "what is new to me", and a 2019 paper indexed last week is new to you. Hits are diffed against <code>registry.jsonl</code>, so "new" means the repo has never seen it. Without <code>--register</code> nothing is added and the same papers will surface again next time; with it they are registered through the normal path, mirrored and indexed like any other record.</p>
+
       <h2>Indexes (<code>registry.py reindex</code>)</h2>
       <p><code>registry.jsonl</code> is the source of truth. The SQLite library at <code>data/refmgr/</code> is an index built from it — every mutating registry command mirrors its changed records into refmgr and reindexes them, and the full-text chunk index is built from the stored snapshots. Both are rebuildable, so a lost or corrupt database is repaired, not restored:</p>
       <pre><code>python3 scripts/registry.py reindex --repo ~/lit/                 # both indexes
 python3 scripts/registry.py reindex --repo ~/lit/ --chunks-only   # full text only</code></pre>
       <p>This is also the backfill path for a repo whose papers were registered before the mirror existed, and it is safe to re-run: an unchanged snapshot is skipped rather than re-split. If the index is missing or unusable, <code>search --q</code> falls back to scanning snapshot bodies — slower, same answers.</p>
+
+      <h2>Health Check (<code>registry.py doctor</code>)</h2>
+      <p>Content-addressed storage fails quietly: a PDF deleted out from under the database stays invisible until an export or a reader tries to open it. <code>doctor</code> looks for that — missing asset files, bytes that no longer hash to their name, attachments pointing at nothing, and stale or orphaned index rows. It is read-only and repairs nothing.</p>
+      <pre><code>python3 scripts/registry.py doctor --repo ~/lit/          # fast: trusts file sizes
+python3 scripts/registry.py doctor --repo ~/lit/ --deep   # exact: re-hashes every asset</code></pre>
+      <p>It exits non-zero only for actual data loss — missing or corrupt assets, dangling attachments — so it is usable from cron. Stale index rows are reported but stay "healthy", because <code>reindex</code> fixes those and nothing is at risk. A missing original cannot be rebuilt from the registry, so that finding means restore-from-backup or re-import, which is your decision, not the script's.</p>
 
       <h2>OKF Knowledge-Graph Export (<code>research.py okf-export</code>)</h2>
       <p>Pick N papers out of the registry by evidence_id and promote them into an existing OKF wiki bundle, reusing <code>okf.py promote</code>'s validator unmodified rather than hand-writing a second concept-emission path. Each evidence_id must already have an extraction on file (run <code>/deep-research:summarize</code> first if not).</p>
@@ -156,11 +169,11 @@ $ python3 scripts/research.py okf-export --repo ~/lit/ \
           <tr><td><code>data/papers/registry.jsonl</code></td><td><code>registry.py</code> (existing)</td><td>Canonical bibliographic + intake lifecycle record, one per paper.</td></tr>
           <tr><td><code>data/papers/annotations.jsonl</code></td><td><code>annotations.py</code></td><td>Personal tags/star-rating/note, one record per evidence_id, never merged into the registry.</td></tr>
           <tr><td><code>data/papers/embeddings.jsonl</code></td><td><code>embeddings.py</code></td><td>Cached embedding vector per evidence_id, used by <code>similar</code>/<code>query</code>/<code>search --similar-to</code> and <code>ask</code>'s semantic leg.</td></tr>
-          <tr><td><code>data/refmgr/library.sqlite3</code></td><td><code>registry.py</code> (mirror + <code>reindex</code>)</td><td>Derived index only: papers/identifiers, <code>papers_fts</code>, and the full-text <code>chunks_fts</code>. Rebuildable from the registry and the snapshot store.</td></tr>
+          <tr><td><code>data/refmgr/library.sqlite3</code></td><td><code>registry.py</code> (mirror + <code>reindex</code>), <code>alerts.py</code></td><td>Derived index: papers/identifiers, <code>papers_fts</code>, the full-text <code>chunks_fts</code>, and the <code>paper_terms</code> facet index, all rebuildable from the registry and the snapshot store — plus <code>saved_searches</code>, which is durable state, not derived.</td></tr>
         </tbody>
       </table>
 
-      <footer class="footer">Slash commands: <code>commands/search.md</code>, <code>commands/ask.md</code>, <code>commands/annotate.md</code>, <code>commands/embed.md</code>, <code>commands/okf-export.md</code>. Full agent-facing spec: <code>references/reference-manager.md</code>. Annotation record schema: <code>references/schema/16-annotation.md</code>.</footer>
+      <footer class="footer">Slash commands: <code>commands/search.md</code>, <code>commands/ask.md</code>, <code>commands/alerts.md</code>, <code>commands/reindex.md</code>, <code>commands/doctor.md</code>, <code>commands/annotate.md</code>, <code>commands/embed.md</code>, <code>commands/okf-export.md</code>. Full agent-facing spec: <code>references/reference-manager.md</code>. Annotation record schema: <code>references/schema/16-annotation.md</code>.</footer>
     </main>
   </div>
 </body>

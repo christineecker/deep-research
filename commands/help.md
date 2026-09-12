@@ -16,6 +16,9 @@ Print this cheat sheet directly. Do not read SKILL.md or run any script.
 | `watch` | Read-only snapshot of a run's progress (`--once`, non-interactive) | yes |
 | `search` | Facet/keyword/similarity search over the registry | no |
 | `ask` | Answer a question from papers the repo already holds, citing verified spans | no |
+| `alerts` | Saved PubMed searches (`save`/`list`/`delete`/`run`); `run` reports what's new | no |
+| `reindex` | Rebuild the repo's derived search indexes (safe to re-run) | no |
+| `doctor` | Read-only integrity check: missing/corrupt PDFs, stale index rows | no |
 | `annotate` | Personal tags/rating/note on a paper (tag/rate/note/show/list) | no |
 | `embed` | Build/query the semantic-similarity index (`index`/`similar`/`query`) | no |
 | `okf-export` | Promote hand-picked registry papers into an OKF wiki bundle | no* |

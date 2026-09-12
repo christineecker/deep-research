@@ -1,0 +1,48 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches the uv-managed interpreter the reference-manager work targets
+          # (REFERENCE_MANAGER_V2_PLAN.md, "Known issues and standing decisions").
+          python-version: '3.11'
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      - name: Check SQLite has FTS5
+        # papers_fts and chunks_fts are FTS5 virtual tables; without the module the
+        # failure surfaces as a confusing migration error deep inside the suite.
+        run: |
+          python - <<'PY'
+          import sqlite3
+          conn = sqlite3.connect(":memory:")
+          conn.execute("CREATE VIRTUAL TABLE t USING fts5(x)")
+          print("FTS5 available:", sqlite3.sqlite_version)
+          PY
+
+      - name: Run the test suite
+        # The suite never touches the network: e-utilities calls are patched or
+        # replayed from fixtures. Keep it that way — a test that needs the network
+        # belongs behind an explicit marker, not in the default run.
+        run: python -m pytest

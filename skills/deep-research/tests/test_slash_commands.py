@@ -26,6 +26,7 @@ watch = load_script("watch.py")
 annotations = load_script("annotations.py")
 embeddings = load_script("embeddings.py")
 ask = load_script("ask.py")
+alerts = load_script("alerts.py")
 
 
 def status_parser() -> argparse.ArgumentParser:
@@ -125,6 +126,17 @@ class SlashCommandArgvTest(unittest.TestCase):
             "--tag", "to-read", "--min-rating", "4", "--project", "autism-mrs",
             "--q", "diagnostics", "--similar-to", "pmid:12345678", "--limit", "5",
         ])
+        registry.build_parser().parse_args([
+            "search", "--repo", "/tmp/demo-repo", "--mesh", "autism",
+            "--author", "kaufmann", "--article-type", "randomized",
+        ])
+
+    def test_facets_and_doctor(self):
+        registry.build_parser().parse_args([
+            "facets", "--repo", "/tmp/demo-repo", "--scheme", "mesh", "--limit", "20",
+        ])
+        registry.build_parser().parse_args(["doctor", "--repo", "/tmp/demo-repo"])
+        registry.build_parser().parse_args(["doctor", "--repo", "/tmp/demo-repo", "--deep"])
 
     def test_annotate(self):
         annotations.build_parser().parse_args([
@@ -163,6 +175,21 @@ class SlashCommandArgvTest(unittest.TestCase):
             "retrieve", "--repo", "/tmp/demo-repo", "--question", "does X reduce Y?",
             "--k", "8", "--passages-per-paper", "3", "--project", "autism-mrs",
             "--no-semantic",
+        ])
+
+    def test_alerts(self):
+        alerts.build_parser().parse_args([
+            "save", "--repo", "/tmp/demo-repo", "--name", "cbt",
+            "--query", "CBT AND adolescents",
+            "--filters-json", '{"years":[2020,2026]}', "--force",
+        ])
+        alerts.build_parser().parse_args(["list", "--repo", "/tmp/demo-repo", "--limit", "50"])
+        alerts.build_parser().parse_args([
+            "delete", "--repo", "/tmp/demo-repo", "--name", "cbt",
+        ])
+        alerts.build_parser().parse_args([
+            "run", "--repo", "/tmp/demo-repo", "--name", "cbt", "--since", "2026/01/31",
+            "--retmax", "200", "--register", "--dry-run", "--email", "a@example.org",
         ])
 
     def test_reindex(self):

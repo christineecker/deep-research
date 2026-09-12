@@ -48,6 +48,9 @@ matching script directly, no pipeline negotiation:
 | `/deep-research:watch` | Read-only snapshot of a run's progress |
 | `/deep-research:search` | Facet/keyword/similarity search over the registry |
 | `/deep-research:ask` | Answer a question from papers the repo already holds, with verified citations |
+| `/deep-research:alerts` | Saved PubMed searches; re-run to see what the repo hasn't seen |
+| `/deep-research:reindex` | Rebuild the repo's derived search indexes |
+| `/deep-research:doctor` | Read-only integrity check over stored PDFs and indexes |
 | `/deep-research:annotate` | Personal tags/rating/note on a paper |
 | `/deep-research:embed` | Build/query the semantic-similarity index |
 | `/deep-research:okf-export` | Promote hand-picked registry papers into an OKF wiki bundle |
@@ -101,8 +104,11 @@ The standalone repo doubles as a personal reference manager on top of the same r
 facet/keyword/similarity search (`/deep-research:search`), answering a question from the
 papers it already holds with span-verified citations (`/deep-research:ask`), personal
 tags/star-ratings/notes kept separate from the registry and from appraisal
-(`/deep-research:annotate`), and a bridge from a hand-picked paper set into an OKF
-knowledge-graph bundle (`/deep-research:okf-export`). Details, with a worked example:
+(`/deep-research:annotate`), MeSH/author/article-type facets, saved PubMed searches that
+report what's new (`/deep-research:alerts`), and a bridge from a hand-picked paper set
+into an OKF knowledge-graph bundle (`/deep-research:okf-export`). Search indexes are
+derived and rebuildable (`/deep-research:reindex`); `/deep-research:doctor` reports
+missing or damaged PDFs without touching anything. Details, with a worked example:
 [`docs/reference-manager.html`](skills/deep-research/docs/reference-manager.html),
 `references/reference-manager.md`.
 
@@ -131,6 +137,18 @@ incomplete work continues. `/deep-research:status <run-dir> --table` shows what'
 
 ## Testing
 
-`python3 -m unittest discover -s skills/deep-research/tests` runs the unit suite, no
-network needed. `skills/deep-research/scripts/eval.py` runs fixture-backed evals
-(`--live` opts into real PubMed).
+```bash
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python -r requirements-dev.txt
+.venv/bin/python -m pytest
+```
+
+`pytest` needs no arguments — paths and import roots are in `pyproject.toml`, which is
+test configuration only (this repo ships as a plugin, not an installable package).
+`python3 -m unittest discover -s skills/deep-research/tests` still works if you'd rather
+not create an environment, as long as `requests` and `pdfminer.six` are importable.
+
+The suite never touches the network, and CI (`.github/workflows/tests.yml`) runs it on
+every push and pull request. `sentence-transformers` is deliberately not installed there
+— the tests that need it skip. `skills/deep-research/scripts/eval.py` runs fixture-backed
+evals (`--live` opts into real PubMed).
