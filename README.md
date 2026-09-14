@@ -17,7 +17,11 @@ general web research.
 
 This repo is a Claude Code plugin.
 
-- **Local dev**: `claude --plugin-dir /path/to/deep-research`
+- **Local dev**:
+  ```
+  git clone https://github.com/christineecker/deep-research.git
+  claude --plugin-dir /path/to/deep-research
+  ```
 - **From a marketplace**:
   ```
   /plugin marketplace add https://forgejo.sphache.synology.me/sphache/deep-research.git
