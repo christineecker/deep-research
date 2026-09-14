@@ -16,6 +16,7 @@
         <a href="quickstart.html">Quickstart</a>
         <a href="questions.html">Scientific questions</a>
         <a href="pipeline.html">Full pipeline</a>
+        <a href="evidence-kernel.html">Evidence kernel</a>
         <a href="paper-summaries.html">Paper summaries</a>
         <a href="reference-manager.html">Reference manager</a>
         <a href="readcube-export.html">ReadCube export</a>
@@ -28,27 +29,379 @@
     </aside>
     <main class="content">
       <section class="hero">
-        <p class="eyebrow">Critical appraisal</p>
-        <h1>Appraisal is design-specific and span-backed.</h1>
-        <p class="lead">The tool selects a framework based on study design and records domain judgements with source support.</p>
+        <p class="eyebrow">Stage 6 — critical appraisal</p>
+        <h1>Appraisal is not a quality score. It is a judgement about whether a specific result can answer a specific question.</h1>
+        <p class="lead">The tool is picked from the study design, the judgement is made per result rather than per paper, every non-<code>unclear</code> domain is anchored to a character span in the retrieved source, and the overall verdict follows the instrument's own algorithm — never an average, never a vote.</p>
       </section>
 
-      <h2>Framework Routing</h2>
+      <h2>The Order, Every Time</h2>
+      <ol>
+        <li><strong>Identify the result being appraised</strong> — population, intervention/exposure, comparator, outcome, effect measure, follow-up window, and whether the question is about <em>assignment</em> to an intervention or <em>adherence</em> to it.</li>
+        <li><strong>Pick the instrument from the design</strong>, not from the paper's self-description. A paper can call itself "prospective" or "real-world" without changing the tool it needs.</li>
+        <li><strong>Appraise the specific result</strong>, not the article's general polish. Risk can differ across outcomes inside one paper.</li>
+        <li><strong>Anchor every non-<code>unclear</code> judgement to a span.</strong> A domain rationale without source offsets is reasoning without auditability — see <a href="evidence-kernel.html">Evidence kernel</a>.</li>
+        <li><strong>Convert domains to the overall judgement using the tool's algorithm.</strong> Do not average, vote, or compensate a serious domain with several reassuring ones.</li>
+        <li><strong>Carry the appraisal into synthesis as a constraint on claims.</strong> A high-risk or abstract-only study can still be described; it should not support strong effect language.</li>
+      </ol>
+
+      <h2>Which Tool, And Why</h2>
+      <p>Routing is driven by the extracted <code>design</code> plus the corpus record's <code>article_types</code>. Exactly one tool per record.</p>
       <table>
-        <thead><tr><th>Design</th><th>Framework</th><th>Important boundary</th></tr></thead>
+        <thead><tr><th>Study design, as extracted</th><th>Tool</th><th>Judgement scale</th></tr></thead>
         <tbody>
-          <tr><td>Randomized trial</td><td>RoB2</td><td>Result-specific risk of bias.</td></tr>
-          <tr><td>Non-randomized intervention study</td><td>ROBINS-I</td><td>Effect-of-interest must be named.</td></tr>
-          <tr><td>Cohort or case-control</td><td>Newcastle-Ottawa Scale</td><td>Report star count, not a generic quality label.</td></tr>
-          <tr><td>Systematic review</td><td>AMSTAR-2</td><td>Review appraisal, not primary-study appraisal.</td></tr>
-          <tr><td>Diagnostic accuracy</td><td>QUADAS-2</td><td>Per index test/reference standard; separates applicability.</td></tr>
-          <tr><td>Prediction model</td><td>PROBAST</td><td>Per model and development/validation target.</td></tr>
-          <tr><td>Qualitative study</td><td>CASP qualitative</td><td>Report checklist count, not risk of bias.</td></tr>
-          <tr><td>Prevalence estimate</td><td>JBI prevalence</td><td>Report checklist count.</td></tr>
-          <tr><td>Cross-sectional association</td><td>JBI analytical cross-sectional</td><td>Report checklist count.</td></tr>
-          <tr><td>No suitable tool or abstract-only</td><td><code>tool: "none"</code></td><td>Record why appraisal was not performed.</td></tr>
+          <tr><td>Individually randomized parallel-group trial; cluster-randomized; crossover</td><td>RoB 2 (with the cluster/crossover variant where applicable)</td><td>low / some concerns / high</td></tr>
+          <tr><td>Quasi-randomized (alternation, date of birth, record number)</td><td>ROBINS-I — allocation is not random</td><td>low / moderate / serious / critical / no information</td></tr>
+          <tr><td>Non-randomized intervention study with a comparator: prospective or retrospective cohort of an intervention, controlled before-after, interrupted time series with comparator, database/claims study</td><td>ROBINS-I</td><td>low / moderate / serious / critical / no information</td></tr>
+          <tr><td>Etiological or prognostic cohort (no intervention framing); case-control</td><td>Newcastle-Ottawa, cohort or case-control form</td><td>Star count, max 9</td></tr>
+          <tr><td>Systematic review, with or without meta-analysis</td><td>AMSTAR-2</td><td>high / moderate / low / critically low</td></tr>
+          <tr><td>Diagnostic accuracy study with an index test and a reference standard</td><td>QUADAS-2</td><td>low / high / unclear, per domain, risk of bias and applicability rated separately</td></tr>
+          <tr><td>Prediction-model development, validation, or both</td><td>PROBAST</td><td>low / high / unclear, risk of bias and applicability rated separately</td></tr>
+          <tr><td>Qualitative study (interviews, focus groups, ethnography, grounded theory)</td><td>CASP qualitative checklist</td><td>yes / partial_yes / no / unclear per item; a count out of 10</td></tr>
+          <tr><td>Cross-sectional survey/registry reporting a standalone prevalence estimate</td><td>JBI prevalence checklist</td><td>A count out of 9</td></tr>
+          <tr><td>Cross-sectional study analyzing an exposure-outcome association</td><td>JBI analytical cross-sectional checklist</td><td>A count out of 8</td></tr>
+          <tr><td>Case series, case report, animal study, non-prediction-model modelling study</td><td><code>none</code> — no in-scope tool</td><td>—</td></tr>
+          <tr><td>Narrative review, editorial, commentary, letter, guideline document, methods-free conference abstract</td><td><code>none</code> — do not appraise</td><td>—</td></tr>
+          <tr><td>Preprint <em>with</em> a full methods section</td><td>Tool by design, <strong>plus</strong> the preprint flag</td><td>Per design</td></tr>
+          <tr><td>Preprint without methods; any abstract-only record</td><td><code>none</code> — do not appraise</td><td>—</td></tr>
         </tbody>
       </table>
+
+      <div class="callout">
+        <strong>Matching the tool to the actual design is the point, not a formality.</strong> Do not use QUADAS-2 for a prediction model, PROBAST for a diagnostic-accuracy study, CASP for the quantitative arm of a mixed-methods paper, or a JBI checklist for an accuracy study that merely calls itself "cross-sectional" in its own methods.
+      </div>
+
+      <h3>Strategy by question type</h3>
+      <table>
+        <thead><tr><th>Question</th><th>Primary strategy</th><th>Synthesis consequence</th></tr></thead>
+        <tbody>
+          <tr><td>Intervention efficacy/effectiveness</td><td>RoB 2 for randomized results; ROBINS-I for non-randomized results against a target trial</td><td>Keep randomized and non-randomized bodies separate unless the protocol pre-specifies combining them</td></tr>
+          <tr><td>Harms and safety</td><td>RoB 2 where harms were trial outcomes; ROBINS-I/NOS where they come from observational follow-up</td><td>Harms often drive indirectness and imprecision; state follow-up and ascertainment limits</td></tr>
+          <tr><td>Etiology, risk factors, prognosis</td><td>Newcastle-Ottawa, with principal confounders declared <em>before</em> awarding comparability stars</td><td>Report star counts and lost domains; never translate stars into "low risk"</td></tr>
+          <tr><td>Diagnostic accuracy</td><td>QUADAS-2, per index test / reference-standard pairing</td><td>Report risk of bias and applicability separately; never fold applicability into the overall</td></tr>
+          <tr><td>Prediction models</td><td>PROBAST, per model</td><td>A validation of someone else's model is its own record, not folded into the development paper's</td></tr>
+          <tr><td>Qualitative / experience / process</td><td>CASP qualitative, per study</td><td>A count out of 10 with lost items named; never a risk-of-bias label</td></tr>
+          <tr><td>Prevalence and burden</td><td>JBI prevalence</td><td>A count out of 9; do not attach RoB 2/ROBINS-I/NOS labels</td></tr>
+          <tr><td>Cross-sectional association</td><td>JBI analytical cross-sectional</td><td>A count out of 8; name the indirectness from missing temporal ordering, which no checklist item captures</td></tr>
+          <tr><td>Systematic reviews</td><td>AMSTAR-2 for confidence in the review's results</td><td>Avoid double-counting primary studies already in the corpus</td></tr>
+        </tbody>
+      </table>
+
+      <h2>RoB 2 — Randomized Trials</h2>
+      <p>Five domains, stored in canonical order:</p>
+      <table>
+        <thead><tr><th>#</th><th>Domain</th><th>Concerns</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Bias arising from the randomization process</td><td>Sequence generation, allocation concealment, baseline imbalance suggesting a broken process</td></tr>
+          <tr><td>2</td><td>Bias due to deviations from intended interventions</td><td>Awareness of assignment, deviations arising from the trial context, whether the analysis suits the effect of interest</td></tr>
+          <tr><td>3</td><td>Bias due to missing outcome data</td><td>Availability of outcome data; whether missingness could depend on the true value</td></tr>
+          <tr><td>4</td><td>Bias in measurement of the outcome</td><td>Method, assessor awareness of assignment, whether that awareness could influence the measurement</td></tr>
+          <tr><td>5</td><td>Bias in selection of the reported result</td><td>Pre-specified analysis plan; selection among eligible outcome measurements or analyses</td></tr>
+        </tbody>
+      </table>
+      <p>Overall: <code>low</code> requires low risk in <strong>all five</strong>; <code>some_concerns</code> means concerns in at least one with high risk in none; <code>high</code> means high risk in at least one, or concerns in several domains in a way that substantially lowers confidence.</p>
+
+      <h3>Effect of interest, and per-outcome appraisal</h3>
+      <p>RoB 2 is assessed <em>per result</em>, for a stated effect of interest: the effect of <strong>assignment</strong> (intention-to-treat) or of <strong>adhering</strong> (per-protocol). Domain 2 branches on that choice, so name it in the domain-2 rationale. Default to assignment unless the extraction shows the question is about adherence.</p>
+      <p>It is also assessed <em>per outcome</em>. When a trial contributes a blinded lab measure and an unblinded self-report, appraise the one carrying the review's primary question and say which. Do not average across outcomes.</p>
+
+      <h3>Signalling questions, and the rules that must not be short-circuited</h3>
+      <pre><code>Y  = yes      PY = probably yes      PN = probably no      N = no      NI = no information</code></pre>
+      <ol>
+        <li>Answer the signalling questions <strong>first</strong>, from the text, then derive the domain judgement. Never pick a judgement and reverse-engineer answers to it.</li>
+        <li><code>PY</code> and <code>PN</code> carry the same algorithmic weight as <code>Y</code> and <code>N</code> — they encode inference from partial reporting, and the rationale must say what the inference rested on.</li>
+        <li><strong><code>NI</code> is not a synonym for <code>PN</code>.</strong> <code>NI</code> means the paper is silent. A domain resting on <code>NI</code> for a bias-critical question is at minimum <code>some_concerns</code>; it is never <code>low</code>.</li>
+        <li>Cluster trials add a recruitment-bias domain; crossover trials add period and carryover content. Use the variant's domain names verbatim, or name the domain descriptively and say in the rationale that the variant was applied.</li>
+      </ol>
+
+      <h2>ROBINS-I — Non-Randomized Intervention Studies</h2>
+      <table>
+        <thead><tr><th>#</th><th>Stage</th><th>Domain</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Pre-intervention</td><td>Bias due to confounding</td></tr>
+          <tr><td>2</td><td>Pre-intervention</td><td>Bias in selection of participants into the study</td></tr>
+          <tr><td>3</td><td>At intervention</td><td>Bias in classification of interventions</td></tr>
+          <tr><td>4</td><td>Post-intervention</td><td>Bias due to deviations from intended interventions</td></tr>
+          <tr><td>5</td><td>Post-intervention</td><td>Bias due to missing data</td></tr>
+          <tr><td>6</td><td>Post-intervention</td><td>Bias in measurement of outcomes</td></tr>
+          <tr><td>7</td><td>Post-intervention</td><td>Bias in selection of the reported result</td></tr>
+        </tbody>
+      </table>
+      <p><strong>Overall = the worst domain judgement.</strong> No averaging, no compensation: one <code>critical</code> domain makes the study <code>critical</code> regardless of the other six.</p>
+      <table>
+        <thead><tr><th>Overall</th><th>Reading</th></tr></thead>
+        <tbody>
+          <tr><td><code>low</code></td><td>Comparable to a well-performed randomized trial for this outcome</td></tr>
+          <tr><td><code>moderate</code></td><td>Sound for a non-randomized study, but not comparable to a well-performed trial</td></tr>
+          <tr><td><code>serious</code></td><td>Important problems</td></tr>
+          <tr><td><code>critical</code></td><td>Too problematic to provide useful evidence — do not include in a synthesis of effects</td></tr>
+          <tr><td><code>unclear</code> (no information)</td><td>Insufficient reporting to judge. <strong>Not a pass</strong></td></tr>
+        </tbody>
+      </table>
+
+      <h3>Target-trial framing is mandatory before domain 1</h3>
+      <p>ROBINS-I judges the study against the hypothetical randomized trial it is trying to emulate. Write that trial down first:</p>
+      <pre><code>Target trial
+  Eligibility : who would have been randomized
+  Treatment   : the intervention strategies being compared, with start time
+  Assignment  : randomized at time zero, no blinding assumed
+  Outcome     : the outcome and its measurement
+  Follow-up   : starts at assignment; contrasts of interest (ITT-analogue)</code></pre>
+      <p>Two corollaries follow:</p>
+      <ul>
+        <li><strong>The confounding domain needs a pre-specified confounder list.</strong> Decide what the target trial would have balanced, then ask whether the study measured and controlled it. "Adjusted for age and sex" is <code>serious</code> when the field's known confounders are baseline severity and socioeconomic status. State the list.</li>
+        <li><strong>Time-zero alignment must be checked, not assumed.</strong> Misalignment of eligibility, assignment, and start of follow-up — immortal time bias, prevalent-user bias — belongs to domains 1 and 2.</li>
+      </ul>
+
+      <h2>Newcastle-Ottawa — Cohort And Case-Control</h2>
+      <p>Three groups, one star per item except Comparability (two), maximum 9. <code>overall_judgement</code> is a star-count string such as <code>"7/9"</code>.</p>
+      <table>
+        <thead><tr><th>Form</th><th>Selection (4)</th><th>Comparability (2)</th><th>Outcome / Exposure (3)</th></tr></thead>
+        <tbody>
+          <tr><td>Cohort</td><td>Representativeness of the exposed cohort; selection of the non-exposed; ascertainment of exposure; outcome not present at start</td><td>Comparability on design or analysis — one star for the principal confounder, a second for any additional one</td><td>Assessment of outcome; follow-up long enough; adequacy of follow-up</td></tr>
+          <tr><td>Case-control</td><td>Case definition adequate; representativeness of cases; selection of controls; definition of controls</td><td>Comparability of cases and controls on design or analysis</td><td>Ascertainment of exposure; same method for cases and controls; non-response rate</td></tr>
+        </tbody>
+      </table>
+      <ol>
+        <li>Record each item as its own domain entry — <code>yes</code> (star awarded) or <code>no</code> — with a rationale saying what earned or lost it.</li>
+        <li><strong>Declare the Comparability confounders</strong> in the protocol or in the rationale. The instrument leaves "principal confounder" to the reviewer; leaving it undeclared makes the score unreproducible.</li>
+        <li><strong>The NOS defines no good/fair/poor thresholds.</strong> Any cutoff is the reviewer's and must be declared before it is used. Never present a threshold as if it shipped with the instrument.</li>
+        <li>A star count is not a risk-of-bias judgement. Do not turn "7/9" into "low risk of bias" in prose. Report the count, the group breakdown, and the specific losses.</li>
+      </ol>
+
+      <h2>AMSTAR-2 — Systematic Reviews</h2>
+      <p>Sixteen items, seven of them <strong>critical</strong>. The rating is driven by flaws in the critical set, weighted against non-critical weaknesses.</p>
+      <table>
+        <thead><tr><th>Critical domain</th><th>Item</th></tr></thead>
+        <tbody>
+          <tr><td>Protocol registered before commencement</td><td>2</td></tr>
+          <tr><td>Adequacy of the literature search</td><td>4</td></tr>
+          <tr><td>Justification for excluding individual studies</td><td>7</td></tr>
+          <tr><td>Risk of bias from individual included studies</td><td>9</td></tr>
+          <tr><td>Appropriateness of meta-analytical methods</td><td>11</td></tr>
+          <tr><td>Consideration of risk of bias when interpreting results</td><td>13</td></tr>
+          <tr><td>Assessment of publication bias and its likely impact</td><td>15</td></tr>
+        </tbody>
+      </table>
+      <table>
+        <thead><tr><th>Rating</th><th>Condition</th></tr></thead>
+        <tbody>
+          <tr><td><code>high</code></td><td>No critical flaw, and at most one non-critical weakness</td></tr>
+          <tr><td><code>moderate</code></td><td>No critical flaw, more than one non-critical weakness</td></tr>
+          <tr><td><code>low</code></td><td>One critical flaw, with or without non-critical weaknesses</td></tr>
+          <tr><td><code>critically_low</code></td><td>More than one critical flaw</td></tr>
+        </tbody>
+      </table>
+      <div class="callout">
+        <strong>AMSTAR-2 rates confidence in the <em>review's results</em></strong> — not the certainty of the underlying evidence, and not the quality of its included primary studies. Do not restate a <code>critically_low</code> as "the evidence is very low certainty"; that is GRADE's job. Applying AMSTAR-2 to a narrative review manufactures a "critically low" that reads as a verdict on work which never claimed to be systematic — say "not a systematic review, not appraised" instead.
+      </div>
+
+      <h2>QUADAS-2 — Diagnostic Accuracy</h2>
+      <p>Four domains rated for <strong>risk of bias</strong>; the first three additionally rated for <strong>applicability</strong> — whether the study's patients, index test, and reference standard match <em>this</em> review question.</p>
+      <table>
+        <thead><tr><th>#</th><th>Domain</th><th>Risk-of-bias concern</th><th>Applicability concern</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Patient selection</td><td>Consecutive/random sample vs. case-control enrichment; inappropriate exclusions</td><td>Does the enrolled population match the question?</td></tr>
+          <tr><td>2</td><td>Index test</td><td>Interpreted without knowledge of the reference standard; threshold pre-specified</td><td>Do the test, its conduct, and its threshold match?</td></tr>
+          <tr><td>3</td><td>Reference standard</td><td>Correctly classifies the target condition; interpreted blind to the index test</td><td>Does the target condition as defined match?</td></tr>
+          <tr><td>4</td><td>Flow and timing</td><td>Appropriate interval between tests; same reference standard for all; all patients analyzed</td><td>— (no applicability domain)</td></tr>
+        </tbody>
+      </table>
+      <p>Seven domain entries are stored: four risk-of-bias, then three applicability, each tagged with <code>domain_group</code> so the report layer groups them rather than printing seven undifferentiated rows.</p>
+
+      <h3>The appraisal target is mandatory</h3>
+      <p>QUADAS-2 appraises a specific index test against a specific reference standard, not the paper as a whole:</p>
+      <pre><code>{
+  "target_type": "index_test",
+  "target_id": "troponin-I-99th-percentile",
+  "population": "Adults presenting to ED with suspected ACS",
+  "index_test": "High-sensitivity troponin I, single draw at presentation",
+  "reference_standard": "Adjudicated final diagnosis of MI per Fourth Universal Definition"
+}</code></pre>
+      <p>A paper reporting two assay thresholds, or troponin vs. CK-MB, needs <strong>one record per index test</strong>. Do not average across them. The appraiser pulls <code>index_test</code>, <code>reference_standard</code>, <code>threshold</code>, <code>verification</code>, and <code>interval_index_reference</code> from the extraction's <code>diagnostic_accuracy[]</code> block rather than re-reading the paper — judging bias from data the extractor already anchored to spans.</p>
+
+      <h3>Traps</h3>
+      <ul>
+        <li>Case-control enrichment (diseased cases vs. healthy controls instead of a consecutive clinically-relevant sample) is <code>high</code> risk on patient selection <em>even if everything else is well reported</em> — enrichment inflates accuracy.</li>
+        <li>An index test interpreted with knowledge of the reference standard (or vice versa) is <code>high</code>. "Blinded" claimed without saying who was blinded to what is <code>unclear</code>.</li>
+        <li>An imperfect reference standard is an <em>applicability</em> concern on domain 3, not a risk-of-bias fix. Do not silently substitute a better one in the rationale.</li>
+        <li>An interval long enough for the condition to resolve, progress, or be treated is <code>high</code> on flow and timing. State the interval when it is reported.</li>
+        <li>Excluding indeterminate results from the analysis without putting them in the 2×2 is <code>high</code> on flow and timing.</li>
+      </ul>
+      <p>There is no single QUADAS-2 overall score by design — the instrument deliberately keeps the two axes apart so a reader is not handed a false single number. This pipeline still requires an <code>overall_judgement</code>, so it is populated as the <strong>worst risk-of-bias domain</strong> (<code>low</code> &lt; <code>unclear</code> &lt; <code>high</code>), with the applicability picture stated separately. A <code>low</code> overall must never be read as low applicability concern.</p>
+
+      <h2>PROBAST — Prediction Models</h2>
+      <p>The same seven-entry shape as QUADAS-2: four risk-of-bias domains, three applicability.</p>
+      <table>
+        <thead><tr><th>#</th><th>Domain</th><th>Risk-of-bias concern</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Participants</td><td>Appropriate data source; criteria that do not distort the intended population</td></tr>
+          <tr><td>2</td><td>Predictors</td><td>Defined and measured identically for everyone; assessed blind to the outcome; available at the point of intended use</td></tr>
+          <tr><td>3</td><td>Outcome</td><td>Defined and determined appropriately, blind to predictor values, with an appropriate interval from predictor assessment</td></tr>
+          <tr><td>4</td><td>Analysis</td><td>Enough events per candidate predictor; no data-driven cutpoints; no inappropriate exclusions; missing-data handling justified or imputed; no univariable pre-selection; overfitting/optimism addressed; calibration <em>and</em> discrimination reported</td></tr>
+        </tbody>
+      </table>
+      <p>A validation study of someone else's model is appraised as its own PROBAST record — never folded into the development paper's.</p>
+
+      <h2>Checklist Tools — CASP And JBI</h2>
+      <p>These three report a <strong>count</strong>, with the lost items named. They are not risk-of-bias instruments and their scores must never be relabelled as one.</p>
+      <table>
+        <thead><tr><th>Tool</th><th>Items</th><th>For</th></tr></thead>
+        <tbody>
+          <tr><td>CASP qualitative</td><td>10</td><td>Interviews, focus groups, ethnography, grounded theory, phenomenology. No risk-of-bias/applicability split — every item is a single quality-of-conduct-and-reporting judgement</td></tr>
+          <tr><td>JBI prevalence</td><td>9</td><td>Cross-sectional surveys, registries, surveillance reporting a standalone prevalence or burden estimate</td></tr>
+          <tr><td>JBI analytical cross-sectional</td><td>8</td><td>Cross-sectional analysis of an exposure-outcome association, with no temporal ordering</td></tr>
+        </tbody>
+      </table>
+
+      <h2>The <code>none</code> Case</h2>
+      <p><code>tool: "none"</code> is a legitimate, common outcome — not a failure. The record carries <code>domains: []</code> and an <code>overall_judgement</code> of <code>"unclear"</code>, the reason goes into the appraiser receipt, and it surfaces in the report's risk-of-bias section as a pipeline limitation. Never invent a pseudo-domain just to hold an explanation.</p>
+      <pre><code>{
+  "schema_version": 1,
+  "pmid": "12345678",
+  "evidence_id": "pmid:12345678",
+  "tool": "none",
+  "domains": [],
+  "overall_judgement": "unclear",
+  "grade": null,
+  "evidence_basis": "abstract_only"
+}</code></pre>
+      <p>What not to do: reach for RoB 2 because an abstract says "randomized" while no methods text exists; appraise a narrative review with AMSTAR-2; or appraise a guideline with any of these tools. If guideline quality matters to the question, say so as a gap — AGREE II is the recognised instrument and is out of scope here.</p>
+
+      <h2>Saying "Unclear" Honestly</h2>
+      <p class="lead">The single largest failure mode of automated appraisal is converting silence into reassurance.</p>
+      <table>
+        <thead><tr><th>Rule</th><th>Statement</th></tr></thead>
+        <tbody>
+          <tr><td><strong>U1</strong></td><td><strong>Absence of reporting is never evidence of low risk.</strong> A trial that does not describe allocation concealment is not concealed; it is unreported. That is <code>some_concerns</code> (RoB 2) or <code>no information</code>/<code>serious</code> (ROBINS-I) — never <code>low</code></td></tr>
+          <tr><td><strong>U2</strong></td><td>Name what is missing, and where you looked. A rationale must let a reader reproduce the judgement</td></tr>
+          <tr><td><strong>U3</strong></td><td>Distinguish three different silences — see below</td></tr>
+          <tr><td><strong>U4</strong></td><td>Never infer from journal, author, funder, sample size, citation count, or the mere fact of registration. Registration is evidence about the reported-result domain only, and only if it was actually checked and its pre-specified outcomes compared</td></tr>
+        </tbody>
+      </table>
+      <table>
+        <thead><tr><th>Silence</th><th>Meaning</th><th>Typical judgement</th></tr></thead>
+        <tbody>
+          <tr><td>Not reported</td><td>The paper does not say</td><td><code>some_concerns</code> / no information</td></tr>
+          <tr><td>Not assessable from this source</td><td>We only have the abstract</td><td><code>unclear</code>, rationale "not assessable from abstract"</td></tr>
+          <tr><td>Reported as absent</td><td>The paper states it did not occur</td><td>Judge the statement's credibility</td></tr>
+        </tbody>
+      </table>
+      <pre><code>BAD   "Allocation concealment was likely adequate given the journal's standards."
+GOOD  "Allocation concealment not described (Methods, 'Randomisation' paragraph); no
+       information on who held the sequence. Some concerns."
+
+BAD   "No information on blinding, so low risk assumed."
+GOOD  "Outcome assessors' awareness of assignment not reported; the outcome is a
+       clinician-rated scale, which is susceptible to assessor knowledge. Some concerns."
+
+BAD   "Confounding adequately handled."
+GOOD  "Adjusted for age and sex only; baseline symptom severity and prior treatment —
+       pre-specified as the principal confounders — were neither measured nor adjusted.
+       Serious."
+
+BAD   "Missing data unclear."                  (unclear with no reason: schema violation)
+GOOD  "Attrition stated as 18% overall but not by arm, and no analysis of whether
+       missingness relates to outcome. Some concerns."
+
+BAD   "Study appears well conducted overall."  (global impression, no domain anchor)
+GOOD  Per-domain judgements only; the overall follows the tool's algorithm.</code></pre>
+
+      <h2>Abstract-Only Evidence</h2>
+      <p><code>evidence_basis</code> is carried on both the extraction and the appraisal record, and must agree with the corpus record's <code>fulltext.status</code>.</p>
+      <table>
+        <thead><tr><th><code>fulltext.status</code></th><th><code>evidence_basis</code></th><th>Appraisal</th></tr></thead>
+        <tbody>
+          <tr><td><code>fulltext</code></td><td><code>fulltext</code></td><td>Normal</td></tr>
+          <tr><td><code>abstract_only</code> (including truncation-detected)</td><td><code>abstract_only</code></td><td>Restricted — see below</td></tr>
+          <tr><td><code>missing</code></td><td>—</td><td>Never reaches extraction or appraisal; lives in <code>missing.md</code></td></tr>
+        </tbody>
+      </table>
+      <p>For abstract-only evidence the tool is <code>"none"</code>, domains are <code>[]</code>, and the overall is <code>"unclear"</code> — <strong>unconditionally</strong>, even when the abstract states a method detail. A record with five <code>unclear</code> domains and one weakly-supported judgement communicates less than an honest "not appraised: abstract only". GRADE may still be applied at the body-of-evidence level, but the abstract-only studies must show up there as risk-of-bias or indirectness limitations rather than being ignored.</p>
+
+      <h2>GRADE — Certainty Per Outcome</h2>
+      <p>GRADE rates certainty <strong>per outcome, across the body of studies</strong> contributing to it — not per study. An individual appraisal record's <code>grade</code> object captures that study's contribution; the outcome-level rating is produced at synthesis.</p>
+      <table>
+        <thead><tr><th>Body of evidence</th><th>Starting certainty</th></tr></thead>
+        <tbody>
+          <tr><td>Randomized trials</td><td>High</td></tr>
+          <tr><td>Observational studies / NRSI</td><td>Low</td></tr>
+        </tbody>
+      </table>
+      <p>When NRSI are appraised with ROBINS-I against a target trial, GRADE permits starting at High and downgrading from the ROBINS-I judgement. That choice must be declared in the protocol and stated in the report — it is not the default here.</p>
+
+      <h3>Five downgrade domains</h3>
+      <table>
+        <thead><tr><th>Domain</th><th>Downgrade when</th></tr></thead>
+        <tbody>
+          <tr><td>Risk of bias</td><td>Studies carrying most of the weight have serious/critical RoB 2 or ROBINS-I judgements</td></tr>
+          <tr><td>Inconsistency</td><td>Unexplained heterogeneity, non-overlapping CIs, high I² with no explanatory subgroup</td></tr>
+          <tr><td>Indirectness</td><td>Population, intervention, comparator, or outcome differs from the question; indirect comparisons</td></tr>
+          <tr><td>Imprecision</td><td>Few events, a CI spanning both appreciable benefit and appreciable harm, optimal information size not met</td></tr>
+          <tr><td>Publication bias</td><td>Small-study effects, an industry-funded body, registered-but-unpublished trials, absent grey literature</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Three upgrade domains</h3>
+      <p>Applicable only to bodies not already downgraded for risk of bias — in practice, observational evidence. Never upgrade randomized evidence that already starts High.</p>
+      <table>
+        <thead><tr><th>Domain</th><th>Applies when</th></tr></thead>
+        <tbody>
+          <tr><td>Large magnitude of effect</td><td>Large and consistent (conventionally RR &gt; 2 or &lt; 0.5); very large (RR &gt; 5 or &lt; 0.2) may upgrade two levels</td></tr>
+          <tr><td>Dose-response gradient</td><td>A monotone relation between exposure intensity and outcome</td></tr>
+          <tr><td>Residual confounding works against the finding</td><td>Unadjusted confounding would have biased toward the null, yet an effect is still observed — or would have created a spurious effect, yet none is</td></tr>
+        </tbody>
+      </table>
+
+      <pre><code>start (design)
+  - risk of bias        (0 / -1 / -2)
+  - inconsistency       (0 / -1 / -2)
+  - indirectness        (0 / -1 / -2)
+  - imprecision         (0 / -1 / -2)
+  - publication bias    (0 / -1 / -2)
+  + upgrades            (observational, unbiased bodies only)
+= certainty : high | moderate | low | very_low        (floor at very_low)</code></pre>
+      <ul>
+        <li>One outcome, one rating. Rate the outcomes that matter to the question, <strong>including harms</strong>.</li>
+        <li>Do not double-count: a problem downgraded under risk of bias is not also downgraded under imprecision for the same reason.</li>
+        <li>Record the reason for every non-zero domain. <strong>A certainty rating with no stated downgrade reasons is not a GRADE rating.</strong></li>
+        <li>Certainty is about the estimate, not the importance. "Low certainty" never means "no effect".</li>
+      </ul>
+
+      <h3>Certainty wording — use these shapes verbatim</h3>
+      <table>
+        <thead><tr><th>Certainty</th><th>Wording</th></tr></thead>
+        <tbody>
+          <tr><td>High</td><td>"X reduces Y"</td></tr>
+          <tr><td>Moderate</td><td>"X probably reduces Y"</td></tr>
+          <tr><td>Low</td><td>"X may reduce Y"</td></tr>
+          <tr><td>Very low</td><td>"The evidence is very uncertain about the effect of X on Y"</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="claims">Downgrading Claim Strength</h2>
+      <p>Appraisal changes the verbs the report is allowed to use. This is the link between Stage 6 and Stage 7:</p>
+      <table>
+        <thead><tr><th>Appraisal pattern</th><th>Report language</th></tr></thead>
+        <tbody>
+          <tr><td>Mostly low RoB 2, consistent direction, no serious GRADE downgrades</td><td>Direct effect language, matched to GRADE certainty</td></tr>
+          <tr><td>Some concerns / moderate ROBINS-I / missing protocol details</td><td>Qualified language ("probably", "may"), with the limitation named</td></tr>
+          <tr><td>Serious or high risk in domains central to the outcome</td><td>Weak support or hypothesis-generating — not a firm effect</td></tr>
+          <tr><td>Critical ROBINS-I domain</td><td>Excluded from effect synthesis; described only as methodologically unusable for that effect</td></tr>
+          <tr><td>Abstract-only</td><td>Labelled at point of use; no low-risk or high-certainty language</td></tr>
+          <tr><td><code>tool: "none"</code></td><td>Describe design and limitation; never imply the study was appraised</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Mixed-Design Bodies</h2>
+      <ul>
+        <li>Randomized and non-randomized intervention evidence answer different versions of the same causal question unless the non-randomized studies explicitly emulate a target trial. Keep them stratified.</li>
+        <li>Primary studies and systematic reviews are not independent evidence for the same effect when the review includes those same studies. Use reviews for context, search leads, and consistency checks, then privilege the freshest primary extraction.</li>
+        <li>One paper can contribute appraised evidence for one outcome and only descriptive context for another. Name the outcome appraised.</li>
+        <li>When every usable record is abstract-only or <code>tool: "none"</code>, the synthesis must say the body was not critically appraised by an in-scope instrument — never write certainty language implying a completed risk-of-bias assessment.</li>
+      </ul>
+
+      <h2>Where Appraisals Live</h2>
+      <p>In standalone repo mode, appraisals are <strong>project-scoped</strong>: <code>data/papers/appraisals/&lt;project&gt;/&lt;paper&gt;--&lt;target&gt;.json</code>, one file per paper-and-target within a project, indexed from the registry's <code>appraisals</code> map. This is deliberate — risk of bias and applicability depend on the review question, outcome, population, index test, comparator, or model target. The same paper can be <code>appraised</code> for one manuscript and <code>not_appraised</code> for another at the same time. A paper's <em>extraction</em> stays in the shared pool; its appraisal does not. The wiki-backed pipeline instead writes one run-scoped record per paper under <code>workspace/appraisals/</code>, which has no project dimension.</p>
 
       <h2>Framework Citations</h2>
       <table>
@@ -66,13 +419,7 @@
         </tbody>
       </table>
 
-      <h2>Single-Paper Summaries</h2>
-      <p>For one-paper summaries, appraisal is part of the default path. If full text is missing, the design is unsupported, or the user explicitly passes <code>--no-appraise</code>, the summary must state why appraisal was skipped.</p>
-
-      <h2>Project Scope</h2>
-      <p>Appraisals live under <code>data/papers/appraisals/&lt;project&gt;/</code>. The same paper may have different appraisal targets or certainty implications in different manuscript projects.</p>
-
-      <footer class="footer">Source manuals: <code>references/appraisal.md</code> and <code>references/schema/08-appraisal.md</code>.</footer>
+      <footer class="footer">Source manuals: <code>references/appraisal.md</code> (full signalling questions and per-tool detail), <code>references/schema/08-appraisal.md</code> (record contract), <code>references/prompts/appraise.md</code> (the subagent's prompt block). Related: <a href="questions.html">question frameworks</a> route the design that routes the tool.</footer>
     </main>
   </div>
 </body>

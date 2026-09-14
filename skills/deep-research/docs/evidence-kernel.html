@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Evidence kernel - deep-research</title>
+  <link rel="icon" href="assets/favicon.png" type="image/png">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="brand" href="index.html"><img src="assets/logo.png" alt="" width="36" height="36"><span class="brand-text"><strong>deep-research</strong><span>Skill documentation</span></span></a>
+      <nav class="nav" aria-label="Documentation">
+        <a href="index.html">Overview</a>
+        <a href="quickstart.html">Quickstart</a>
+        <a href="questions.html">Scientific questions</a>
+        <a href="pipeline.html">Full pipeline</a>
+        <a href="evidence-kernel.html" aria-current="page">Evidence kernel</a>
+        <a href="paper-summaries.html">Paper summaries</a>
+        <a href="reference-manager.html">Reference manager</a>
+        <a href="readcube-export.html">ReadCube export</a>
+        <a href="architecture.html">Repo architecture</a>
+        <a href="appraisal.html">Appraisal frameworks</a>
+        <a href="commands.html">Command reference</a>
+        <a href="../teach-deep-research/lessons/0001-what-is-deep-research.html">Guided course</a>
+        <a href="https://github.com/christineecker/deep-research">GitHub repo ↗</a>
+      </nav>
+    </aside>
+    <main class="content">
+      <section class="hero">
+        <p class="eyebrow">The evidence-proof layer</p>
+        <h1>Agent-written text is never itself evidence.</h1>
+        <p class="lead">An agent may say what it concluded and where it read it. It may not supply the reading. Every excerpt that reaches a report, an evidence table, or a wiki concept is re-sliced from an immutable snapshot by a script — twice, once at assembly and once at publish. This is the layer that turns "hopefully caught in review" into "mechanically rejected".</p>
+      </section>
+
+      <h2>The Problem It Solves</h2>
+      <p>An agent writing <em>"the trial reported a 41% reduction (Smith 2024, p. 7)"</em> has produced a sentence, not a proof. The quotation marks are free. The page number is free. Both survive review because nobody re-opens the PDF.</p>
+      <p>So the kernel takes the reading away from the agent. Of everything in an evidence record, exactly three things are agent-contributed: a <code>claim</code> label, a <code>source_id</code>, and a <code>start</code>/<code>end</code> pair. URL, title, access level, PMID/DOI/PMCID, excerpt text, section, and page are all <strong>derived from the snapshot</strong>.</p>
+      <table>
+        <thead><tr><th>Failure mode</th><th>Caught by</th><th>Code</th></tr></thead>
+        <tbody>
+          <tr><td>Fabricated or subtly re-worded quote</td><td>Excerpt re-slice mismatch</td><td><code>EXCERPT_MISMATCH</code></td></tr>
+          <tr><td>Invented source</td><td>Unknown <code>source_id</code></td><td><code>UNKNOWN_SOURCE</code></td></tr>
+          <tr><td>Stale evidence recycled from an old run or a wiki note</td><td>The fresh-fetch rule</td><td><code>NO_FRESH_FETCH</code></td></tr>
+          <tr><td>Tampered snapshot</td><td>Hash recomputation</td><td><code>SNAPSHOT_HASH_MISMATCH</code></td></tr>
+        </tbody>
+      </table>
+      <p>This layer does not replace acquisition. <code>eutils.py</code>, <code>fulltext.py</code>, and <code>library.py</code> keep fetching; whenever they obtain usable text they <strong>register</strong> it into the snapshot store, and from that moment it is addressable by offset.</p>
+
+      <h2>Snapshots</h2>
+      <p>One file per snapshot at <code>&lt;run&gt;/sources/src-&lt;sha256&gt;.json</code>, written by <code>source.py</code> on top of <code>store.py</code>. Six guarantees:</p>
+      <table>
+        <thead><tr><th>Guarantee</th><th>Mechanism</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Write-once</strong></td><td>Created with <code>O_EXCL</code>. There is no update path. A correction is a new snapshot with a new id; the old one stays.</td></tr>
+          <tr><td><strong>Content-addressed identity</strong></td><td><code>source_id = "src-" + sha256_hex(utf8(url) + NUL + utf8(text))</code>. Same URL and text ⇒ same id ⇒ same file, so re-fetching unchanged text is a no-op. Different text ⇒ different id, always.</td></tr>
+          <tr><td><strong>Independent body hash</strong></td><td><code>content_hash = "sha256:" + sha256_hex(utf8(text))</code>, over the text alone, so a body edit is detectable without reference to the URL.</td></tr>
+          <tr><td><strong>Verified on every read</strong></td><td><code>source.py read</code>/<code>spans</code>, <code>assemble.py</code>, <code>verify.py</code>, and <code>okf.py promote</code> all recompute both digests and compare. A mismatch is a hard error, never a warning.</td></tr>
+          <tr><td><strong>Stable offsets</strong></td><td><code>text</code> is stored decoded-UTF-8 and never normalized — no NFC/NFD pass, no whitespace collapsing, no newline rewriting, on write or read. Offsets under an existing claim never drift.</td></tr>
+          <tr><td><strong>No PDF duplication</strong></td><td>PDFs stay in the shared library. The snapshot records <code>asset = {path, sha256, bytes}</code> with a root-relative path. There is no per-run assets directory.</td></tr>
+        </tbody>
+      </table>
+
+      <p>Two closed enums describe every snapshot. <code>access</code> says what the text can support; <code>origin</code> says where it came from:</p>
+      <pre><code>access:  full_text | abstract | preprint | guideline | web
+origin:  pubmed | pmc | europepmc | unpaywall | oa-pdf | user-supplied-pdf | web</code></pre>
+      <p>Where a snapshot and a record disagree, <strong>the snapshot wins and the artifact is rejected</strong> — never silently corrected, because a silent correction hides the fact that an agent asserted something false.</p>
+
+      <div class="callout">
+        <strong>Source identity is not evidence identity.</strong> One study (<code>evidence_id</code>) may have several snapshots: a PubMed abstract, a PMC full text, a user-supplied PDF. The relation is many-to-one. A span must name a snapshot registered for its own <code>evidence_id</code>, and the snapshot's <code>paper</code> triple must agree with that <code>evidence_id</code>.
+      </div>
+
+      <h2>The Event Log And The Fresh-Fetch Rule</h2>
+      <p><code>&lt;run&gt;/events.jsonl</code>, append-only, four event types:</p>
+      <table>
+        <thead><tr><th>Type</th><th>Means</th></tr></thead>
+        <tbody>
+          <tr><td><code>fetch</code></td><td>A real retrieval performed in this run</td></tr>
+          <tr><td><code>local_pdf</code></td><td>A hash-checked user-supplied PDF</td></tr>
+          <tr><td><code>register</code></td><td>Text obtained elsewhere in the pipeline, folded into the store without a new retrieval</td></tr>
+          <tr><td><code>read</code></td><td>A bounded window read by a subagent — audit only</td></tr>
+        </tbody>
+      </table>
+      <p class="lead" style="font-style:italic;">A <code>supported</code> verdict counts only if every source backing the claim has a fresh retrieval logged in <em>this</em> run.</p>
+      <p>Concretely, a source is fresh iff <code>events.jsonl</code> holds a line with that <code>source_id</code>, a type of <code>fetch</code> or <code>local_pdf</code>, <code>fresh: true</code>, an <code>at</code> timestamp at or after the run's <code>created_at</code>, and a <code>sha256</code> that still matches when recomputed now.</p>
+      <p>What deliberately does <strong>not</strong> count: a <code>register</code> event, a <code>read</code> event, a cache-only fetch, an event copied in from another run, a search snippet, an abstract already sitting in <code>corpus.jsonl</code>, or an existing wiki note. This is why a <a href="pipeline.html">reused extraction</a> is reported as non-fresh by <code>C-FRESH-FETCH</code> while still passing <code>C-SNAPSHOT</code> and <code>C-SPAN</code>: the content is locally present and hash-verified, but it was not retrieved here.</p>
+
+      <h3>The user-supplied-PDF exception</h3>
+      <p>For <code>origin: "user-supplied-pdf"</code> there is nothing to re-fetch — the paper arrived as bytes, and there may be no lawful URL to retrieve it from. The immutable, hash-checked local file <em>is</em> the fresh source: such a snapshot is fresh iff a <code>local_pdf</code> event exists for it in this run <strong>and</strong> the file at <code>asset.path</code> still hashes to <code>asset.sha256</code>. A missing file, a changed file, or a <code>local_pdf</code> event on a snapshot with <code>asset: null</code> fails with <code>ASSET_HASH_MISMATCH</code>.</p>
+      <p>This exception exists because a user legitimately handing over a PDF is a real acquisition route — not because retrieval rules are negotiable. No part of it permits credentials, proxies, or paywall circumvention.</p>
+
+      <h2>The Span Contract</h2>
+      <pre><code>{
+  "claim": "The trial reported lower exacerbation rates.",
+  "evidence_id": "pmid:12345678",
+  "source_id": "src-3f9a1c...",
+  "start": 10422,
+  "end": 10610,
+  "access": "full_text"
+}</code></pre>
+      <ul>
+        <li><code>start</code> inclusive, <code>end</code> <strong>exclusive</strong>. The excerpt is exactly <code>text[start:end]</code>.</li>
+        <li>Offsets are <strong>character offsets into the snapshot's decoded text</strong> — Python <code>str</code> indices, i.e. Unicode code points. Not bytes, not UTF-8 byte counts, not UTF-16 code units, not offsets into a re-wrapped or markdown-rendered view. This is the single ambiguity most likely to produce silent, plausible-looking corruption, which is why it is nailed down here and in the schema.</li>
+        <li>Maximum <strong>2000 characters</strong> per span. Over-length is a failure, never a truncation.</li>
+        <li>Multiple spans per claim are ORed evidence. They may come from different snapshots, may overlap, and are never merged or length-summed by the assembler.</li>
+        <li><code>claim</code> is a label in the agent's own words — never a transcription of the source.</li>
+        <li><code>access</code> is copied from the snapshot, not chosen.</li>
+      </ul>
+
+      <h3>Where spans are required</h3>
+      <p>Every extraction outcome with a non-null <code>effect</code>, <code>ci_low</code>, <code>ci_high</code>, or <code>p_value</code>; every non-null narrative factual field of an extraction; and every appraisal domain judgement that is not <code>unclear</code>.</p>
+      <p>An <code>unclear</code> grounded in absent reporting takes <code>spans: []</code> — there is nothing to point at, and saying so is the honest record. Records written before this layer keep working: no spans means <code>unverified</code>, diagnosed as <code>NO_SPANS</code>, never accepted, never able to back a promoted concept.</p>
+
+      <div class="callout">
+        <strong><code>quotes[]</code> is derived, not written.</strong> The assembler produces an extraction's quotes from its spans. An agent never types them. The appraisal record has no quotes field at all.
+      </div>
+
+      <h2>The Assembler Gate</h2>
+      <p><code>assemble.py</code> reads the extractions, appraisals, report, snapshots, event log, and corpus, then writes <code>outputs/result.json</code>: <code>accepted[]</code> for artifacts that survived every check, and <code>diagnostics.unresolved[]</code> for those that did not, each with a closed reason code.</p>
+      <table>
+        <thead><tr><th>Check</th><th>Code</th></tr></thead>
+        <tbody>
+          <tr><td><code>source_id</code> is known</td><td><code>UNKNOWN_SOURCE</code></td></tr>
+          <tr><td>Snapshot hashes recompute</td><td><code>SNAPSHOT_HASH_MISMATCH</code></td></tr>
+          <tr><td>Span is in range</td><td><code>SPAN_OUT_OF_RANGE</code></td></tr>
+          <tr><td>Span ≤ 2000 characters</td><td><code>SPAN_TOO_LONG</code></td></tr>
+          <tr><td>Excerpt equals the re-slice</td><td><code>EXCERPT_MISMATCH</code></td></tr>
+          <tr><td>Record carries the spans it owes</td><td><code>NO_SPANS</code></td></tr>
+          <tr><td>Cited URL was retrieved for this artifact</td><td><code>URL_NOT_RETRIEVED</code></td></tr>
+          <tr><td>Supported verdict has a fresh retrieval</td><td><code>NO_FRESH_FETCH</code></td></tr>
+          <tr><td>No unsupported verifier verdict</td><td><code>UNSUPPORTED_VERDICT</code></td></tr>
+          <tr><td>Synthesis introduces no source outside accepted branch evidence</td><td><code>SOURCE_OUTSIDE_ACCEPTED</code></td></tr>
+          <tr><td>Literature claim traces to a PMID/DOI/PMCID</td><td><code>NO_PAPER_ID</code></td></tr>
+          <tr><td>User-supplied PDF bytes still hash correctly</td><td><code>ASSET_HASH_MISMATCH</code></td></tr>
+        </tbody>
+      </table>
+
+      <h3>Ordering</h3>
+      <pre><code>assemble.py  →  verify.py  →  render.py / html_report.py  →  okf.py promote --check  →  okf.py promote</code></pre>
+      <p><code>result.json</code> does not replace <code>verification.json</code>. It is the evidence ledger that the verifier and the publisher both read.</p>
+
+      <h3>Gate default: off — with two exceptions</h3>
+      <p>The gate is built, wired, and <strong>always reported</strong>, but without <code>gates.evidence_kernel</code> / <code>--gate</code> it does not block Stage 8. <code>result.json</code> always records <code>gate.verdict</code>, and the coordinator always surfaces it. Two things are never downgraded by that flag: <code>C-SNAPSHOT</code> and <code>C-SPAN</code> tamper failures block OKF promotion regardless.</p>
+
+      <h2>Publisher Integrity Preflight</h2>
+      <p><code>okf.py promote --check</code> validates without writing anything, and is mandatory before the real promote. Before any concept file is created it must:</p>
+      <ol>
+        <li>Re-read every snapshot referenced by the concepts to be written.</li>
+        <li>Recompute <code>content_hash</code> and <code>source_id</code>; reject on any mismatch.</li>
+        <li>Re-slice every excerpt from <code>start:end</code> and compare against what <code>result.json</code> carries.</li>
+        <li>Reject if an agent-written excerpt differs from the source text.</li>
+        <li>Verify each evidence item's PMID/DOI/PMCID against the snapshot's <code>paper</code> metadata.</li>
+        <li>Verify user-supplied PDF bytes hash to the recorded <code>asset.sha256</code>.</li>
+        <li>Write with exclusive creation / atomic replace.</li>
+      </ol>
+      <p>Promotion <strong>fails closed</strong>: any failure aborts the whole promotion — never a partial bundle, never a half-written concept. Already-generated run outputs, <code>outputs/report.md</code> above all, are preserved. The run is not lost because a wiki write was refused.</p>
+
+      <h2>Worked Example: One Claim, Snapshot To Concept</h2>
+      <p class="lead" style="font-style:italic;">Does group CBT reduce depressive symptoms in adolescents at 12 weeks?</p>
+
+      <h3>(a) Retrieval</h3>
+      <p><code>fulltext.py</code> reaches PMC for PMID 12345678. The text goes to <code>source.py fetch</code>, which writes <code>&lt;run&gt;/sources/src-3f9a1cb8…json</code> with the PMC article URL, <code>access: "full_text"</code>, <code>origin: "pmc"</code>, the paper triple, <code>asset: null</code> (an XML route stored no file), and 61 042 characters of text. Then it appends:</p>
+      <pre><code>{"schema_version":1,"event_id":"ev-0007","type":"fetch",
+ "source_id":"src-3f9a1c...","url":"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1234567/",
+ "at":"2026-09-08T12:07:44Z","fresh":true,"sha256":"b7e05f...","actor":"main",
+ "detail":"pmc full text, 61042 chars, http 200"}</code></pre>
+
+      <h3>(b) Extraction</h3>
+      <p>The extraction subagent receives a <code>source_id</code>, an <code>access</code> level, and two commands — <em>not</em> a file of prose. It runs a bounded window read, gets back text stamped with offsets, and writes:</p>
+      <pre><code>python3 scripts/source.py spans --run-dir &lt;run&gt; --source-id src-3f9a1c... --query "CDI-2"
+# → window start=10380 end=10900</code></pre>
+      <pre><code>{ "name": "CDI-2 total score", "timepoint": "12 weeks", "effect_measure": "SMD",
+  "effect": -0.41, "ci_low": -0.68, "ci_high": -0.14, "p_value": 0.003,
+  "direction": "favors_intervention",
+  "spans": [ { "claim": "CDI-2 at 12 weeks, SMD -0.41 (95% CI -0.68 to -0.14), p=0.003.",
+               "evidence_id": "pmid:12345678", "source_id": "src-3f9a1c...",
+               "start": 10422, "end": 10610, "access": "full_text" } ] }</code></pre>
+      <p><code>quotes</code> is <code>[]</code>. The subagent returns one receipt and no paper text.</p>
+
+      <h3>(c) Appraisal</h3>
+      <p>The appraisal subagent points its <em>Missing outcome data = high</em> judgement at <code>start=12880 end=13044</code>, and leaves <em>Selection of the reported result = unclear</em> with <code>spans: []</code>, because the paper cites no protocol and there is nothing to point at.</p>
+
+      <h3>(d) Report</h3>
+      <p>Synthesis writes: <em>"Group CBT reduced CDI-2 scores at 12 weeks (SMD −0.41, 95% CI −0.68 to −0.14) in one RCT of 240 adolescents."</em> — with a footnote keyed to the source id.</p>
+
+      <h3>(e) Assembly</h3>
+      <p><code>assemble.py</code> recomputes the snapshot's hashes (match), checks <code>0 ≤ 10422 &lt; 10610 ≤ 61042</code> (in range), checks <code>10610 − 10422 = 188 ≤ 2000</code> (in bounds), re-slices <code>text[10422:10610]</code>, finds <code>ev-0007</code> fresh for this run, confirms the paper triple agrees with the <code>evidence_id</code>, and writes into <code>accepted[]</code>:</p>
+      <pre><code>{ "claim": "CDI-2 at 12 weeks, SMD -0.41 (95% CI -0.68 to -0.14), p=0.003.",
+  "field": "outcomes[0]", "source_id": "src-3f9a1c...",
+  "start": 10422, "end": 10610, "access": "full_text",
+  "excerpt": "At 12 weeks the intervention group showed a greater reduction in CDI-2 total score than controls (SMD -0.41, 95% CI -0.68 to -0.14; p=0.003).",
+  "section": "Results", "page": null }</code></pre>
+      <p><strong>The <code>excerpt</code> was produced here, by slicing. No agent typed it.</strong></p>
+
+      <h3>(f) Verification</h3>
+      <p><code>verify.py</code> reads <code>result.json</code>: <code>C-SNAPSHOT</code> pass, <code>C-SPAN</code> pass (214 spans checked), <code>C-FRESH-FETCH</code> pass, <code>C-ASSEMBLER</code> pass — alongside <code>C-CITE-RESOLVE</code>, <code>C-FULLTEXT</code>, and <code>C-HYPOTHESIS-WALL</code>.</p>
+
+      <h3>(g) Promotion</h3>
+      <p><code>okf.py promote --check</code> re-reads the snapshot from disk, recomputes both digests, re-slices <code>text[10422:10610]</code> a <em>second</em> time, compares it to the excerpt in <code>result.json</code>, and checks the PMID against the snapshot's <code>paper</code>. All pass, so promotion writes the concept with a resolvable source and an evidence footnote whose quoted text is the re-sliced excerpt.</p>
+
+      <h3>(h) The counterfactual</h3>
+      <table>
+        <thead><tr><th>Had this happened</th><th>This is where it dies</th></tr></thead>
+        <tbody>
+          <tr><td>The extractor wrote the quote by hand as <em>"…a significant reduction in CDI-2 scores…"</em> while the snapshot reads <em>"a greater reduction in CDI-2 total score"</em></td><td>Step (e) raises <code>EXCERPT_MISMATCH</code>, the artifact lands in <code>diagnostics.unresolved[]</code>, <code>C-SPAN</code> reports it, and step (g) refuses the concept</td></tr>
+          <tr><td>The run reused a snapshot from an earlier run without re-fetching</td><td>Step (e) raises <code>NO_FRESH_FETCH</code></td></tr>
+          <tr><td>Someone edited <code>text</code> in the snapshot file</td><td>Step (a)'s hash no longer recomputes and every span against it dies at <code>C-SNAPSHOT</code> — which no flag can downgrade</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Reading The Store Yourself</h2>
+      <pre><code>python3 scripts/source.py fetch --run-dir &lt;run&gt; --url &lt;url&gt;          # register text
+python3 scripts/source.py read  --run-dir &lt;run&gt; --source-id &lt;id&gt;     # verified read
+python3 scripts/source.py spans --run-dir &lt;run&gt; --source-id &lt;id&gt; --query "..."
+python3 scripts/source.py local --run-dir &lt;run&gt; --file &lt;pdf&gt;         # user-supplied PDF</code></pre>
+
+      <footer class="footer">Source manual: <code>references/evidence-kernel.md</code>. Contracts: <code>references/schema.md</code> §10–§13 and §9. Scripts: <code>scripts/source.py</code>, <code>scripts/store.py</code>, <code>scripts/assemble.py</code>, <code>scripts/verify.py</code>.</footer>
+    </main>
+  </div>
+</body>
+</html>

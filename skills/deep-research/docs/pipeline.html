@@ -16,6 +16,7 @@
         <a href="quickstart.html">Quickstart</a>
         <a href="questions.html">Scientific questions</a>
         <a href="pipeline.html" aria-current="page">Full pipeline</a>
+        <a href="evidence-kernel.html">Evidence kernel</a>
         <a href="paper-summaries.html">Paper summaries</a>
         <a href="reference-manager.html">Reference manager</a>
         <a href="readcube-export.html">ReadCube export</a>
@@ -29,45 +30,388 @@
     <main class="content">
       <section class="hero">
         <p class="eyebrow">Stage 0-8</p>
-        <h1>The full pipeline is for literature reviews and evidence synthesis.</h1>
-        <p class="lead">Profiles change breadth and gates, but every full run follows the same audited shape.</p>
+        <h1>One literature review, nine stages, and a stage pointer that makes any of them resumable.</h1>
+        <p class="lead">The agent is the coordinator: it configures the run, designs the search, and writes the synthesis. Scripts do the network and state work. Bounded subagents do the per-paper work and hand back one-line receipts. This page walks the whole loop — what each stage runs, what it writes to disk, what stops it, and what you see while it happens.</p>
       </section>
 
-      <h2>Stages</h2>
+      <h2>The Shape Of A Run</h2>
       <table>
-        <thead><tr><th>Stage</th><th>Name</th><th>Purpose</th></tr></thead>
+        <thead><tr><th>#</th><th>Stage</th><th>Runs in</th><th>Model</th><th>Writes</th></tr></thead>
         <tbody>
-          <tr><td>0</td><td>Configure</td><td>Question, profile, target root, filters, outputs, connector preflight.</td></tr>
-          <tr><td>1</td><td>Protocol</td><td>Question framework and numbered inclusion/exclusion criteria.</td></tr>
-          <tr><td>2</td><td>Search</td><td>Pool seeding plus orthogonal PubMed queries.</td></tr>
-          <tr><td>3</td><td>Screen</td><td>Dedupe and title/abstract triage.</td></tr>
-          <tr><td>4</td><td>Retrieve</td><td>Open-access ladder, full-text acquisition, quarantine for missing text.</td></tr>
-          <tr><td>5</td><td>Extract</td><td>One structured extraction per paper with spans.</td></tr>
-          <tr><td>6</td><td>Appraise</td><td>Design-specific appraisal and outcome-level certainty inputs.</td></tr>
-          <tr><td>7</td><td>Synthesize</td><td>Effect-direction synthesis, conflicts, gaps, hypotheses.</td></tr>
-          <tr><td>7b</td><td>Digest</td><td>Short digest of the completed report.</td></tr>
-          <tr><td>8</td><td>Publish</td><td>Assemble, verify, render, and promote or export.</td></tr>
+          <tr><td>0</td><td>Configure</td><td>main</td><td>main</td><td><code>config.json</code></td></tr>
+          <tr><td>1</td><td>Protocol</td><td>main</td><td>main</td><td><code>outputs/protocol.md</code></td></tr>
+          <tr><td>2</td><td>Search</td><td>main, scripts only</td><td>—</td><td>pool-seeded <code>corpus.jsonl</code>, then <code>workspace/search/&lt;query_id&gt;.json</code></td></tr>
+          <tr><td>3</td><td>Screen</td><td>subagents, batched</td><td>sonnet</td><td><code>workspace/screening/&lt;screener&gt;/pmid-*.json</code></td></tr>
+          <tr><td>4</td><td>Retrieve</td><td>main + <code>fulltext.py</code></td><td>—</td><td>corpus <code>fulltext</code> block, <code>missing.md</code></td></tr>
+          <tr><td>5</td><td>Extract</td><td>subagents, 1/paper</td><td>opus</td><td><code>workspace/extractions/pmid-*.json</code>, pool synced</td></tr>
+          <tr><td>6</td><td>Appraise</td><td>subagents, 1/paper</td><td>opus</td><td><code>workspace/appraisals/pmid-*.json</code>, pool synced</td></tr>
+          <tr><td>7</td><td>Synthesize</td><td>main only</td><td>main</td><td><code>outputs/report.md</code></td></tr>
+          <tr><td>7b</td><td>Digest</td><td>subagent, 1</td><td>opus</td><td><code>outputs/digest.md</code></td></tr>
+          <tr><td>8</td><td>Verify / publish</td><td>main</td><td>main</td><td><code>outputs/result.json</code>, <code>outputs/verification.json</code>, bundle</td></tr>
         </tbody>
       </table>
 
-      <h2>Profiles</h2>
+      <p>Three structural rules hold across all of them, and they are what keeps a hundred-paper run inside a single context window:</p>
+      <ul>
+        <li>A subagent receives <strong>bounded</strong> input — one paper, or one batch of PMIDs, plus the criteria and an output path. Never the corpus.</li>
+        <li>A subagent <strong>writes its own result file</strong> and returns only the receipt <code>{schema_version, task_id, status, output_path, summary}</code>. Never raw paper text, never the full JSON.</li>
+        <li>Subagents cannot spawn subagents, and the stage's output directory is shared — a subagent must not count, audit, or comment on files it did not write.</li>
+      </ul>
+
+      <h2>Choosing A Profile</h2>
+      <p>The profile sets search breadth, appraisal depth, and which approval checkpoints show back to you. It is asked explicitly at Stage 0 — never inferred from how the question was phrased.</p>
       <table>
-        <thead><tr><th>Profile</th><th>Scope</th><th>Typical use</th></tr></thead>
+        <thead><tr><th>Profile</th><th>Scope</th><th>Rigor</th><th>Gates</th><th><code>max_articles</code></th><th>Extras</th></tr></thead>
         <tbody>
-          <tr><td><code>fast</code></td><td>Narrow</td><td>Quick field read, smaller article cap.</td></tr>
-          <tr><td><code>standard</code></td><td>Medium</td><td>Default review path with protocol and strategy gates.</td></tr>
-          <tr><td><code>systematic</code></td><td>Wide</td><td>Defensible review with dual screening and PRISMA log.</td></tr>
-          <tr><td><code>max</code></td><td>Maximum</td><td>Broadest sweep, optional grey literature and extra connectors.</td></tr>
+          <tr><td><code>fast</code></td><td>narrow</td><td>fast</td><td>none</td><td>10</td><td>Report only</td></tr>
+          <tr><td><strong><code>standard</code></strong> (default)</td><td>medium</td><td>standard</td><td>protocol+strategy</td><td>25</td><td>Report + OKF bundle when a wiki is selected</td></tr>
+          <tr><td><code>systematic</code></td><td>wide</td><td>systematic</td><td>both</td><td>60</td><td>Dual screening, PRISMA log, full verifier, optional Quarto export</td></tr>
+          <tr><td><code>max</code></td><td>max</td><td>systematic</td><td>both</td><td>100</td><td>+ guidelines / grey literature / preprints, connector auth checks</td></tr>
         </tbody>
       </table>
 
-      <h2>Stop After Extraction</h2>
-      <p>Set <code>pipeline.stop_after_stage: 5</code> to build the extracted-paper pool without appraisal, synthesis, or report generation. Later runs can reuse those canonical extractions.</p>
+      <div class="callout">
+        <strong><code>fast</code> is not a shortcut through retrieval.</strong> <code>gates: none</code> only means the protocol and search strategy are not shown back for approval before Stage 2. Every profile, <code>fast</code> included, runs Stage 4 through <code>fulltext.py acquire</code> and the whole ladder. There is no profile-specific path that fetches full text directly, and no profile that skips the Stage 0 questions — <code>fast</code> has no later checkpoint to catch a wrong assumption, so Stage 0 is its only chance to get scope, criteria, and filters right.
+      </div>
 
-      <h2>Quarantine</h2>
-      <p>When full text cannot be acquired, the run records missing papers and asks the user to supply PDFs in the run inbox. Abstract-only records remain labeled as such and cannot receive full-text appraisal.</p>
+      <h3>Scope tiers, and what each one adds</h3>
+      <table>
+        <thead><tr><th>Tier</th><th>Sources</th><th>Needs a connector?</th></tr></thead>
+        <tbody>
+          <tr><td><code>narrow</code></td><td>PubMed MCP only (<code>search_articles</code>, <code>get_article_metadata</code>, <code>find_related_articles</code>)</td><td>PubMed MCP</td></tr>
+          <tr><td><code>medium</code></td><td>+ <code>scripts/eutils.py</code> — exact boolean/MeSH, hit counts, large result sets</td><td>No (plain HTTPS)</td></tr>
+          <tr><td><code>wide</code></td><td>+ Europe PMC REST — indexes bioRxiv / medRxiv / Research Square; preprints tagged loudly</td><td>No (plain HTTPS)</td></tr>
+          <tr><td><code>max</code></td><td>+ web: guidelines, grey literature, Scholar Gateway / Consensus connectors</td><td>Yes, and checked</td></tr>
+        </tbody>
+      </table>
 
-      <footer class="footer">Source manuals: <code>SKILL.md</code>, <code>references/acquisition.md</code>, <code>references/reporting.md</code>.</footer>
+      <h2>Stage 0 — Configure</h2>
+      <p>Stage 0 does two jobs: establish what is reachable <em>this session</em>, and settle the handful of choices that cannot be inferred.</p>
+
+      <h3>Connector preflight, every run</h3>
+      <p>Tool availability is a property of the session, not of the skill. MCP servers attach at session start, so a connector authorized ten minutes ago is still absent until a <strong>new</strong> session starts. The agent checks its own tool list once, at Stage 0, and records what it found in <code>config.json</code>:</p>
+      <pre><code>"connectors": {
+  "pubmed_mcp": true,
+  "scholar_gateway": false,
+  "consensus": false,
+  "checked_at": "2026-09-12T09:14:02Z"
+}</code></pre>
+      <p>That block is carried into the report's Methods section. A run that could not reach a source its profile assumes must say which source, and what it means for coverage.</p>
+
+      <div class="callout">
+        <strong>PubMed MCP is mandatory at every scope.</strong> If <code>mcp__claude_ai_PubMed__*</code> is missing, the run does not proceed at a reduced scope — it stops. The connector is authorized in claude.ai → Settings → Connectors and picked up by a new session. There is no "proceed anyway", no alternate fetch route, and no authorization code to paste: it is a browser OAuth flow the agent cannot drive. Scholar Gateway and Consensus (both <code>max</code>-only) stay optional, but if they are missing you are told by name and asked whether to reduce scope now or resume connected — <code>max</code> without them is <code>wide</code> with extra steps, and should be described that way rather than run quietly.
+      </div>
+
+      <h3>The six questions</h3>
+      <table>
+        <thead><tr><th>#</th><th>Asked</th><th>Why it cannot be defaulted</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><strong>Question</strong> — restated in a framework (PICO/PECO/PEO/PCC/SPIDER/SPICE)</td><td>Every downstream search axis derives from the framework fields. See <a href="questions.html">Scientific questions</a>.</td></tr>
+          <tr><td>2</td><td><strong>Profile</strong></td><td>Sets article cap, gates, dual screening, and whether the run is report-only.</td></tr>
+          <tr><td>3</td><td><strong>Target root</strong> — wiki or standalone repo</td><td>The run directory, PDF library, and shared paper pool all live under it. Needed before anything is written. See <a href="architecture.html">Repo architecture</a>.</td></tr>
+          <tr><td>4</td><td><strong>Study selection criteria</strong> — designs, population bounds, comparator scope, required outcomes, hard excludes</td><td>Stage 1 turns these into <em>numbered</em> criteria that screening cites by id. The agent's own reading of the PICO is not a substitute for your answer.</td></tr>
+          <tr><td>5</td><td><strong>Filters</strong> — years, authors, journals, article types, species/age, language, OA-only</td><td>Includes an explicit question about meta-analyses and systematic reviews: in the corpus or filtered out, and if in, synthesized alongside primary studies or appraised separately with AMSTAR-2.</td></tr>
+          <tr><td>6</td><td><strong>Outputs</strong> — HTML artifact, Quarto PDF/docx, OKF promotion, and whether to stop after extraction</td><td><code>report.md</code> is always produced; everything else is opt-in.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Stop after extraction</h3>
+      <p>Orthogonal to the profile: <code>pipeline.stop_after_stage: 5</code> in <code>config.json</code> runs search → screen → retrieve → extract and halts. No appraisal, no synthesis, no report, no promotion. It still runs the Stage 5 exit sync, so the extractions are immediately reusable by any later run that hits the same papers — including a different question.</p>
+      <p>This is a pause point, not a different pipeline. Clearing <code>stop_after_stage</code> and resuming continues the <em>same</em> run into Stage 6.</p>
+
+      <h3>The run directory</h3>
+      <pre><code>&lt;wiki&gt;/outputs/deep-research/&lt;slug&gt;/          # wiki mode
+&lt;repo&gt;/runs/&lt;slug&gt;/                            # standalone repo mode
+
+  config.json      profile, filters, budgets, connectors, stage pointer
+  engine.log       diagnostics, script failures, guard output
+  taskboard.jsonl  one record per unit of work — never hand-edited
+  events.jsonl     append-only retrieval log (evidence kernel)
+  corpus.jsonl     one record per paper, all stages
+  sources/         immutable text snapshots
+  inputs/          run inputs
+  workspace/       per-stage working records
+  outputs/         protocol.md, report.md, digest.md, verification.json, result.json
+  missing.md       quarantine + abstract-only blocks
+  inbox/           drop PDFs here to resolve blocks</code></pre>
+
+      <div class="callout">
+        <strong>Reserved directories hold one record shape and nothing else.</strong> <code>corpus.py</code> reads every <code>*.json</code> under <code>workspace/search/</code>, <code>workspace/screening/&lt;screener&gt;/</code>, <code>workspace/screening/adjudication/</code>, <code>workspace/extractions/</code>, and <code>workspace/appraisals/</code>, and treats each file as a record of that stage's type. Batch inputs, efetch payloads, and rankings go somewhere else — <code>workspace/batches/</code>, <code>workspace/fetch/</code>. A stray file of the wrong shape is now skipped with a warning rather than crashing <code>prisma</code>, but the directory contract is still the rule.
+      </div>
+
+      <h3>The stage pointer is the only thing a resume trusts</h3>
+      <p><code>config.json</code>'s <code>stage</code> is bumped as each stage completes, in the same turn. A coordinator that carries the stage in its head leaves the pointer stale, and the next session restarts a stage that already finished. On resume, the agent reads <code>config.json</code> + <code>taskboard.jsonl</code>, continues incomplete and failed tasks, and does not re-prompt.</p>
+
+      <h2>Stage 1 — Protocol</h2>
+      <p>Question framing in the chosen framework, <em>numbered</em> inclusion/exclusion criteria (<code>I1</code>, <code>E2</code>, … — screening cites these ids), limits, and the planned search. Built from the Stage 0 selection-criteria answers, never invented fresh. Template: <code>templates/protocol.md</code>. At <code>standard</code> and above, the protocol <em>and</em> the search strategy are shown back and the run waits for approval.</p>
+
+      <h2>Stage 2 — Search</h2>
+      <p>Seed from the shared pool first, then design queries.</p>
+      <pre><code>python3 scripts/pool.py seed --run-dir &lt;run_dir&gt; --wiki &lt;root&gt;    # or --repo &lt;path&gt;</code></pre>
+      <p>Seeding scores the existing pool against this run's question, framework fields, and filters, and upserts likely papers into <code>corpus.jsonl</code> with <code>source: pool</code> and <code>first_seen_query: pool-seed</code>. They are candidates only — Stage 3 still screens them against the current protocol.</p>
+
+      <h3>Orthogonality is a property of hit sets, not of strings</h3>
+      <p>The failure this guards against: eight queries that are one query with the synonyms shuffled, producing one hit set, near-zero marginal yield, and a search log that <em>looks</em> thorough. Queries vary along four axes:</p>
+      <table>
+        <thead><tr><th>Axis</th><th>Values</th><th>What varying it buys</th></tr></thead>
+        <tbody>
+          <tr><td><strong>A — concept axis dropped</strong></td><td>Drop one framework facet, drop setting, or drop nothing</td><td>An N-facet AND is massively over-specified; each dropped facet recovers records that facet's vocabulary failed on</td></tr>
+          <tr><td><strong>B — vocabulary</strong></td><td>MeSH-only <code>[mh]</code>/<code>[majr]</code> · text-word <code>[tiab]</code>/<code>[ti]</code> · author keyword <code>[ot]</code>/<code>[nm]</code> · single broad <code>[tw]</code></td><td>Recovers records lost to indexing lag, descriptor drift, non-standard terminology</td></tr>
+          <tr><td><strong>C — design filter</strong></td><td>none · RCT hedge · SR hedge · observational hedge · null-findings hedge · harms hedge</td><td>Different literatures index the same question under different designs</td></tr>
+          <tr><td><strong>D — entry point</strong></td><td>de novo boolean · forward chaining · backward chaining · related-articles · journal/author-targeted · registry &amp; grey</td><td>Escapes the vocabulary entirely</td></tr>
+        </tbody>
+      </table>
+      <p>Two queries count as orthogonal when they differ on <strong>≥2 axes</strong> and their hit sets satisfy Jaccard <code>J &lt; 0.6</code> with unique yield <code>≥ 15%</code> each. A 4–8 query set must cover at least three values of axis A, three of B, two of C, and two of D — plus at least one pure text-word arm bounded by <code>[edat]</code> (the only arm that sees the last ~12 months), at least one null/negative-findings arm, and at least one citation-chaining arm with ≥3 independent seeds.</p>
+
+      <h3>Anti-patterns the checklist rejects</h3>
+      <table>
+        <thead><tr><th>Anti-pattern</th><th>Why it fails</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr><td>Same facets, synonyms permuted</td><td>Automatic term mapping already ORs most synonyms; <code>J ≈ 0.95</code></td><td>Change axis A or C, not the wordlist</td></tr>
+          <tr><td>Adding one more <code>AND</code> facet per query</td><td>Each query is a subset of the last — nested, not orthogonal</td><td>Drop a facet instead of adding one</td></tr>
+          <tr><td>Eight design hedges over one facet block</td><td>Hedges overlap heavily on <code>[pt]</code> terms</td><td>Max two design hedges plus one no-hedge arm</td></tr>
+          <tr><td>Only <code>[mh]</code> arms</td><td>Misses everything unindexed</td><td>≥1 pure <code>[tiab]</code> arm restricted by <code>[edat]</code></td></tr>
+          <tr><td>Only forward chaining</td><td>Inherits the seed set's bias</td><td>Pair <code>citedin</code> with <code>refs</code> and independent seeds</td></tr>
+          <tr><td>Date-slicing the same query</td><td><code>J = 0</code> yet zero new <em>concepts</em> — pagination, not a query</td><td>Vary the axis profile, not the date window</td></tr>
+        </tbody>
+      </table>
+      <p>Every query string, its NCBI-translated form, and its hit count are logged to <code>workspace/search/&lt;query_id&gt;.json</code> and reproduced verbatim in the report's Methods. Duplicate queries are detected and skipped before execution by <code>corpus.py query-check</code>. A failed orthogonality pair is <em>replaced</em>, never deleted — deleting shrinks the recorded strategy without improving it.</p>
+
+      <h2>Stage 3 — Screen</h2>
+      <p>Dedupe first (PMID → DOI → normalized title), then title/abstract triage against the numbered criteria. Each verdict records include/exclude/unclear plus the <strong>first failing criterion id</strong>, and flags retractions and expressions of concern. PMIDs are batched across subagents.</p>
+      <p>At <code>systematic</code> and <code>max</code>, two independent screeners run, with a third adjudicating every disagreement. The PRISMA log gets raw agreement plus counts:</p>
+      <pre><code>GOOD  "Two screeners independently assessed 412 records; they disagreed on 37
+       (raw agreement 91.0%). All 37 were adjudicated by a third worker;
+       12 were adjudicated to include."
+
+BAD   "Inter-rater reliability was good."</code></pre>
+      <p>A kappa is reported only if it was actually computed from the full contingency table — named as Cohen's kappa, with the table shown. Raw agreement is never presented as kappa.</p>
+      <p>The included set is capped at <code>max_articles</code>, chosen by protocol relevance, and the report says how the cap was applied.</p>
+
+      <h2>Stage 4 — Retrieve</h2>
+      <p>Goal: full text, not abstracts. <code>fulltext.py acquire</code> walks a nine-rung ladder per paper until text is in hand, recording which rung succeeded. Records screened out are never acquired.</p>
+      <table>
+        <thead><tr><th>#</th><th>Rung</th><th>Method</th><th>Success =</th><th><code>access_route</code></th></tr></thead>
+        <tbody>
+          <tr><td>0</td><td>Local library</td><td><code>library.py lookup</code> by DOI/PMID/PMCID/title, then <code>pdftotext -layout</code></td><td>≥100 chars</td><td><code>library</code> / <code>inbox_manual</code></td></tr>
+          <tr><td>1</td><td>PMC full text</td><td>PubMed MCP <code>get_full_text_article</code> — <strong>coordinator handoff</strong></td><td>≥100 chars at <code>result_path</code></td><td><code>pmc_mcp</code></td></tr>
+          <tr><td>2</td><td>PMC PDF</td><td><code>GET .../articles/&lt;PMCID&gt;/pdf/</code>, polite UA + rate limit → <code>pdftotext</code></td><td>HTTP 200, PDF content type, ≥100 chars</td><td><code>pmc_pdf</code></td></tr>
+          <tr><td>3</td><td>Europe PMC</td><td>REST id conversion → <code>fullTextXML</code> → JATS→text; indexes bioRxiv/medRxiv/Research Square natively</td><td>≥100 chars of body</td><td><code>epmc_xml</code></td></tr>
+          <tr><td>4</td><td>Unpaywall</td><td><code>api.unpaywall.org/v2/&lt;doi&gt;?email=…</code> → <code>best_oa_location</code></td><td>An OA URL (no text yet — feeds rung 5)</td><td><code>unpaywall</code></td></tr>
+          <tr><td>5</td><td>OA PDF/HTML</td><td>Fetch; PDF → <code>pdftotext</code> (+OCR fallback); HTML → stdlib parse + truncation detector</td><td>PDF ≥100 chars, or HTML body text</td><td><code>unpaywall_pdf</code> / <code>oa_pdf</code> / <code>oa_html</code></td></tr>
+          <tr><td>6</td><td>Preprint twin</td><td>Europe PMC <code>… AND SRC:PPR</code>, title similarity ≥0.90 unless DOI-matched</td><td>≥100 chars</td><td><code>preprint_twin</code> (sets <code>is_preprint</code>)</td></tr>
+          <tr><td>7</td><td>Browser search/fetch</td><td>claude-in-chrome MCP — <strong>coordinator handoff</strong>, OA content only</td><td>≥100 chars at <code>result_path</code></td><td><code>browser_fetch</code></td></tr>
+          <tr><td>8</td><td>Quarantine</td><td>Append a block to <code>missing.md</code>, alert the user</td><td>Always succeeds</td><td><code>quarantine</code></td></tr>
+        </tbody>
+      </table>
+
+      <h3>Why two rungs need the agent</h3>
+      <p>A script cannot call an MCP tool. Rungs 1 and 7 therefore append a handoff task and <strong>keep walking the ladder</strong> — the run never blocks on either. The agent later reads <code>fulltext.py status</code>, calls the tool, writes the returned text verbatim to the task's <code>result_path</code>, and resolves it:</p>
+      <pre><code>python3 scripts/fulltext.py status --run-dir &lt;run&gt;
+# → mcp_tasks_pending: [...], browser_tasks_pending: [...]
+
+python3 scripts/fulltext.py resolve-mcp     --run-dir &lt;run&gt; --evidence-id pmid:33333333 --text-file &lt;path&gt;
+python3 scripts/fulltext.py resolve-browser --run-dir &lt;run&gt; --evidence-id pmid:33333333 --status unavailable</code></pre>
+      <p>Re-running <code>acquire</code> picks up a dropped result file and is equivalent to calling <code>resolve-*</code> — they are the same code path, not two. If the tool reports no full text, resolving with <code>--status unavailable</code> marks the rung terminal so it is never retried.</p>
+
+      <h3>The truncation detector</h3>
+      <p>Rungs 1, 5, and 7 can all hand back an abstract wrapped in a page of teaser text. The same two checks apply to raw text as to stripped HTML, and either one firing is enough:</p>
+      <table>
+        <thead><tr><th>Rule</th><th>Threshold</th></tr></thead>
+        <tbody>
+          <tr><td>Body word count (after tag stripping)</td><td><code>&lt; 1500</code> words</td></tr>
+          <tr><td>Paywall marker present (case-insensitive substring)</td><td>Any of: <code>Access options</code>, <code>Purchase</code>, <code>Sign in to view</code>, <code>Get access</code>, <code>Subscribe</code></td></tr>
+        </tbody>
+      </table>
+      <p>On fire: <code>truncation_detected: true</code>, status downgraded to <code>abstract_only</code>, and the reason written to the rung detail and <code>engine.log</code> (<code>body_words=303&lt;1500</code>, <code>paywall_marker=Access options</code>). The text is still stored — it is a legitimate abstract — but every downstream claim carries the abstract-only label. The detector is deliberately trigger-happy: <strong>a false <code>abstract_only</code> costs a label; a false <code>fulltext</code> corrupts the appraisal.</strong></p>
+      <p>A truncated success no longer stops the ladder. The first one is kept as a <em>fallback</em> while every remaining rung is tried for genuine full text. A later rung with real full text wins outright and clears any <code>missing.md</code> block; a later truncated result does not replace the fallback; rung 8 is preempted so quarantine never overwrites degraded-but-real text with <code>status: missing</code>.</p>
+
+      <h3>OCR, and what is not installed</h3>
+      <pre><code>1. pdftotext -layout &lt;pdf&gt; -                       # always first
+2. pdfminer.high_level.extract_text                # if pdftotext absent or empty
+3. pdftoppm -r 300 -gray -png -f N -l N | tesseract # only if 1-2 yield &lt; 100 chars</code></pre>
+      <p><code>ocrmypdf</code> is not installed and there is no whole-file OCR path. Per-page OCR is capped at 30 pages and disabled with <code>--no-ocr</code>; its use is recorded in the rung detail. <code>pdfinfo</code> metadata is not trusted for DOI recovery — page-1 text plus a <code>10\.\d{4,}/\S+</code> regex is.</p>
+
+      <h3>Politeness is enforced, not aspirational</h3>
+      <table>
+        <thead><tr><th>Host</th><th>Min interval</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td>NCBI (<code>pmc.</code>, <code>eutils.</code>)</td><td>0.34 s (≈3 req/s)</td><td>10 req/s with an <code>NCBI_API_KEY</code> in env</td></tr>
+          <tr><td><code>www.ebi.ac.uk</code></td><td>0.25 s</td><td>Europe PMC</td></tr>
+          <tr><td><code>api.unpaywall.org</code></td><td>0.15 s</td><td><code>email=</code> is a required parameter, never guessed — without it rung 4 is <code>skipped</code></td></tr>
+        </tbody>
+      </table>
+      <p>Two retries on network errors and HTTP 429/500/502/503/504 with linear backoff. Everything else fails the rung and moves on. Email comes from <code>--email</code> or <code>$DEEP_RESEARCH_EMAIL</code>.</p>
+
+      <h3>Quarantine → inbox → resume</h3>
+      <p>Stage 4 itself never stalls: it walks the ladder for every remaining record regardless of any single failure, and never asks mid-ladder whether to keep going. What stalls, deliberately, is the pipeline as a whole. Once acquisition has been attempted for every selected record, a non-empty <code>missing.md</code> halts the run before Stage 5 — <em>regardless of which kind of block it holds</em>:</p>
+      <table>
+        <thead><tr><th>Block</th><th>Means</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Quarantined</strong> (rung 8)</td><td>Zero text at all. Every rung failed outright.</td></tr>
+          <tr><td><strong>Abstract-only</strong> (fallback finalized)</td><td>Some rung returned text, the truncation detector flagged it, and the ladder tried every remaining rung before giving up. The real degraded text is stored; a full PDF would upgrade the record.</td></tr>
+        </tbody>
+      </table>
+      <p>An abstract-only block is not a lesser case to be waved through. You get <strong>one consolidated table</strong> of every blocked record with links, the rung reached, and the ask:</p>
+      <pre><code>| Title | PMID     | DOI               | Rung | Status        | Links            |
+|-------|----------|-------------------|------|---------------|------------------|
+| ...   | 33333333 | 10.1000/paywalled | t8   | quarantined   | PubMed · DOI     |
+| ...   | 42119772 | —                 | t1   | abstract-only | PubMed           |
+
+Action: place the PDF in &lt;run-dir&gt;/inbox/ (any filename) and re-run.</code></pre>
+      <p><code>systematic</code> and <code>max</code> gate hard on this — extraction does not start until <code>missing.md</code> is empty. <code>fast</code> and <code>standard</code> may proceed on your say-so, with quarantined records tagged <code>missing</code>, abstract-only records used as-is, and the synthesis marked <strong>PROVISIONAL</strong> either way.</p>
+      <pre><code>python3 scripts/library.py ingest-inbox --run-dir &lt;run&gt; --wiki &lt;root&gt;
+python3 scripts/fulltext.py acquire --corpus &lt;corpus.jsonl&gt; --run-dir &lt;run&gt;</code></pre>
+      <p>Ingestion matches each dropped PDF by page-1 DOI regex first, then by fuzzy title against quarantined records (normalized title slid across page-1 text, best ratio ≥ 0.85; titles under 25 normalized characters are never fuzzy-matched). Matched PDFs are filed into the library with sha256 dedupe, the corpus updated to <code>source_tier: 0</code> / <code>access_route: inbox_manual</code>, and the block removed from <code>missing.md</code>. Unmatched PDFs stay in <code>inbox/</code> and are listed with the reason — never guessed onto a record.</p>
+
+      <div class="callout">
+        <strong>The OA ladder is the whole ladder.</strong> No credentials, no saved sessions or cookie jars, no institutional/VPN/EZproxy/Shibboleth proxies, no captcha solving, no mirror sites, and no retrying a 401/402/403 by another route. Rung 7's browser exists to render a JS-gated page that carries no access control — a login wall, paywall, or captcha there means <code>unavailable</code>. The single carve-out is the opt-in <code>institutional_access</code> setting: even then the agent never handles the credential, it stops at the SSO wall and hands the open tab to you, and the result is recorded as <code>browser_fetch_institutional</code> so the Methods section can disclose which full texts came through your own licence. A missing paper is an honest gap in the report; a circumvented paywall is a policy breach.
+      </div>
+
+      <h2>Stage 5 — Extract</h2>
+      <p>Before dispatching a subagent for a paper, try the pool:</p>
+      <pre><code>python3 scripts/pool.py reuse --run-dir &lt;run&gt; --wiki &lt;root&gt; --pmid &lt;pmid&gt;</code></pre>
+      <p><code>matched: true</code> with a non-null <code>extraction</code> means another run already extracted this exact paper. <code>reuse</code> has already copied that file into this run's <code>workspace/extractions/</code> tagged <code>"reused_from"</code>, <strong>and</strong> (wiki mode) re-registered every snapshot its spans cite into this run's own store — same <code>source_id</code>, content-addressed, so quotes verify locally exactly like a freshly extracted paper's. Skip the subagent, log the reuse.</p>
+      <p>Otherwise: one subagent per paper, opus, <code>references/prompts/extract.md</code>. Design, N, population, I/C, outcomes with effect + CI + direction, funding/COI, limitations, and spans with character offsets. <code>evidence_basis</code> is <code>abstract_only</code> whenever no full text was obtained.</p>
+      <p>A reused snapshot carries a <code>register</code> event, never <code>fresh</code> — the text was not retrieved in this run. <code>C-FRESH-FETCH</code> reports it as non-fresh accordingly; <code>C-SNAPSHOT</code> and <code>C-SPAN</code> pass normally, because the content is locally present and hash-verified. See <a href="evidence-kernel.html">Evidence kernel</a>.</p>
+      <p>On stage completion, sync the pool and show the table:</p>
+      <pre><code>python3 scripts/pool.py sync --run-dir &lt;run&gt;              # wiki mode
+python3 scripts/registry.py promote --repo &lt;path&gt; --run-dir &lt;run&gt;   # repo mode
+
+python3 scripts/status.py &lt;run&gt; --table</code></pre>
+      <p>The table shows which papers were downloaded, in what format, and whether extraction ran — so you see corpus coverage before appraisal, including which rows were reused rather than freshly extracted. Stage 6 does not start while any row is still pending extraction.</p>
+
+      <h2>Stage 6 — Appraise</h2>
+      <p>Same reuse gate, called per paper (idempotent — this time it checks for a resolving <code>appraisal_path</code>). In repo mode pass <code>--project &lt;slug&gt;</code>: appraisal there is project-scoped, because risk of bias and certainty depend on the question being asked, not on the paper alone.</p>
+      <p>Otherwise one subagent per paper, opus. Tool selected by design — RoB 2 / ROBINS-I / Newcastle-Ottawa / AMSTAR-2 / QUADAS-2 / PROBAST / CASP / JBI / <code>none</code> — then GRADE domains. Abstract-only records are never appraised as if full text. Full routing and domain detail: <a href="appraisal.html">Appraisal frameworks</a>.</p>
+      <pre><code>python3 scripts/pool.py sync --run-dir &lt;run&gt;
+python3 scripts/registry.py appraise-promote --repo &lt;path&gt; --run-dir &lt;run&gt; --project &lt;slug&gt;</code></pre>
+
+      <h2>Stage 7 — Synthesize</h2>
+      <p>Main thread only. Effect-direction tabulation, agreement and conflict <em>with an explanation of why</em>, certainty, gaps, and a hard-walled hypotheses section. One row per study-outcome, with precision classified rather than asserted:</p>
+      <table>
+        <thead><tr><th>Precision</th><th>Rule</th></tr></thead>
+        <tbody>
+          <tr><td><code>precise</code></td><td>Interval excludes the null <strong>and</strong> both bounds fall on the same side of the minimally important difference</td></tr>
+          <tr><td><code>imprecise</code></td><td>Interval excludes the null but spans the MID, or the interval is very wide</td></tr>
+          <tr><td><code>null-compatible</code></td><td>Interval includes the null</td></tr>
+          <tr><td><code>unreported</code></td><td>No interval reported — the row still appears; it is not dropped</td></tr>
+        </tbody>
+      </table>
+      <p>Nulls are not estimated, conflicts are not averaged away, and appraisal constrains the verbs the report is allowed to use (see <a href="appraisal.html#claims">Downgrading claim strength</a>).</p>
+
+      <h2>Stage 7b — Digest</h2>
+      <p>One subagent compresses the finished report (§1, §8, §9, §10, §11, §13, §15 only) into <code>outputs/digest.md</code>: an answer-first paragraph, a categorical outcomes table (outcome / direction / certainty / studies), and an <code>## Open Questions</code> section merging gaps and hypotheses, each paired with what would resolve it. No new research, no re-derived judgement, the same GRADE wordings and the same hard wall as the source report.</p>
+      <p>This is the body that <code>okf.py promote</code> writes into <code>research/reviews/&lt;slug&gt;.md</code>. The full report stays linked from it as the audit trail — the digest does not replace §0–§16 for methods, PRISMA, or provenance detail.</p>
+
+      <h2>Stage 8 — Assemble, Verify, Publish</h2>
+      <p>Fixed order. Each step's output is the next step's input:</p>
+      <pre><code>assemble.py run  →  verify.py run  →  render.py / html_report.py  →  okf.py promote --check  →  okf.py promote</code></pre>
+      <ul>
+        <li><code>assemble.py</code> decides which artifacts are admissible and writes <code>outputs/result.json</code> — the evidence ledger.</li>
+        <li><code>verify.py</code> runs the report checks plus the four kernel checks and writes <code>outputs/verification.json</code>.</li>
+        <li><code>okf.py promote --check</code> re-verifies integrity and writes nothing. It is mandatory before the real promote.</li>
+        <li>Only then does promotion write concepts — and it fails closed: any failure aborts the whole promotion, never a partial bundle.</li>
+      </ul>
+
+      <h3>What the verifier checks</h3>
+      <table>
+        <thead><tr><th><code>check_id</code></th><th>Passes when</th></tr></thead>
+        <tbody>
+          <tr><td><code>C-CITE-RESOLVE</code></td><td>Every footnote key resolves to a <code>sources[].id</code> / <code>evidence_id</code> in the corpus, and every cited item was retrieved this run</td></tr>
+          <tr><td><code>C-CORPUS-COMPLETE</code></td><td>Every included record has a screening verdict, an extraction, and an appraisal — or a recorded reason it has none</td></tr>
+          <tr><td><code>C-SEARCH-LOG</code></td><td>Every executed query has a search record with <code>hit_count_logged</code>, and all appear verbatim in the Methods section</td></tr>
+          <tr><td><code>C-RETRACTION</code></td><td>Every record with <code>retraction_status != "none"</code> is flagged at every point of use; retracted records are excluded from synthesis</td></tr>
+          <tr><td><code>C-FULLTEXT</code></td><td><code>missing_fulltext</code> matches <code>missing.md</code>; every abstract-only claim is labelled</td></tr>
+          <tr><td><code>C-HYPOTHESIS-WALL</code></td><td>No evidence-side verb forms inside §13; no unlabelled hypothesis outside it</td></tr>
+          <tr><td><code>C-PRISMA</code></td><td>The counter invariants hold and the flow's arithmetic closes</td></tr>
+          <tr><td><code>C-PREPRINT</code></td><td>Every <code>is_preprint</code> record is tagged at every point of use</td></tr>
+          <tr><td><code>C-ATTRIBUTION</code></td><td>Every PubMed-sourced footnote carries a PubMed link plus the DOI where one exists</td></tr>
+          <tr><td><code>C-PROVISIONAL</code></td><td>If a provisional trigger fired, <strong>PROVISIONAL</strong> appears in the title block and §14 lists the quarantined records</td></tr>
+          <tr><td><code>C-SECTIONS</code></td><td>Every skeleton section is present — empty-with-a-stated-reason is acceptable, missing is not</td></tr>
+          <tr><td><code>C-OKF</code></td><td>Bundle concepts validate, PubMed metadata preserved, <code>sources[]</code> present. <code>skipped</code> when no promotion was requested</td></tr>
+          <tr><td><code>C-SNAPSHOT</code> <code>C-SPAN</code> <code>C-FRESH-FETCH</code> <code>C-ASSEMBLER</code></td><td>The four evidence-kernel checks — see <a href="evidence-kernel.html">Evidence kernel</a></td></tr>
+        </tbody>
+      </table>
+      <p>A <code>fail</code> makes the report provisional and blocks OKF promotion. <strong>The report is still delivered</strong> — <code>outputs/report.md</code> is preserved even when rendering, export, or promotion fails, and the failure is recorded in <code>engine.log</code>.</p>
+
+      <div class="callout">
+        <strong>The kernel gate is off by default; tamper is never downgraded.</strong> Until a live end-to-end run has passed, the four kernel checks run and are reported but warn rather than fail. Turn the gate on with <code>verify.py --gate</code> / <code>assemble.py --strict</code>, or <code>gates.evidence_kernel: true</code>. Two things are never affected by that flag: a snapshot hash mismatch and an excerpt that does not match its re-slice are hard failures that block promotion regardless. Legacy span-less records are <code>unverified</code> — a different thing from tampered, and reported as such.
+      </div>
+
+      <h3>Report skeleton</h3>
+      <p>Sixteen sections, each naming its data source. <code>verify.py</code> matches headings by regex, not by number, so renumbering or adding subsections is safe.</p>
+      <table>
+        <thead><tr><th>§</th><th>Section</th><th>Built from</th></tr></thead>
+        <tbody>
+          <tr><td>0</td><td>Title block</td><td><code>config.json</code> — question, profile, run slug, date of last search, PROVISIONAL marker</td></tr>
+          <tr><td>1</td><td>Short answer + plain-language summary</td><td>Synthesis; ≤200 words, GRADE wordings only, every sentence traceable to §8</td></tr>
+          <tr><td>2</td><td>Evidence at a glance</td><td>One row per outcome: studies/participants, direction, best estimate, certainty, main limitation</td></tr>
+          <tr><td>3</td><td>Question and protocol</td><td><code>protocol.md</code> — criteria with ids, timepoint bands, MIDs, protocol deviation table</td></tr>
+          <tr><td>4</td><td>Methods</td><td>Search records, taskboard, config — every query verbatim and reproducible; unreachable connectors and what they cost</td></tr>
+          <tr><td>5</td><td>PRISMA flow + screening log</td><td><code>corpus.py prisma</code> — exclusion reasons by criterion id, dual-screening agreement</td></tr>
+          <tr><td>6</td><td>Characteristics of included studies</td><td>Corpus + extractions — the evidence table</td></tr>
+          <tr><td>7</td><td>Risk of bias and appraisal</td><td>Appraisals — tool named per study; <code>tool: "none"</code> records listed with the reason</td></tr>
+          <tr><td>8</td><td>Results by outcome</td><td>Synthesis — effect-direction table, conflicts with attribution, heterogeneity, a required harms subsection</td></tr>
+          <tr><td>9</td><td>Certainty of evidence</td><td>GRADE summary-of-findings table with the reason for every downgrade</td></tr>
+          <tr><td>10</td><td>Conflicts and inconsistencies</td><td>Each conflict with its attribution, or an explicit "unexplained"</td></tr>
+          <tr><td>11</td><td>Evidence gaps</td><td>"No study reported X" statements only — observations, not explanations</td></tr>
+          <tr><td>12</td><td>Limitations of this review</td><td>Quarantine, abstract-only reliance, scope tier, language/database restrictions, no pooling</td></tr>
+          <tr><td>13</td><td><strong>New insights / hypotheses</strong></td><td>Hard-walled, after limitations; every hypothesis paired with what would test it</td></tr>
+          <tr><td>14</td><td>Unobtainable / quarantined evidence</td><td><code>missing.md</code> — ids, links, rung reached, resume instructions</td></tr>
+          <tr><td>15</td><td>References</td><td>A rendering of the in-body footnotes; never the sole citation mechanism</td></tr>
+          <tr><td>16</td><td>Provenance</td><td>Profile, budgets, models per stage, verification summary, links to every artifact</td></tr>
+        </tbody>
+      </table>
+      <p>Citation is per claim, by markdown footnote keyed to a <code>sources[].id</code>. A claim resting on three studies carries three footnote references, not one covering footnote, and each footnote carries the appraisal verdict and evidence basis inline — which is what makes an abstract-only label survive copy-paste:</p>
+      <pre><code>Group CBT reduced depressive symptoms at 12 weeks relative to waitlist
+(SMD -0.41, 95% CI -0.68 to -0.14).[^pubmed-12345678]
+
+[^pubmed-12345678]: Smith JA, Doe R, Muller K. Cognitive behavioral therapy for
+    adolescent depression: a randomized trial. *J Example Med.* 2024;12(3):101-115.
+    PMID [12345678](https://pubmed.ncbi.nlm.nih.gov/12345678/).
+    DOI [10.1000/example](https://doi.org/10.1000/example).
+    RoB 2: some concerns. Full text.</code></pre>
+
+      <h2>Guardrails And Progress</h2>
+      <h3>Budgets are enforced, not aspirational</h3>
+      <p><code>max_subagents</code>, <code>max_parallel</code>, <code>max_wall_time</code>, <code>max_articles</code>, <code>max_fulltext_failures</code>, and <code>max_ocr_pages</code> live under <code>config.json</code>'s <code>budgets</code>. <code>max_wall_time</code> is <strong>seconds</strong> as a bare number, or a suffixed string (<code>90m</code>, <code>3h</code>, <code>1d</code>) — never a bare number meaning minutes.</p>
+
+      <h3>The no-progress guard</h3>
+      <p>Repeated identical tool calls, or repeated task assignment with no newly completed or blocked work, write diagnostics to <code>engine.log</code>, stop dispatch, and move to verification with a provisional report.</p>
+      <pre><code>python3 scripts/corpus.py guard --run-dir &lt;run&gt;              # records a probe
+python3 scripts/corpus.py guard --run-dir &lt;run&gt; --no-record  # status check only</code></pre>
+      <p>Use <code>--no-record</code> for polling. Every recording call appends a probe, so checking the guard while a run is legitimately parked manufactures the very flat window it looks for. A board with nothing pending and nothing active reports <code>idle: true</code> — idle is not stuck.</p>
+
+      <h3>Health alerts you should expect to see</h3>
+      <p>A degraded run looks exactly like a healthy one unless someone says otherwise. Each of these is surfaced in the turn it is discovered, with the numbers:</p>
+      <table>
+        <thead><tr><th>Condition</th><th>What you are told</th></tr></thead>
+        <tbody>
+          <tr><td>Ladder rung 1 unreachable</td><td>The best source for paywalled records is unavailable this session; the shortfall is partly infrastructure, not only paywalls</td></tr>
+          <tr><td><code>quarantined + abstract_only &gt; half</code> of the selected set</td><td>Extraction quality is materially limited — said <strong>before</strong> extracting, with the synthesis marked provisional</td></tr>
+          <tr><td>Any blocked record</td><td>One consolidated table, both kinds of block, asked once</td></tr>
+          <tr><td>A connector the profile assumes is unauthorized</td><td>Named, with the reduced-scope-or-stop choice put to you</td></tr>
+          <tr><td>A script crashes</td><td>The actual error, quoted. Not "some issues"</td></tr>
+          <tr><td>A budget is hit</td><td>Which budget, what it cut, and what the run would look like without it</td></tr>
+          <tr><td>A verifier check fails</td><td>Which check id, and what it blocks. A failing kernel check is never rounded down to "passed with warnings"</td></tr>
+        </tbody>
+      </table>
+      <p>Two rules override any instinct to keep a run looking clean. <strong>Never report a stage complete when part of it silently did not run</strong> — "10 of 25 full text" is the result, "acquisition complete" is not. And <strong>an empty result is a finding</strong>: if a query yields 7 records where hundreds were expected, the literature is thin, and the query is not quietly widened until the number looks respectable.</p>
+
+      <h3>Progress updates</h3>
+      <p>After every stage transition and at least once per batch of dispatched subagents, the agent runs <code>status.py</code> and posts the output. This applies to <code>fast</code> too — "report only" affects which artifacts are produced, not whether you can see what stage the run is in.</p>
+      <pre><code>python3 scripts/status.py &lt;run&gt;            # stage, progress bar, counts
+python3 scripts/status.py &lt;run&gt; --table    # per-paper coverage
+python3 scripts/status.py &lt;run&gt; --missing  # blocked records only
+python3 scripts/watch.py --run-dir &lt;run&gt;   # read-only TUI, attach to a live or finished run</code></pre>
+
+      <h3>The task board</h3>
+      <p>Every unit of work is a record in <code>taskboard.jsonl</code>, and it is <strong>never hand-edited</strong>. All transitions go through the CLI, which computes <code>inputs_hash</code>, stamps timestamps, and appends:</p>
+      <pre><code>python3 scripts/corpus.py task claim|complete|fail|block|list|next --stage &lt;stage&gt; [...]</code></pre>
+      <p>Task ids follow <code>&lt;stage&gt;:&lt;key-kind&gt;:&lt;key&gt;</code> — <code>extract:pmid:12345678</code>. Completed outputs are immutable unless <code>inputs_hash</code> changes; failed tasks retry independently. The subagent receipt's <code>summary</code> is passed to <code>task complete --summary</code> so the one-line result lives on the board rather than only in the coordinator's context.</p>
+
+      <footer class="footer">Source manuals: <code>SKILL.md</code>, <code>references/search-strategy.md</code>, <code>references/acquisition.md</code>, <code>references/synthesis.md</code>, <code>references/reporting.md</code>. Next: <a href="evidence-kernel.html">how a claim becomes checkable</a>.</footer>
     </main>
   </div>
 </body>

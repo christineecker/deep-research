@@ -16,6 +16,7 @@
         <a href="quickstart.html" aria-current="page">Quickstart</a>
         <a href="questions.html">Scientific questions</a>
         <a href="pipeline.html">Full pipeline</a>
+        <a href="evidence-kernel.html">Evidence kernel</a>
         <a href="paper-summaries.html">Paper summaries</a>
         <a href="reference-manager.html">Reference manager</a>
         <a href="readcube-export.html">ReadCube export</a>
@@ -29,49 +30,148 @@
     <main class="content">
       <section class="hero">
         <p class="eyebrow">Start here</p>
-        <h1>Initialize a standalone research repo, then add projects, papers, and runs.</h1>
-        <p class="lead">Standalone repo mode is the default path when you do not want generated wiki-manager output.</p>
+        <h1>Create a repo, put a paper in it, get a verified summary out. Then scale up to a review.</h1>
+        <p class="lead">Standalone repo mode is the default path when you do not want generated wiki-manager output. Everything below is a real command with its real output — the repo is self-contained, and no step requires a wiki.</p>
       </section>
 
-      <h2>Create A Repo</h2>
-      <pre><code>/deep-research:init ~/research/my-manuscript-repo
-/deep-research:project create adolescent-cbt --repo ~/research/my-manuscript-repo</code></pre>
+      <h2>Before You Start</h2>
+      <table>
+        <thead><tr><th>Requirement</th><th>Why</th><th>If missing</th></tr></thead>
+        <tbody>
+          <tr><td><code>python3</code></td><td>Every script. Stdlib + <code>requests</code> + <code>pdfminer</code> only — <strong>no pip installs</strong></td><td>Nothing runs. There is no <code>python</code> on this machine; always spell it <code>python3</code></td></tr>
+          <tr><td><strong>PubMed MCP connector</strong></td><td>Mandatory for any full review, at every scope. Also ladder rung 1</td><td>A review stops at Stage 0. Authorize it in claude.ai → Settings → Connectors, then start a <strong>new</strong> session — connectors attach at session start</td></tr>
+          <tr><td><code>pdftotext</code> / <code>pdfinfo</code> (poppler)</td><td>PDF text extraction, rung 0/2/5</td><td>Falls back to <code>pdfminer</code>; slower, sometimes worse layout</td></tr>
+          <tr><td><code>pdftoppm</code> + <code>tesseract</code></td><td>Per-page OCR fallback for scanned PDFs</td><td>A scanned PDF yielding &lt;100 chars just fails its rung and the ladder continues</td></tr>
+          <tr><td><code>$DEEP_RESEARCH_EMAIL</code></td><td>Unpaywall requires <code>email=</code> as an API parameter</td><td>Ladder rung 4 reports <code>skipped</code> — never guessed</td></tr>
+          <tr><td><code>quarto</code></td><td>Only for PDF/docx rendering</td><td><code>report.md</code> and the HTML artifact still work</td></tr>
+        </tbody>
+      </table>
 
-      <h2>Add Papers Manually</h2>
-      <pre><code>/deep-research:pool-add --repo ~/research/my-manuscript-repo --pmid 12345678</code></pre>
-      <p>For a DOI, a PDF, a bulk <code>.bib</code>, or a folder of PDFs — none of which
-      <code>pool-add</code> covers — call the registry script directly:</p>
-      <pre><code>python3 scripts/registry.py add --repo ~/research/my-manuscript-repo --doi 10.1000/example
-python3 scripts/registry.py add-pdf --repo ~/research/my-manuscript-repo --file paper.pdf
-python3 scripts/registry.py import-bib --repo ~/research/my-manuscript-repo --file refs.bib
-python3 scripts/registry.py import-folder --repo ~/research/my-manuscript-repo --dir papers/ --recursive</code></pre>
+      <h2>1. Create A Repo</h2>
+      <pre><code>$ python3 scripts/research.py init ~/research/my-manuscript-repo
+{
+  "schema_version": 1,
+  "status": "ok",
+  "command": "init",
+  "repo_root": "/Users/you/research/my-manuscript-repo",
+  "created_dirs": [
+    "data/sources/assets",
+    "data/sources/snapshots",
+    "data/papers/extractions",
+    "data/papers/appraisals",
+    "projects",
+    "runs",
+    "templates",
+    "exports/wiki",
+    "exports/bib",
+    "exports/html",
+    "exports/docx",
+    "exports/pdf"
+  ],
+  "created_files": [ ... ]
+}</code></pre>
+      <p>That is the whole repo. <code>data/papers/registry.jsonl</code> and <code>data/sources/events.jsonl</code> are created empty; <code>data/refmgr/</code> (the derived SQLite search index) appears the first time you import a PDF or run <code>registry.py reindex</code>. The slash-command form is <code>/deep-research:init &lt;path&gt;</code>.</p>
 
-      <h2>Summarize One Paper</h2>
+      <h2>2. Add A Project</h2>
+      <p>A project is a manuscript question. It matters because <strong>appraisal is project-scoped</strong> — the same paper can be low-risk-of-bias for one question and unusable for another.</p>
+      <pre><code>$ python3 scripts/research.py project create adolescent-cbt --repo ~/research/my-manuscript-repo
+{
+  "schema_version": 1,
+  "status": "ok",
+  "command": "project create",
+  "slug": "adolescent-cbt",
+  "project_dir": "/Users/you/research/my-manuscript-repo/projects/adolescent-cbt",
+  "created": ["protocol.md", "synthesis.md", "manuscript.qmd", "refs.bib", "corpus.lock.jsonl"]
+}</code></pre>
+      <p>The slug is what you pass as <code>--project</code> everywhere downstream.</p>
+
+      <h2>3. Put Papers In It</h2>
+      <p>All intake paths converge on the same registry record, so it does not matter which one you use:</p>
+      <pre><code># by identifier
+/deep-research:pool-add --repo ~/research/my-manuscript-repo --pmid 12345678
+python3 scripts/registry.py add --repo ~/research/my-manuscript-repo --doi 10.1000/example
+
+# from files you already have
+python3 scripts/registry.py add-pdf       --repo ~/… --file paper.pdf
+python3 scripts/registry.py import-bib    --repo ~/… --file refs.bib
+python3 scripts/registry.py import-folder --repo ~/… --dir papers/ --recursive</code></pre>
+      <p>PDF bytes are content-addressed by sha256 — importing the same paper twice merges identifiers into the existing entry rather than storing it again. <code>/deep-research:pool-add</code> covers PMIDs and bounded queries; DOI-only adds, PDFs, bulk <code>.bib</code>, and folders have no slash-command wrapper, so call the script.</p>
+
+      <h2>4. Summarize One Paper</h2>
       <pre><code>/deep-research:summarize \
   --repo ~/research/my-manuscript-repo \
   --project adolescent-cbt \
   --pmid 12345678 \
   --purpose journal-club \
   --format both</code></pre>
-      <p>Single-paper summaries appraise by default when full text and a supported appraisal framework are available.</p>
+      <p><code>--purpose</code> takes <code>clinical</code>, <code>methods</code>, <code>journal-club</code>, <code>peer-review</code>, or <code>background</code>; <code>--audience</code> takes <code>researcher</code>, <code>clinician</code>, <code>student</code>, <code>grant-writer</code>, or <code>general</code>. They shape the summary's framing, not its evidence.</p>
 
-      <h2>Summarize Several Papers</h2>
+      <div class="callout">
+        <strong>The script never calls a model.</strong> It does registry lookup, acquisition, reuse, taskboard bookkeeping, rendering, and verification, then returns a <code>status</code> telling the agent what to dispatch next — <code>pending_retrieval</code>, <code>pending_extraction</code>, <code>pending_appraisal</code>, <code>pending_summary</code>, <code>completed</code>, or <code>failed</code>. Re-running the same command after that subagent writes its file resumes from where it stopped. This is the same loop Stage 5/6 use in the full pipeline, scoped to one paper. See <a href="paper-summaries.html">Paper summaries</a>.
+      </div>
+
+      <p>Appraisal is on by default whenever full text and a supported framework are available. Use <code>--no-appraise</code> only for a deliberate extraction-only summary — the summary then has to state why appraisal was skipped.</p>
+
+      <h2>5. Summarize Several</h2>
       <pre><code>/deep-research:summarize-set \
   --repo ~/research/my-manuscript-repo \
   --project adolescent-cbt \
-  --pmid 12345678 \
-  --pmid 23456789 \
-  --overview \
-  --format both</code></pre>
-
-      <h2>Run A Full Review</h2>
-      <p>Ask the agent for a literature review or evidence synthesis. It will configure Stage 0, confirm the profile and target root, then run the Stage 0-8 workflow.</p>
+  --pmid 12345678 --pmid 23456789 \
+  --overview --format both</code></pre>
+      <p>One verified summary per paper, plus an optional bounded overview across them. <code>--ids-file</code>, <code>--bib</code>, and <code>--folder</code> take the set from a file instead; <code>--topic</code> / <code>--question</code> do a bounded PubMed scan for candidates — add <code>--select-only</code> to see the picked set before paying for summaries.</p>
 
       <div class="callout">
-        Agent harnesses such as Claude Code or Codex should run the deterministic scripts, inspect returned JSON status, dispatch extraction/appraisal/summary work only when requested by that status, then rerun the command to resume.
+        <strong>A set is not a review.</strong> An overview may compare descriptive attributes across the included papers. It may not claim pooled effects, certainty of a body of evidence, or consensus — those require a full run that actually produced them, and the verifier rejects that wording outside one.
       </div>
 
-      <footer class="footer">Related: <a href="commands.html">Command reference</a> and <a href="architecture.html">repo architecture</a>.</footer>
+      <h2>6. Run A Full Review</h2>
+      <p>Ask the agent in plain words — "run a literature review on X", "what does the evidence say about Y". It configures Stage 0 with you, then runs the <a href="pipeline.html">Stage 0–8 pipeline</a>. Expect to be asked six things up front: the question in framework form, the profile, the target root, your study-selection criteria, filters, and which outputs you want.</p>
+      <p>While it runs, the state is all on disk and readable at any time:</p>
+      <pre><code>/deep-research:status &lt;run-dir&gt; --table      # per-paper coverage: downloaded? format? extracted?
+/deep-research:status &lt;run-dir&gt; --missing    # only the blocked records
+/deep-research:watch --run-dir &lt;run-dir&gt;     # read-only TUI, live or finished</code></pre>
+      <p>If a run is interrupted, point the agent back at the run directory. It reads <code>config.json</code>'s stage pointer plus <code>taskboard.jsonl</code>, continues incomplete and failed tasks, and does not re-prompt or restart the stage.</p>
+
+      <h2>7. Get Things Out</h2>
+      <pre><code># BibTeX over the whole registry
+/deep-research:bib-export --repo ~/… --out refs.bib --select all
+
+# a ReadCube-importable RIS + PDF bundle
+/deep-research:export --repo ~/… --all --destination ~/ReadCube-import --require-pdfs
+
+# HTML / PDF / docx from a finished run
+python3 scripts/html_report.py build --run-dir &lt;run&gt; --out &lt;run&gt;/outputs/report.html
+python3 scripts/render.py all --run-dir &lt;run&gt; --formats pdf,docx</code></pre>
+
+      <h2>When Something Goes Wrong</h2>
+      <table>
+        <thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr><td>The run stops at Stage 0 saying PubMed MCP is missing</td><td>Connectors attach at session start; authorizing mid-session does not help</td><td>Authorize in claude.ai → Settings → Connectors, then start a new session. There is no reduced-scope fallback for this one</td></tr>
+          <tr><td>The run halts before extraction with a table of blocked papers</td><td><code>missing.md</code> is non-empty — quarantined (no text) or abstract-only (degraded text, ladder exhausted)</td><td>Drop PDFs into <code>&lt;run-dir&gt;/inbox/</code> (any filename), then <code>library.py ingest-inbox</code> and re-run <code>fulltext.py acquire</code>. Or tell the agent to continue provisionally — allowed at <code>fast</code>/<code>standard</code>, not at <code>systematic</code>/<code>max</code></td></tr>
+          <tr><td>A paper you know is open access came back <code>abstract_only</code></td><td>The truncation detector fired: under 1500 body words, or a paywall marker in the text</td><td>Check the reason in <code>engine.log</code>. Supply the PDF via <code>inbox/</code> to upgrade the record — the detector is deliberately trigger-happy, because a false <code>fulltext</code> corrupts the appraisal</td></tr>
+          <tr><td>A PDF you dropped in <code>inbox/</code> was not matched</td><td>No DOI on page 1, and the fuzzy title score missed. Titles under 25 normalized characters are never fuzzy-matched</td><td>It stays in <code>inbox/</code> and is listed with the reason — never guessed onto a record. Register it explicitly with <code>registry.py add-pdf --file … --pmid …</code></td></tr>
+          <tr><td><code>doctor</code> says <em>"no refmgr library … nothing to check"</em></td><td>The SQLite index has not been built yet in a fresh repo</td><td><code>python3 scripts/registry.py reindex --repo ~/…</code> — it is derived from the registry and always rebuildable</td></tr>
+          <tr><td>Unpaywall rung reports <code>skipped</code> on every paper</td><td>No email — the parameter is required, not courtesy</td><td>Set <code>$DEEP_RESEARCH_EMAIL</code> or pass <code>--email</code></td></tr>
+          <tr><td>Rung 1 tasks sit pending forever</td><td>Rung 1 and rung 7 are coordinator handoffs; a script cannot call an MCP tool</td><td>The agent should resolve each with <code>fulltext.py resolve-mcp</code> / <code>resolve-browser</code>, including <code>--status unavailable</code> when the tool found nothing</td></tr>
+          <tr><td>The report is marked <strong>PROVISIONAL</strong></td><td>A verifier check failed, or a quarantine/abstract-only trigger fired</td><td>Read <code>outputs/verification.json</code> — it names the failing <code>check_id</code>. The report is still delivered; OKF promotion is what gets blocked</td></tr>
+          <tr><td><code>embed index</code> fails on an import</td><td><code>sentence-transformers</code> is the one scoped exception to the no-pip policy, and it is optional</td><td><code>pip install sentence-transformers</code>, or skip it — <code>ask</code> and <code>search --q</code> work on lexical retrieval alone</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Which Path Do I Want?</h2>
+      <table>
+        <thead><tr><th>You want</th><th>Use</th><th>You get</th></tr></thead>
+        <tbody>
+          <tr><td>To know what one paper says</td><td><code>/deep-research:summarize</code></td><td>A verified summary with appraisal, in Markdown and HTML</td></tr>
+          <tr><td>To orient across papers you picked</td><td><code>/deep-research:summarize-set --overview</code></td><td>One summary each, plus a descriptive overview — no pooled claims</td></tr>
+          <tr><td>To answer a question from papers you already hold</td><td><code>/deep-research:ask</code></td><td>An answer built only from spans that still verify. Not a literature search</td></tr>
+          <tr><td>To find what the literature says</td><td>A full review — ask the agent</td><td>Report, evidence table, PRISMA flow, verification, optional bundle</td></tr>
+          <tr><td>To build a reusable paper pool without a report</td><td>A run with <code>pipeline.stop_after_stage: 5</code></td><td>Extractions every later run can reuse</td></tr>
+        </tbody>
+      </table>
+
+      <footer class="footer">Next: <a href="questions.html">frame the question</a> before searching, or read the <a href="pipeline.html">full pipeline</a>. Command flags: <code>commands/&lt;name&gt;.md</code>, <code>/deep-research:help</code>, or <code>python3 scripts/&lt;name&gt;.py --help</code>.</footer>
     </main>
   </div>
 </body>
