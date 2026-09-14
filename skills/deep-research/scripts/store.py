@@ -345,15 +345,38 @@ def _validate_asset(asset) -> dict | None:
     path = asset.get("path")
     digest = asset.get("sha256")
     nbytes = asset.get("bytes")
-    if not isinstance(path, str) or not path:
-        raise SchemaError("asset.path must be a non-empty wiki-root-relative POSIX path (R13)")
-    if path.startswith("/") or ".." in Path(path).parts:
-        raise SchemaError("asset.path must be wiki-root-relative and contain no '..': %r" % path)
+    refmgr_paper_id = asset.get("refmgr_paper_id")
+    refmgr_attachment_id = asset.get("refmgr_attachment_id")
+    # An asset is either wiki-relative (library.py's flat store) or refmgr-backed
+    # (data/refmgr/library.sqlite3, repo-scoped) -- never both, and refmgr-backed assets
+    # have no wiki-relative path at all (plan Phase 5: "connect extractions to exact
+    # attachment/snapshot versions").
+    refmgr_backed = refmgr_paper_id is not None or refmgr_attachment_id is not None
+    if refmgr_backed:
+        if not isinstance(refmgr_paper_id, str) or not refmgr_paper_id:
+            raise SchemaError(
+                "asset.refmgr_paper_id must be a non-empty string when asset is refmgr-backed")
+        if not isinstance(refmgr_attachment_id, str) or not refmgr_attachment_id:
+            raise SchemaError(
+                "asset.refmgr_attachment_id must be a non-empty string when asset is "
+                "refmgr-backed")
+        if path is not None:
+            raise SchemaError(
+                "asset.path must be null for a refmgr-backed asset (R13's wiki-relative "
+                "path convention does not apply — see asset.refmgr_attachment_id)")
+    else:
+        if not isinstance(path, str) or not path:
+            raise SchemaError(
+                "asset.path must be a non-empty wiki-root-relative POSIX path (R13), or set "
+                "asset.refmgr_paper_id/refmgr_attachment_id instead for a refmgr-backed asset")
+        if path.startswith("/") or ".." in Path(path).parts:
+            raise SchemaError("asset.path must be wiki-root-relative and contain no '..': %r" % path)
     if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise SchemaError("asset.sha256 must be 64 lowercase hex chars, no prefix")
     if not isinstance(nbytes, int) or isinstance(nbytes, bool) or nbytes < 0:
         raise SchemaError("asset.bytes must be a non-negative integer")
-    return {"path": path, "sha256": digest, "bytes": nbytes}
+    return {"path": path, "sha256": digest, "bytes": nbytes,
+            "refmgr_paper_id": refmgr_paper_id, "refmgr_attachment_id": refmgr_attachment_id}
 
 
 def _validate_enum(value, name: str, allowed) -> str:
@@ -851,21 +874,54 @@ def append_event(run_dir, event: dict, *, dirname: str = "sources") -> dict:
 # ----------------------------------------------------------------- freshness ---
 
 
-def _asset_digest_ok(snapshot: dict, wiki_root) -> tuple[bool, str]:
+def _refmgr_asset_local_path(repo_root, sha256_hex: str) -> Path | None:
+    """Resolve a refmgr-backed asset's absolute file path via
+    `data/refmgr/library.sqlite3`, without needing the full
+    `ReferenceManagerService` (this only ever needs to re-hash the file)."""
+    if repo_root is None:
+        return None
+    try:
+        import refmgr.db as _refmgr_db
+    except ImportError:
+        return None
+    library_root = Path(repo_root).expanduser().resolve() / "data" / "refmgr"
+    if not (library_root / _refmgr_db.DB_FILENAME).exists():
+        return None
+    conn = _refmgr_db.get_connection(library_root)
+    try:
+        row = conn.execute(
+            "SELECT storage_path FROM assets WHERE sha256 = ?", (sha256_hex,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return library_root / row["storage_path"]
+
+
+def _asset_digest_ok(snapshot: dict, wiki_root, repo_root=None) -> tuple[bool, str]:
     asset = snapshot.get("asset")
     if not asset:
         return False, "local_pdf event on a snapshot with asset: null"
-    path = Path(wiki_root).expanduser() / asset["path"]
+    if asset.get("refmgr_attachment_id"):
+        path = _refmgr_asset_local_path(repo_root, asset["sha256"])
+        if path is None:
+            return False, ("refmgr-backed asset %s not found in data/refmgr/library.sqlite3 "
+                           "(paper %s, attachment %s)"
+                           % (asset["sha256"][:16], asset.get("refmgr_paper_id"),
+                              asset["refmgr_attachment_id"]))
+    else:
+        path = Path(wiki_root).expanduser() / asset["path"]
     if not path.is_file():
-        return False, "asset file missing: %s" % asset["path"]
+        return False, "asset file missing: %s" % path
     actual = sha256_file(path)
     if actual != asset["sha256"]:
         return False, ("asset %s hashes to %s, recorded %s"
-                       % (asset["path"], actual[:16], asset["sha256"][:16]))
+                       % (path, actual[:16], asset["sha256"][:16]))
     return True, "asset bytes still hash to asset.sha256"
 
 
-def fresh_event(run_dir, source_id: str, *, wiki_root=None,
+def fresh_event(run_dir, source_id: str, *, wiki_root=None, repo_root=None,
                 events: list[dict] | None = None,
                 created_at: str | None = None) -> dict | None:
     """The event that makes `source_id` fresh for this run, or None (R15, §11).
@@ -909,21 +965,21 @@ def fresh_event(run_dir, source_id: str, *, wiki_root=None,
             if ev.get("sha256") == sha256_text(snapshot["text"]):
                 return ev                              # condition 5
             continue
-        ok, _detail = _asset_digest_ok(snapshot, wiki_root)
+        ok, _detail = _asset_digest_ok(snapshot, wiki_root, repo_root=repo_root)
         if ok and ev.get("sha256") == snapshot["asset"]["sha256"]:
             return ev                                  # condition 5, PDF exception
     return None
 
 
-def freshness(run_dir, source_id: str, *, wiki_root=None, events=None,
+def freshness(run_dir, source_id: str, *, wiki_root=None, repo_root=None, events=None,
               created_at: str | None = None) -> dict:
     """Structured freshness verdict: `{fresh, fresh_event_id, reason_code, detail}`."""
     created_at = created_at if created_at is not None else run_created_at(run_dir)
     if created_at is None:
         return {"fresh": False, "fresh_event_id": None, "reason_code": "NO_FRESH_FETCH",
                 "detail": "no created_at in config.json; freshness fails closed (R15)"}
-    ev = fresh_event(run_dir, source_id, wiki_root=wiki_root, events=events,
-                     created_at=created_at)
+    ev = fresh_event(run_dir, source_id, wiki_root=wiki_root, repo_root=repo_root,
+                     events=events, created_at=created_at)
     if ev is not None:
         return {"fresh": True, "fresh_event_id": ev["event_id"], "reason_code": None,
                 "detail": "%s event %s at %s" % (ev["type"], ev["event_id"], ev["at"])}
@@ -938,7 +994,8 @@ def freshness(run_dir, source_id: str, *, wiki_root=None, events=None,
                         for e in (events if events is not None else read_events(run_dir)))
         if has_local:
             ok, detail = _asset_digest_ok(snap, Path(wiki_root) if wiki_root
-                                          else wiki_root_for_run(run_dir))
+                                          else wiki_root_for_run(run_dir),
+                                          repo_root=repo_root)
             if not ok:
                 return {"fresh": False, "fresh_event_id": None,
                         "reason_code": "ASSET_HASH_MISMATCH", "detail": detail}
@@ -1092,7 +1149,8 @@ class Store:
         tampered (self.read_snapshot also fails) still reports UNKNOWN_SOURCE/
         SNAPSHOT_HASH_MISMATCH untouched."""
         result = freshness(self.run_dir, source_id, wiki_root=self.wiki_root,
-                           events=self.events, created_at=self.created_at)
+                           repo_root=self.repo_root, events=self.events,
+                           created_at=self.created_at)
         if not result["fresh"] and result["reason_code"] == "UNKNOWN_SOURCE":
             try:
                 self.read_snapshot(source_id)

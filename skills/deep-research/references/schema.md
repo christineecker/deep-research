@@ -26,6 +26,8 @@ reader who needs one record does not load the other thirteen. A reference of the
 | §13 | `assembler result` | `references/schema/13-assembler.md` |
 | §14 | `single-paper summary record` | `references/schema/14-single-paper-summary.md` |
 | §15 | `paper summary set record` | `references/schema/15-paper-summary-set.md` |
+| §16 | `annotation record` | `references/schema/16-annotation.md` |
+| §17 | `export manifest` | `references/schema/17-export-manifest.md` |
 | R1-R24 | Resolutions (contract addenda) | `references/schema/99-resolutions.md` |
 
 ## Which file do I actually need?

@@ -16,7 +16,10 @@
         <a href="quickstart.html">Quickstart</a>
         <a href="questions.html">Scientific questions</a>
         <a href="pipeline.html">Full pipeline</a>
+        <a href="evidence-kernel.html">Evidence kernel</a>
         <a href="paper-summaries.html">Paper summaries</a>
+        <a href="reference-manager.html">Reference manager</a>
+        <a href="readcube-export.html">ReadCube export</a>
         <a href="architecture.html" aria-current="page">Repo architecture</a>
         <a href="appraisal.html">Appraisal frameworks</a>
         <a href="commands.html">Command reference</a>
@@ -27,46 +30,169 @@
     <main class="content">
       <section class="hero">
         <p class="eyebrow">Standalone mode</p>
-        <h1>The repo is the source of truth for papers, sources, extractions, appraisals, projects, and exports.</h1>
-        <p class="lead">It does not require wiki-manager. Wiki import and export are compatibility bridges only.</p>
+        <h1>Two storage roots, not one migration. Either works end to end without the other.</h1>
+        <p class="lead">A run can live under a <strong>wiki root</strong> (the legacy path, with a wiki-level paper pool) or under a <strong>repo root</strong> (self-contained, with a canonical registry). <code>wiki-manager</code> is never a runtime dependency of the repo path. The wiki bridges in both directions exist for interoperability and are never a required step.</p>
       </section>
 
+      <table>
+        <thead><tr><th></th><th>Wiki root</th><th>Repo root</th></tr></thead>
+        <tbody>
+          <tr><td>Runs live at</td><td><code>&lt;wiki&gt;/outputs/deep-research/&lt;slug&gt;/</code></td><td><code>&lt;repo&gt;/runs/&lt;slug&gt;/</code></td></tr>
+          <tr><td>Paper store</td><td><code>&lt;wiki&gt;/assets/papers/pool.jsonl</code></td><td><code>&lt;repo&gt;/data/papers/registry.jsonl</code></td></tr>
+          <tr><td>Intake + PDF index</td><td><code>library.py --wiki</code></td><td><code>registry.py --repo</code> (<code>add-pdf</code>, <code>import-folder</code>)</td></tr>
+          <tr><td>Reuse across runs</td><td><code>pool.py --wiki</code></td><td><code>pool.py --repo</code>, against the registry</td></tr>
+          <tr><td>Snapshot store</td><td>Per-run, isolated</td><td>Per-run <em>plus</em> a shared global store</td></tr>
+          <tr><td>Publishing</td><td><code>okf.py promote</code> → <code>&lt;wiki&gt;/research/reviews/&lt;slug&gt;.md</code></td><td><code>outputs/</code> + <code>projects/&lt;slug&gt;/manuscript.qmd</code></td></tr>
+        </tbody>
+      </table>
+      <p><code>--wiki</code> and <code>--repo</code> are mutually exclusive per invocation, not per script — most commands accept either. Everything about the pipeline's <em>shape</em> is identical between them; only the root and which script handles pool/PDF intake differ.</p>
+
       <h2>Layout</h2>
+      <p>Exactly what <code>research.py init &lt;path&gt;</code> creates, plus the directories that appear on first use:</p>
       <pre><code>&lt;repo&gt;/
   data/
+    refmgr/                 # created on first PDF intake or `registry.py reindex`
+      library.sqlite3       #   paper/identifier/asset/attachment store, the derived
+                            #   search indexes (papers_fts, chunks_fts, paper_terms),
+                            #   and saved searches (durable, not derived)
+      assets/sha256/&lt;xx&gt;/   #   content-addressed PDFs
     sources/
-      assets/            hash-named PDFs
-      sources/           evidence-kernel snapshots
-      events.jsonl       retrieval log
+      snapshots/            # write-once JSON text snapshots: src-&lt;64 hex&gt;.json
+      assets/               # pre-cutover PDF location — still created, no longer written
+      events.jsonl          # append-only retrieval log, global
     papers/
-      registry.jsonl     canonical paper registry
-      pool.jsonl         regenerated view, not hand-edited
-      extractions/       canonical Stage 5 records
-      appraisals/
-        &lt;project&gt;/       project-scoped appraisal records
-  projects/&lt;slug&gt;/       protocol, synthesis, manuscript, refs, figures, tables
-  runs/&lt;slug&gt;/           run-local config, corpus, workspace, outputs
+      registry.jsonl        # canonical registry — one record per evidence_id
+      pool.jsonl            # GENERATED view of the registry. Never hand-edited,
+                            #   never the source of truth (`registry.py pool` rebuilds)
+      extractions/          # &lt;evidence-id-slug&gt;.json, e.g. pmid-12345678.json
+      appraisals/&lt;project&gt;/ # project-scoped — a paper's appraisal is per-question
+      annotations.jsonl     # your tags / star ratings / notes
+      embeddings.jsonl      # cached embedding vector per evidence_id
+      export_ledger.jsonl   # per-destination fingerprints for `export --incremental`
+  projects/&lt;slug&gt;/          # protocol.md, synthesis.md, manuscript.qmd, refs.bib,
+                            #   corpus.lock.jsonl, figures/, tables/
+  runs/&lt;slug&gt;/              # same shape as a wiki-backed run, rooted here instead
   templates/
-  exports/</code></pre>
+  exports/{wiki,bib,html,docx,pdf}/</code></pre>
 
-      <h2>Where Data Lives</h2>
+      <div class="callout">
+        <strong>Why <code>data/sources/</code> looks like a run directory.</strong> It is one, deliberately. Every write-once/hash/verify function in <code>store.py</code> is a pure function of a run-directory-shaped path, so the global store is just <code>data/sources</code> passed in as that path — zero duplication and zero risk to the audited <a href="evidence-kernel.html">evidence-kernel</a> code. Snapshots are written to <code>snapshots/</code>; global reads fall back to the legacy <code>sources/</code> dirname for repos written before that rename, and writes never use it.
+      </div>
+
+      <h2>Source Of Truth vs. Derived</h2>
+      <p>Knowing which is which tells you what a backup must contain and what a corruption costs you.</p>
       <table>
-        <thead><tr><th>Artifact</th><th>Location</th><th>Notes</th></tr></thead>
+        <thead><tr><th>File</th><th>Status</th><th>If lost</th></tr></thead>
         <tbody>
-          <tr><td>Paper metadata</td><td><code>data/papers/registry.jsonl</code></td><td>Canonical one-record-per-paper registry.</td></tr>
-          <tr><td>PDFs</td><td><code>data/sources/assets/</code></td><td>Content-addressed by sha256.</td></tr>
-          <tr><td>Source snapshots</td><td><code>data/sources/snapshots/</code></td><td>Write-once text snapshots used by spans; legacy reads may fall back to <code>data/sources/sources/</code>.</td></tr>
-          <tr><td>Extractions</td><td><code>data/papers/extractions/</code></td><td>Reusable across runs and projects.</td></tr>
-          <tr><td>Appraisals</td><td><code>data/papers/appraisals/&lt;project&gt;/</code></td><td>Scoped to the project question.</td></tr>
-          <tr><td>Run outputs</td><td><code>runs/&lt;slug&gt;/outputs/</code></td><td>Reports, summaries, verification output.</td></tr>
-          <tr><td>Manuscripts</td><td><code>projects/&lt;slug&gt;/</code></td><td>Project-owned writing and export inputs.</td></tr>
+          <tr><td><code>data/papers/registry.jsonl</code></td><td><strong>Source of truth</strong></td><td>Unrecoverable. This is the library</td></tr>
+          <tr><td><code>data/sources/snapshots/</code>, <code>events.jsonl</code></td><td><strong>Source of truth</strong></td><td>Unrecoverable; every span stops verifying</td></tr>
+          <tr><td><code>data/papers/extractions/</code>, <code>appraisals/</code></td><td><strong>Source of truth</strong></td><td>Unrecoverable; re-extraction means re-running subagents</td></tr>
+          <tr><td><code>data/refmgr/assets/</code> (PDF bytes)</td><td><strong>Source of truth</strong></td><td>Unrecoverable from the registry — restore from backup or re-import</td></tr>
+          <tr><td><code>data/papers/annotations.jsonl</code></td><td><strong>Source of truth</strong> (your opinions)</td><td>Unrecoverable</td></tr>
+          <tr><td>Saved searches in <code>library.sqlite3</code></td><td><strong>Source of truth</strong></td><td>Unrecoverable — the one durable thing inside an otherwise derived database</td></tr>
+          <tr><td><code>data/papers/pool.jsonl</code></td><td>Derived</td><td><code>registry.py pool</code></td></tr>
+          <tr><td><code>papers_fts</code>, <code>chunks_fts</code>, <code>paper_terms</code></td><td>Derived</td><td><code>registry.py reindex</code></td></tr>
+          <tr><td><code>data/papers/embeddings.jsonl</code></td><td>Derived (cache)</td><td><code>embeddings.py index</code></td></tr>
+          <tr><td><code>runs/&lt;slug&gt;/workspace/</code></td><td>Run-local working state</td><td>Resume from the stage pointer</td></tr>
+        </tbody>
+      </table>
+      <p>A lost or corrupt SQLite database is <em>repaired, not restored</em>. If the index is missing or unusable, <code>search --q</code> falls back to scanning snapshot bodies — slower, same answers.</p>
+
+      <h2>Registry Lifecycle Fields</h2>
+      <p>Beyond the bibliographic fields it shares with a corpus record, every registry record carries:</p>
+      <table>
+        <thead><tr><th>Field</th><th>Values</th><th>Set by</th></tr></thead>
+        <tbody>
+          <tr><td><code>status</code></td><td>registered / screening / included / excluded</td><td><strong>Nothing</strong> — available for a project to set by hand</td></tr>
+          <tr><td><code>metadata_status</code></td><td>pending / partial / complete</td><td>Derived from which fields are present</td></tr>
+          <tr><td><code>asset_status</code></td><td>missing / available</td><td><code>add-pdf</code> / <code>import-folder</code></td></tr>
+          <tr><td><code>extraction_status</code></td><td>not_started / in_progress / extracted</td><td><code>promote</code></td></tr>
+          <tr><td><code>appraisal_status</code></td><td>not_appraised / in_progress / appraised</td><td><code>appraise-promote</code></td></tr>
+          <tr><td><code>asset</code></td><td><code>{refmgr_paper_id, attachment_id, sha256, bytes, pages, mime_type, added_at}</code></td><td>Present once the asset is available; the bytes live in the refmgr attachment pool</td></tr>
+          <tr><td><code>refmgr_paper_id</code></td><td>refmgr paper id</td><td>Duplicated top-level for lookup without unpacking <code>asset</code></td></tr>
+          <tr><td><code>extraction_path</code></td><td>Repo-relative path</td><td><code>promote</code></td></tr>
+          <tr><td><code>appraisals</code></td><td><code>{project: repo-relative path}</code></td><td><code>appraise-promote</code> — a map, not a field</td></tr>
         </tbody>
       </table>
 
-      <h2>Reuse Rule</h2>
-      <p>New runs should seed from the registry, reuse verified extractions when available, and promote newly verified extractions back to the canonical store. Appraisals are reused only for the same project because risk-of-bias and certainty depend on the review question.</p>
+      <h2>The Reuse Loop</h2>
+      <p>This is the point of the whole storage model: work done once for any question is available to every later question that touches the same paper.</p>
+      <pre><code>Stage 2   pool.py seed    --run-dir &lt;run&gt; --repo &lt;path&gt; --query "..."
+          →  scores the registry against this run's question and upserts likely papers
+             into corpus.jsonl as candidates (source: pool). They still get screened.
 
-      <footer class="footer">Source manual: <code>references/pool-architecture.md</code>.</footer>
+Stage 5   pool.py reuse   --run-dir &lt;run&gt; --repo &lt;path&gt; --pmid &lt;pmid&gt;
+          →  matched: true + non-null extraction  ⇒  the canonical extraction is copied
+             into workspace/extractions/, tagged "reused_from", and the subagent is skipped.
+
+Stage 5   registry.py promote --repo &lt;path&gt; --run-dir &lt;run&gt;
+exit      →  copies this run's fresh extractions into the canonical store and repoints
+             the corpus record at them. Span-verified by default.
+
+Stage 6   pool.py reuse ... --project &lt;slug&gt;      # same gate, now checking appraisal_path
+Stage 6   registry.py appraise-promote --repo &lt;path&gt; --run-dir &lt;run&gt; --project &lt;slug&gt;
+exit</code></pre>
+
+      <h3>Why repo mode needs no snapshot-carrying step</h3>
+      <p><code>Store(run_dir, repo_root=&lt;path&gt;)</code> writes new snapshots to the global store by default and falls back run-local → global on read. So a canonical extraction promoted from <em>any</em> run resolves its spans from <em>any other</em> run constructed with the same <code>repo_root</code>, byte-identically, with nothing to copy.</p>
+      <p>Wiki mode cannot do that — wiki runs have isolated per-run stores — so <code>pool.py reuse</code> there re-registers every snapshot a reused extraction's spans cite into the destination run's own store. Same <code>source_id</code>, content-addressed, so it resolves identically. Either way, a reused snapshot carries a <code>register</code> event rather than a <code>fetch</code>, so <code>C-FRESH-FETCH</code> correctly reports it as not retrieved in this run while <code>C-SNAPSHOT</code> and <code>C-SPAN</code> pass.</p>
+
+      <h2>Appraisal Is Project-Scoped, On Purpose</h2>
+      <p>The registry stores appraisals in a <strong>map</strong> keyed by project, not in a single field. Risk of bias and certainty are a function of the question a paper is being used to answer, not an intrinsic property of the paper.</p>
+      <pre><code>"appraisals": {
+  "adolescent-cbt":    "data/papers/appraisals/adolescent-cbt/pmid-12345678--cdi2-12wk.json",
+  "digital-therapies": "data/papers/appraisals/digital-therapies/pmid-12345678--adherence.json"
+}</code></pre>
+      <p>Consequences worth knowing before they surprise you:</p>
+      <ul>
+        <li>A lookup without <code>--project</code> never returns an appraisal.</li>
+        <li>The same paper can be <code>appraised</code> for one manuscript and <code>not_appraised</code> for another at the same moment, and both are correct.</li>
+        <li>Extractions are <em>not</em> project-scoped — a paper's data is its data. Only the judgement about it is scoped.</li>
+      </ul>
+
+      <h2>Commands</h2>
+      <pre><code># repo / project lifecycle
+python3 scripts/research.py init &lt;path&gt; [--from-wiki &lt;wiki-root&gt;]
+python3 scripts/research.py project create &lt;slug&gt; --repo &lt;path&gt;
+python3 scripts/research.py project list --repo &lt;path&gt;
+python3 scripts/research.py export wiki --repo &lt;path&gt; --wiki &lt;root&gt; [--project &lt;slug&gt;]
+
+# intake — all paths converge on Registry.register
+python3 scripts/registry.py add           --repo &lt;path&gt; --pmid &lt;pmid&gt; | --doi &lt;doi&gt;
+python3 scripts/registry.py add-pdf       --repo &lt;path&gt; --file &lt;pdf&gt; [--pmid/--doi/--pmcid/--title]
+python3 scripts/registry.py import-bib    --repo &lt;path&gt; --file refs.bib
+python3 scripts/registry.py import-folder --repo &lt;path&gt; --dir &lt;folder&gt; [--recursive]
+python3 scripts/registry.py lookup        --repo &lt;path&gt; (--pmid|--doi|--pmcid|--evidence-id)
+python3 scripts/registry.py list          --repo &lt;path&gt;
+python3 scripts/registry.py pool          --repo &lt;path&gt;     # regenerate the derived view
+
+# promotion
+python3 scripts/registry.py promote          --repo &lt;path&gt; --run-dir &lt;run&gt;
+python3 scripts/registry.py appraise-promote --repo &lt;path&gt; --run-dir &lt;run&gt; --project &lt;slug&gt;
+
+# reuse
+python3 scripts/pool.py seed   --run-dir &lt;run&gt; --repo &lt;path&gt; --query "..." [--include-metadata-only]
+python3 scripts/pool.py lookup --repo &lt;path&gt; (--pmid|--doi|--pmcid) [--project &lt;slug&gt;]
+python3 scripts/pool.py reuse  --run-dir &lt;run&gt; --repo &lt;path&gt; (--pmid|--doi|--pmcid) [--project &lt;slug&gt;]
+
+# legacy bridge, one-way, never required
+python3 scripts/pool.py migrate --from-wiki &lt;wiki-root&gt; --repo &lt;path&gt; [--project &lt;slug&gt;]</code></pre>
+
+      <h3>Migrating from a wiki pool</h3>
+      <p>For every record in the legacy pool: register its bibliographic fields into the registry, then copy its <em>freshest pointer that still resolves on disk</em> for extraction and appraisal into the canonical store, carrying every snapshot those spans cite into the global source store so they keep verifying with no wiki involved. A pointer whose file has moved or vanished is reported under <code>stale_pointers</code> in the command's JSON — never silently dropped.</p>
+
+      <h2>Who Else Reads This Store</h2>
+      <p>There is no separate summary-only store and no separate reference-manager store. <code>paper.py</code>'s <a href="paper-summaries.html">summary profiles</a> and the <a href="reference-manager.html">search/annotate/ask layer</a> read and write the same registry, extractions, and appraisals the full pipeline does. A paper registered and extracted by a review is reused as-is by a later one-paper summary, and vice versa.</p>
+
+      <h2>What Is Not Wired</h2>
+      <ul>
+        <li><code>SKILL.md</code>'s Stage 2–8 narrative still documents the wiki-backed path only. Running a project under a repo root today means using the <code>research.py</code> / <code>registry.py</code> commands directly rather than the stage prose.</li>
+        <li><code>status</code> and <code>screening</code> on registry records are not set by any command. They exist for a project to use, not because anything writes them.</li>
+        <li><code>okf.py promote</code> has no repo-mode equivalent. <code>research.py export wiki</code> is a plain file copy — a courtesy bundle, not a replacement for the validated promotion path.</li>
+        <li><code>--source refmgr</code> in the <a href="readcube-export.html">ReadCube export</a> cannot take <code>--run-dir</code>: a run's evidence ids use the registry's scheme, and there is no defined cross-resolution against refmgr identifiers yet.</li>
+      </ul>
+
+      <footer class="footer">Source manual: <code>references/pool-architecture.md</code>. Storage guarantees for the snapshot layer: <a href="evidence-kernel.html">Evidence kernel</a>. Integrity checking: <code>registry.py doctor</code>, documented under <a href="reference-manager.html">Reference manager</a>.</footer>
     </main>
   </div>
 </body>

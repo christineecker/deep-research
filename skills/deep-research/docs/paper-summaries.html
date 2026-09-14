@@ -16,7 +16,10 @@
         <a href="quickstart.html">Quickstart</a>
         <a href="questions.html">Scientific questions</a>
         <a href="pipeline.html">Full pipeline</a>
+        <a href="evidence-kernel.html">Evidence kernel</a>
         <a href="paper-summaries.html" aria-current="page">Paper summaries</a>
+        <a href="reference-manager.html">Reference manager</a>
+        <a href="readcube-export.html">ReadCube export</a>
         <a href="architecture.html">Repo architecture</a>
         <a href="appraisal.html">Appraisal frameworks</a>
         <a href="commands.html">Command reference</a>
@@ -27,47 +30,152 @@
     <main class="content">
       <section class="hero">
         <p class="eyebrow">Lightweight profiles</p>
-        <h1>Summarize one paper or a selected set without running a full review.</h1>
-        <p class="lead">The summary profiles reuse the canonical registry, source store, extraction records, appraisals, and verifier.</p>
+        <h1>Summarize one paper, or a set you picked, using the same machinery a full review uses — minus the review.</h1>
+        <p class="lead">Same registry, same acquisition ladder, same extraction and appraisal prompts, same span verification. What is missing is everything that makes a review a review: no PRISMA flow, no effect-direction synthesis, no GRADE summary-of-findings table, no meta-analysis. That omission is the product, not a limitation to work around.</p>
       </section>
 
-      <h2>Single-Paper Summary</h2>
-      <pre><code>/deep-research:summarize --repo &lt;repo&gt; --pmid &lt;pmid&gt;
-/deep-research:summarize --repo &lt;repo&gt; --doi &lt;doi&gt;
-/deep-research:summarize --repo &lt;repo&gt; --pmcid &lt;pmcid&gt;
-/deep-research:summarize --repo &lt;repo&gt; --pdf paper.pdf
-/deep-research:summarize --repo &lt;repo&gt; --evidence-id pmid:12345678</code></pre>
-      <p>Single-paper summaries include appraisal by default when full text is available and a supported framework applies. Use <code>--no-appraise</code> only for a deliberate extraction-only summary.</p>
-
-      <h2>Selected-Paper Summary Set</h2>
-      <pre><code>/deep-research:summarize-set --repo &lt;repo&gt; --pmid 123 --pmid 456
-/deep-research:summarize-set --repo &lt;repo&gt; --ids-file papers.txt
-/deep-research:summarize-set --repo &lt;repo&gt; --bib refs.bib
-/deep-research:summarize-set --repo &lt;repo&gt; --folder papers/ --recursive
-/deep-research:summarize-set --repo &lt;repo&gt; --question "..."
-/deep-research:summarize-set --repo &lt;repo&gt; --topic "..."</code></pre>
-      <p>Set mode produces one verified paper summary per included paper, plus an optional bounded overview. Topic and question mode perform candidate discovery, not systematic retrieval. Add <code>--select-only</code> to preview the picked set before paying for summaries.</p>
-
-      <h2>Run Status</h2>
+      <h2>Which One Do I Want</h2>
       <table>
-        <thead><tr><th>Status</th><th>Agent action</th></tr></thead>
+        <thead><tr><th>The ask</th><th>Use</th></tr></thead>
         <tbody>
-          <tr><td><code>pending_retrieval</code></td><td>Acquire source material or ask the user for missing files.</td></tr>
-          <tr><td><code>pending_extraction</code></td><td>Dispatch the extraction prompt for the target paper.</td></tr>
-          <tr><td><code>pending_appraisal</code></td><td>Dispatch the appraisal prompt for the verified extraction.</td></tr>
-          <tr><td><code>pending_summary</code></td><td>Dispatch the paper-summary prompt or assemble summary JSON.</td></tr>
-          <tr><td><code>completed</code></td><td>Read the rendered Markdown/HTML outputs.</td></tr>
+          <tr><td>"Summarize this paper", "what does this study say" — one PMID/DOI/PMCID/PDF</td><td><code>/deep-research:summarize</code></td></tr>
+          <tr><td>"Summarize these three", a small set you supply, or a bounded topic/question scan for candidates</td><td><code>/deep-research:summarize-set</code></td></tr>
+          <tr><td>"What does the evidence say about X", "literature review", "systematic review"</td><td>The <a href="pipeline.html">full pipeline</a> — never these profiles</td></tr>
+          <tr><td>"What do <em>my</em> papers say about X" — answered from what the repo already holds</td><td><a href="reference-manager.html"><code>/deep-research:ask</code></a></td></tr>
         </tbody>
       </table>
 
-      <h2>Output Sections</h2>
-      <p>A single-paper summary includes citation, bottom line, reason for summary, design and evidence basis, population and setting, intervention/exposure/test/model, comparator, outcomes, appraisal, limitations, practical takeaways, what not to conclude, and provenance.</p>
+      <h2>Single-Paper Summary</h2>
+      <pre><code>/deep-research:summarize --repo &lt;repo&gt; --pmid 12345678
+/deep-research:summarize --repo &lt;repo&gt; --doi 10.1000/example
+/deep-research:summarize --repo &lt;repo&gt; --pmcid PMC1234567
+/deep-research:summarize --repo &lt;repo&gt; --pdf paper.pdf [--doi 10.1000/example]
+/deep-research:summarize --repo &lt;repo&gt; --evidence-id pmid:12345678</code></pre>
+      <table>
+        <thead><tr><th>Flag</th><th>Values</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td><code>--project</code></td><td>A project slug</td><td>Scopes the appraisal. Without it, an appraisal cannot be filed against a question</td></tr>
+          <tr><td><code>--purpose</code></td><td><code>clinical</code>, <code>methods</code>, <code>journal-club</code>, <code>peer-review</code>, <code>background</code></td><td>Shapes framing and emphasis — never the evidence</td></tr>
+          <tr><td><code>--audience</code></td><td><code>researcher</code>, <code>clinician</code>, <code>student</code>, <code>grant-writer</code>, <code>general</code></td><td>Register and assumed background</td></tr>
+          <tr><td><code>--appraise</code> / <code>--no-appraise</code></td><td>On by default</td><td>Appraisal runs whenever full text and a supported framework are available</td></tr>
+          <tr><td><code>--reuse</code> / <code>--no-reuse</code></td><td>Reuse by default</td><td>Whether to pull an existing extraction/appraisal from the pool</td></tr>
+          <tr><td><code>--force</code></td><td>—</td><td>Regenerate even when reusable artifacts exist</td></tr>
+          <tr><td><code>--format</code></td><td><code>md</code>, <code>html</code>, <code>both</code></td><td>Rendered output</td></tr>
+          <tr><td><code>--offline</code></td><td>—</td><td>Local ladder rungs and reuse only; no network acquisition or discovery</td></tr>
+          <tr><td><code>--title</code></td><td>Free text</td><td>Fallback for <code>--pdf</code>/<code>--doi</code> when metadata cannot be resolved</td></tr>
+        </tbody>
+      </table>
 
+      <h2>How A Summary Actually Runs</h2>
+      <p><code>paper.py</code> never dispatches a subagent and never calls a model. It does the deterministic parts — registry lookup and registration, source acquisition, reuse, taskboard bookkeeping, rendering, verification — and returns a <code>status</code> telling the caller what to dispatch next. The agent dispatches it, the subagent writes its file, the same command is re-run, and it picks up from there.</p>
+      <pre><code>Input paper
+  → registry lookup or registration            (registry.py — shared with the full pipeline)
+  → source retrieval / PDF import              (fulltext.py acquire — the same 9-rung ladder)
+  → extraction reuse, or a new extraction task (one subagent, prompts/extract.md — Stage 5 verbatim)
+  → appraisal reuse, or a new appraisal task   (one subagent, prompts/appraise.md — Stage 6 verbatim,
+                                                project-scoped, on by default for full text)
+  → summary assembly                           (one subagent, prompts/summarize-paper.md)
+  → verification                               (verify.py single-paper-summary)
+  → Markdown / HTML export
+  → optional promotion of the extraction and appraisal back to the canonical pool</code></pre>
+      <table>
+        <thead><tr><th>Returned <code>status</code></th><th>What the agent does next</th></tr></thead>
+        <tbody>
+          <tr><td><code>pending_retrieval</code></td><td>Resolve an MCP/browser ladder handoff, or ask you for the PDF</td></tr>
+          <tr><td><code>pending_extraction</code></td><td>Dispatch the extraction prompt for this paper</td></tr>
+          <tr><td><code>pending_appraisal</code></td><td>Dispatch the appraisal prompt against the verified extraction</td></tr>
+          <tr><td><code>pending_summary</code></td><td>Dispatch the paper-summary prompt</td></tr>
+          <tr><td><code>completed</code></td><td>Read the rendered Markdown/HTML</td></tr>
+          <tr><td><code>failed</code></td><td>Read the error — it is quoted, not paraphrased</td></tr>
+        </tbody>
+      </table>
       <div class="callout">
-        Set overviews may compare descriptive attributes across included papers. They must not claim pooled effects, certainty of a body of evidence, or consensus unless a full review produced those artifacts.
+        This is the same loop Stage 5 and Stage 6 already use in the full pipeline, scoped to one paper instead of a corpus. Re-running the command is always safe and always resumes — it is the intended interface, not a retry hack.
       </div>
 
-      <footer class="footer">Slash commands: <code>commands/summarize.md</code>, <code>commands/summarize-set.md</code>. Source manual: <code>references/single-paper-summary.md</code>.</footer>
+      <h2>What A Summary Contains</h2>
+      <p>Fourteen sections. Every sentence in §1–§12 must trace to a claim in the extraction or appraisal record — never to background knowledge.</p>
+      <table>
+        <thead><tr><th>§</th><th>Section</th><th>Rule</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Citation</td><td>—</td></tr>
+          <tr><td>2</td><td>Bottom line</td><td>≤120 words. What the paper found, in the paper's own terms, with its own uncertainty</td></tr>
+          <tr><td>3</td><td>Why this paper was summarized</td><td>—</td></tr>
+          <tr><td>4</td><td>Study design and evidence basis</td><td>States <code>fulltext</code> or <code>abstract_only</code>. Abstract-only adds a plain statement that conduct could not be appraised</td></tr>
+          <tr><td>5</td><td>Population, setting, sample</td><td>—</td></tr>
+          <tr><td>6</td><td>Intervention / exposure / index test / model</td><td>Inapplicable fields say "not applicable to this design" rather than sitting blank</td></tr>
+          <tr><td>7</td><td>Comparator or reference standard</td><td>—</td></tr>
+          <tr><td>8</td><td>Outcomes and main results</td><td>One block per extracted outcome, with its effect, interval, and direction <strong>exactly as extracted</strong> — never re-rounded, never re-interpreted</td></tr>
+          <tr><td>9</td><td>Methods quality and risk of bias</td><td>If appraisal was skipped, this section names the reason: <code>--no-appraise</code>, abstract-only, or no supported tool. It is never silently omitted</td></tr>
+          <tr><td>10</td><td>Limitations</td><td>—</td></tr>
+          <tr><td>11</td><td>Practical takeaways</td><td>Only what the paper supports, labelled as single-study evidence. No recommendation beyond the paper's own discussion</td></tr>
+          <tr><td>12</td><td>What not to conclude from this paper alone</td><td>At least one bullet for any full-text clinical or journal-club summary</td></tr>
+          <tr><td>13</td><td>Provenance</td><td>Evidence id, extraction path, appraisal path or skip reason, generation time, verification status</td></tr>
+          <tr><td>14</td><td>Personal notes</td><td>Your own tags/rating/note from <code>annotations.jsonl</code>. <strong>Unverified</strong> — never cited as evidence, and never allowed to inform §1–§12</td></tr>
+        </tbody>
+      </table>
+      <p>The frontmatter carries <code>status: final</code> or <code>provisional</code> — provisional whenever any verifier check failed — and the body opens with a standing banner: <em>"This summarizes one paper, not a body of evidence."</em></p>
+
+      <h2>Selected-Paper Sets</h2>
+      <pre><code>/deep-research:summarize-set --repo &lt;repo&gt; --pmid 123 --pmid 456 --overview
+/deep-research:summarize-set --repo &lt;repo&gt; --ids-file papers.txt
+/deep-research:summarize-set --repo &lt;repo&gt; --bib refs.bib
+/deep-research:summarize-set --repo &lt;repo&gt; --folder papers/ --recursive
+/deep-research:summarize-set --repo &lt;repo&gt; --question "..." --limit 10 --select-only
+/deep-research:summarize-set --repo &lt;repo&gt; --topic "..."    --limit 10</code></pre>
+      <p>The per-paper path is identical, run once per identifier. Partial failures are recorded rather than fatal — unresolved identifiers land in <code>failed_identifiers</code> with the stage they failed at, and appear in the set document.</p>
+      <table>
+        <thead><tr><th>Mode</th><th>How the set is chosen</th></tr></thead>
+        <tbody>
+          <tr><td><code>explicit</code></td><td>Identifiers normalized and registered one by one, or via <code>import-bib</code> / <code>import-folder</code> for <code>--bib</code> / <code>--folder</code></td></tr>
+          <tr><td><code>question</code> / <code>topic</code></td><td>One bounded PubMed search, <code>--limit</code>-capped with a hard default when omitted. <code>selection_basis</code> records the query, database, timestamp, and limit</td></tr>
+        </tbody>
+      </table>
+      <p><code>--select-only</code> stops after selection so you can inspect the picked set before paying for summaries.</p>
+
+      <h3>The set document</h3>
+      <table>
+        <thead><tr><th>§</th><th>Section</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Set description</td></tr>
+          <tr><td>2</td><td>Selection basis and limits — for discovery modes, labelled <em>"bounded candidate discovery, not a systematic search"</em></td></tr>
+          <tr><td>3</td><td>Papers included: evidence id, title, design, appraisal — plus any failed identifiers</td></tr>
+          <tr><td>4</td><td>Optional overview, or "Not produced for this set."</td></tr>
+          <tr><td>5</td><td>Per-paper summaries, §1–§13 each, in the included order</td></tr>
+          <tr><td>6</td><td>Cross-paper cautions — a standing reminder, not a finding</td></tr>
+          <tr><td>7</td><td>Provenance</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        <strong>The overview is descriptive, and the verifier enforces that.</strong> It may compare design, population, intervention, and outcomes measured — attributes already present in the verified per-paper summaries. It may not claim a pooled effect, a certainty rating, or consensus. Conflicting findings across papers are <em>stated as conflicting</em>, never resolved: these papers were not screened against criteria, not appraised as a body, and not synthesized against each other.
+      </div>
+
+      <h2>Verification</h2>
+      <pre><code>python3 scripts/verify.py single-paper-summary \
+  --summary &lt;run&gt;/workspace/summaries/pmid-12345678.json --run-dir &lt;run&gt;
+
+python3 scripts/verify.py paper-summary-set \
+  --summary-set &lt;run&gt;/workspace/summary-set.json --run-dir &lt;run&gt;</code></pre>
+      <p>Both write <code>&lt;run&gt;/outputs/verification.json</code> and check that:</p>
+      <ul>
+        <li>every claim resolves to the target paper's own <code>evidence_id</code>;</li>
+        <li>every <code>span_refs</code> pointer resolves against the named extraction or appraisal file;</li>
+        <li>appraisal is present, or its skip reason is recorded;</li>
+        <li>abstract-only summaries are labelled as such;</li>
+        <li>no cross-study, pooled, or consensus wording appears outside a full-pipeline run.</li>
+      </ul>
+      <p>A failure makes the summary <code>provisional</code>. The rendered output is still produced.</p>
+
+      <h2>It Shares Everything With The Pipeline</h2>
+      <p>There is no summary-only store. Both profiles read and write <code>data/papers/registry.jsonl</code>, <code>data/papers/extractions/</code>, and <code>data/papers/appraisals/&lt;project&gt;/</code> — the same files a full review uses.</p>
+      <ul>
+        <li>A paper summarized today and later pulled into a review starts already registered, and possibly already extracted and appraised.</li>
+        <li>A paper extracted during a review and later asked about individually reuses that extraction instead of re-running Stage 5.</li>
+        <li>Because appraisal is <a href="architecture.html">project-scoped</a>, an appraisal reused across projects is a deliberate choice you make with <code>--project</code>, not an accident.</li>
+      </ul>
+
+      <footer class="footer">Slash commands: <code>commands/summarize.md</code>, <code>commands/summarize-set.md</code>. Source manual: <code>references/single-paper-summary.md</code>. Record contracts: <code>references/schema/14-single-paper-summary.md</code>, <code>references/schema/15-paper-summary-set.md</code>. Templates: <code>templates/single-paper-summary.md</code>, <code>templates/paper-summary-set.md</code>.</footer>
     </main>
   </div>
 </body>

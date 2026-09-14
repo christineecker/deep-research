@@ -16,7 +16,10 @@
         <a href="quickstart.html">Quickstart</a>
         <a href="questions.html">Scientific questions</a>
         <a href="pipeline.html">Full pipeline</a>
+        <a href="evidence-kernel.html">Evidence kernel</a>
         <a href="paper-summaries.html">Paper summaries</a>
+        <a href="reference-manager.html">Reference manager</a>
+        <a href="readcube-export.html">ReadCube export</a>
         <a href="architecture.html">Repo architecture</a>
         <a href="appraisal.html">Appraisal frameworks</a>
         <a href="commands.html">Command reference</a>
@@ -28,7 +31,7 @@
       <section class="hero">
         <p class="eyebrow">PubMed-centred research workflow</p>
         <h1>deep-research turns scientific questions and papers into verified, reusable evidence artifacts.</h1>
-        <p class="lead">Use it for full literature reviews, manuscript-oriented evidence projects, and lightweight one-paper or selected-paper summaries backed by extraction spans and appraisal records.</p>
+        <p class="lead">Use it for full literature reviews, manuscript-oriented evidence projects, and lightweight one-paper or selected-paper summaries — all backed by immutable source snapshots, character-offset extraction spans, and appraisal records that a script re-checks rather than a reader trusting.</p>
       </section>
 
       <section class="grid" aria-label="Primary workflows">
@@ -37,6 +40,12 @@
           <h3>Question to report</h3>
           <p>Configure a PICO/PECO-style question, search PubMed, screen records, retrieve full text, extract, appraise, synthesize, verify, and render the report.</p>
           <a href="pipeline.html">View pipeline</a>
+        </article>
+        <article class="card">
+          <span class="pill">Proof layer</span>
+          <h3>Evidence kernel</h3>
+          <p>Write-once snapshots, character-offset spans, an append-only retrieval log, and an assembler that re-slices every excerpt instead of trusting one. Agent-written text is never itself evidence.</p>
+          <a href="evidence-kernel.html">View evidence kernel</a>
         </article>
         <article class="card">
           <span class="pill">Manuscript repo</span>
@@ -50,6 +59,18 @@
           <p>Summarize one paper or a user-specified set by reusing the same registry, extraction, appraisal, and verifier machinery without running a full review.</p>
           <a href="paper-summaries.html">View summaries</a>
         </article>
+        <article class="card">
+          <span class="pill">Reference manager</span>
+          <h3>Search, ask, tag, export</h3>
+          <p>Ranked full-text and facet search over the registry, questions answered from papers you already hold with span-verified citations, saved PubMed searches that report what's new, personal tags/star-ratings/notes, and a bridge into an OKF knowledge-graph bundle.</p>
+          <a href="reference-manager.html">View reference manager</a>
+        </article>
+        <article class="card">
+          <span class="pill">ReadCube export</span>
+          <h3>Publish an import bundle</h3>
+          <p>ReadCube is the library UI and PDF viewer, not deep-research. Prepare a RIS + PDF import bundle from the registry, with checksum-verified staged publishing and incremental re-export.</p>
+          <a href="readcube-export.html">View ReadCube export</a>
+        </article>
       </section>
 
       <h2>What It Is For</h2>
@@ -59,18 +80,69 @@
           <tr><td>Literature review or evidence synthesis</td><td>Full Stage 0-8 pipeline</td><td>Verified report, evidence table, PRISMA flow, optional HTML/PDF/docx</td></tr>
           <tr><td>One article summary with appraisal</td><td><code>/deep-research:summarize</code></td><td>Single-paper summary plus appraisal and verification</td></tr>
           <tr><td>Several specified papers</td><td><code>/deep-research:summarize-set</code></td><td>One summary per paper plus optional bounded overview</td></tr>
+          <tr><td>A question answered from papers you already hold</td><td><code>/deep-research:ask</code></td><td>An answer built only from spans that still verify — not a literature search</td></tr>
+          <tr><td>A reusable extracted-paper pool, no report</td><td>A run with <code>pipeline.stop_after_stage: 5</code></td><td>Extractions every later run reuses instead of redoing</td></tr>
           <tr><td>Manuscript project without wiki-manager</td><td><code>/deep-research:init</code> and <code>/deep-research:project create</code></td><td>Standalone project, reusable paper pool, exports</td></tr>
         </tbody>
       </table>
 
       <div class="callout">
-        <strong>Boundary:</strong> selected-paper summaries are not systematic reviews. They may orient the reader across a bounded set, but they do not claim comprehensive retrieval, pooled effects, or body-of-evidence certainty.
+        <strong>Boundary:</strong> selected-paper summaries are not systematic reviews. They may orient the reader across a bounded set, but they do not claim comprehensive retrieval, pooled effects, or body-of-evidence certainty — and the verifier rejects that wording outside a run that actually produced it.
       </div>
 
-      <h2>Core Evidence Rule</h2>
-      <p>Scientific claims should flow through structured records: source snapshots, extraction spans, appraisal domains, summary records, then verification. The tool avoids direct free-form summarization from PDFs when a structured extraction should exist.</p>
+      <h2>How The Pieces Fit</h2>
+      <pre><code>        your question                     papers you already have
+              │                                     │
+              ▼                                     ▼
+      ┌───────────────┐                   ┌───────────────────┐
+      │  Stage 0-8    │ ─── extractions ─▶ │  canonical store  │ ◀── summarize / summarize-set
+      │  pipeline     │ ◀── reuse ──────── │  registry.jsonl   │
+      └───────┬───────┘                   │  extractions/     │ ──▶ search · ask · annotate
+              │                           │  appraisals/&lt;p&gt;/   │ ──▶ bib · RIS+PDF · OKF bundle
+              │                           └─────────┬─────────┘
+              ▼                                     │
+      report · digest                               ▼
+      verification.json                 data/sources/  snapshots + events.jsonl
+                                        (every span re-sliced from here, twice)</code></pre>
+      <p>Work done once is available everywhere. A paper extracted by a review is reused by a later one-paper summary; a paper registered for a summary is already in the pool the next review seeds from. Appraisals are the deliberate exception — they are scoped to the project whose question they answer.</p>
 
-      <footer class="footer">Generated documentation for the local deep-research skill.</footer>
+      <h2>The Core Rule</h2>
+      <p>Scientific claims flow through structured records: source snapshot → extraction span → appraisal domain → summary record → verification. The tool does not free-form summarize from a PDF when a structured extraction should exist, and it does not let an agent supply its own quotation. Every excerpt in a finished artifact was cut from an immutable snapshot by a script — once at assembly, once at publish.</p>
+
+      <h2>Invariants That Never Bend</h2>
+      <table>
+        <thead><tr><th>#</th><th>Rule</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>No PubMed-backed claim without a PMID <strong>actually retrieved this run</strong>.</td></tr>
+          <tr><td>2</td><td>No claim from any source without a retrieved evidence id: PMID, DOI, PMCID, preprint DOI, guideline URL, report URL, or bundle-relative concept path.</td></tr>
+          <tr><td>3</td><td>Abstract-only vs. full-text is tagged on every extraction. Abstract-only is never appraised as if full text.</td></tr>
+          <tr><td>4</td><td>Null and negative findings are <strong>actively searched for</strong>. Screeners must not exclude on outcome positivity.</td></tr>
+          <tr><td>5</td><td>Conflicts are surfaced <em>with an explanation</em>, never averaged away.</td></tr>
+          <tr><td>6</td><td>"New insights / hypotheses" is hard-walled from "what the evidence shows".</td></tr>
+          <tr><td>7</td><td>Retracted and Expression-of-Concern papers are flagged at screening and at every point of use.</td></tr>
+          <tr><td>8</td><td>PubMed attribution is honored: cite PubMed <em>and</em> DOIs.</td></tr>
+          <tr><td>9</td><td><strong>No paywall circumvention of any kind.</strong> No credentials, sessions, proxies, captcha solving, or mirrors; no retrying a 401/402/403 by another route. Fail closed.</td></tr>
+          <tr><td>10-11</td><td>Bundle concepts preserve full PubMed metadata; per-claim attribution uses footnotes keyed to source ids. A body-only citation list is not acceptable.</td></tr>
+          <tr><td>12-13</td><td>The wiki's own <code>wiki/</code> tree is never written to; standard markdown links are the graph layer, wikilinks additive only.</td></tr>
+          <tr><td>14</td><td>Unknown values are <code>null</code>. Never invent a bibliographic field, a number, or a citation.</td></tr>
+          <tr><td>15</td><td>Whenever a PDF is handed to you, its DOI is stated alongside the PMID — or the absence of a DOI is stated.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Start Here</h2>
+      <table>
+        <thead><tr><th>If you are…</th><th>Read</th></tr></thead>
+        <tbody>
+          <tr><td>Setting up for the first time</td><td><a href="quickstart.html">Quickstart</a> — prerequisites, a real repo, a first summary, and a troubleshooting table</td></tr>
+          <tr><td>About to ask a research question</td><td><a href="questions.html">Scientific questions</a> — pick the framework before searching, not after</td></tr>
+          <tr><td>Running or debugging a review</td><td><a href="pipeline.html">Full pipeline</a> — every stage, every gate, every failure mode</td></tr>
+          <tr><td>Wondering whether to trust a quote</td><td><a href="evidence-kernel.html">Evidence kernel</a> — how a claim is made checkable</td></tr>
+          <tr><td>Deciding where papers and judgements live</td><td><a href="architecture.html">Repo architecture</a> — source of truth vs. derived, and what a backup must contain</td></tr>
+          <tr><td>Looking for a flag</td><td><a href="commands.html">Command reference</a>, then <code>python3 scripts/&lt;name&gt;.py --help</code></td></tr>
+        </tbody>
+      </table>
+
+      <footer class="footer">Generated documentation for the local deep-research skill. Authoritative source: <code>SKILL.md</code> and <code>references/*.md</code> — these pages summarize them, they do not replace them.</footer>
     </main>
   </div>
 </body>

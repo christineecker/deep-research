@@ -14,6 +14,15 @@ Print this cheat sheet directly. Do not read SKILL.md or run any script.
 | `verify` | Consistency checks over a run, or one summary/summary-set | yes* |
 | `project` | Create/list manuscript projects (appraisals are project-scoped) | no |
 | `watch` | Read-only snapshot of a run's progress (`--once`, non-interactive) | yes |
+| `search` | Facet/keyword/similarity search over the registry | no |
+| `ask` | Answer a question from papers the repo already holds, citing verified spans | no |
+| `alerts` | Saved PubMed searches (`save`/`list`/`delete`/`run`); `run` reports what's new | no |
+| `reindex` | Rebuild the repo's derived search indexes (safe to re-run) | no |
+| `doctor` | Read-only integrity check: missing/corrupt PDFs, stale index rows | no |
+| `annotate` | Personal tags/rating/note on a paper (tag/rate/note/show/list) | no |
+| `embed` | Build/query the semantic-similarity index (`index`/`similar`/`query`) | no |
+| `okf-export` | Promote hand-picked registry papers into an OKF wiki bundle | no* |
+| `export` | Publish a ReadCube-importable bundle (RIS + PDFs) from the registry | no |
 
 For the full Stage 0–8 review pipeline (search → screen → extract → appraise →
 synthesize → report), use the `deep-research` skill directly (ask for "deep research on
@@ -29,9 +38,18 @@ X" or "a literature review") rather than these commands — they're deliberately
   `summarize-set --select-only` first, then re-run without it once the set looks right.
 - Already know it's exactly one paper? → `summarize` (same flags as `summarize-set`,
   minus the discovery/selection machinery).
+- Have a *question* rather than a paper set, and the repo has already read the relevant
+  papers? → `ask`. It answers from what is on the shelf, with verified citations; it never
+  goes to PubMed, so if the shelf is empty the answer is "nothing here", and a full
+  `deep-research` run is what goes looking.
 
 *`verify`'s `single-paper-summary`/`paper-summary-set` modes still require `--run-dir`
-even though they check a summary output, not a full pipeline run.
+even though they check a summary output, not a full pipeline run. `okf-export` needs no
+prior full pipeline run either, but each `--evidence-id` must already have an extraction
+on file (it synthesizes its own throwaway run directory internally). `export` distinct
+from `okf-export`: it publishes a ReadCube import bundle to a local folder, not an OKF
+wiki; it never touches wiki state and needs no extraction on file — metadata-only
+records export too (with a warning, or blocked if `--require-pdfs`).
 
 ## Everything needs `--repo`
 

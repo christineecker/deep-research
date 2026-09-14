@@ -16,7 +16,10 @@
         <a href="quickstart.html">Quickstart</a>
         <a href="questions.html">Scientific questions</a>
         <a href="pipeline.html">Full pipeline</a>
+        <a href="evidence-kernel.html">Evidence kernel</a>
         <a href="paper-summaries.html">Paper summaries</a>
+        <a href="reference-manager.html">Reference manager</a>
+        <a href="readcube-export.html">ReadCube export</a>
         <a href="architecture.html">Repo architecture</a>
         <a href="appraisal.html">Appraisal frameworks</a>
         <a href="commands.html" aria-current="page">Command reference</a>
@@ -28,8 +31,27 @@
       <section class="hero">
         <p class="eyebrow">Slash commands</p>
         <h1>Use the slash commands for the everyday cases; drop to the raw scripts for everything they don't cover.</h1>
-        <p class="lead">Each <code>/deep-research:*</code> command calls one script directly, with no Stage 0-8 negotiation, and prints the script's own JSON output. Agent harnesses should read status fields and resume by rerunning the same command after required files are written.</p>
+        <p class="lead">Each <code>/deep-research:*</code> command calls one script directly, with no Stage 0-8 negotiation, and prints that script's own JSON. There are deliberately fewer wrappers than scripts — where no wrapper exists, the script call is given below rather than hidden.</p>
       </section>
+
+      <h2>How These Commands Behave</h2>
+      <p>Three conventions hold across every script in the skill. Knowing them is worth more than memorizing flags.</p>
+      <table>
+        <thead><tr><th>Convention</th><th>Detail</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Everything prints JSON</strong></td><td>Every command emits a single object with <code>schema_version</code>, <code>status</code> (<code>ok</code> / <code>error</code>), <code>command</code>, and its payload. An error carries a human-readable <code>error</code> string, quoted rather than paraphrased.</td></tr>
+          <tr><td><strong><code>status</code> drives the loop</strong></td><td>Scripts never call a model. Where model work is needed they return <code>pending_retrieval</code>, <code>pending_extraction</code>, <code>pending_appraisal</code>, or <code>pending_summary</code>. The agent dispatches that subagent, the subagent writes its file, the <em>same command is re-run</em>, and the script resumes. <code>completed</code> ends the loop.</td></tr>
+          <tr><td><strong>Re-running is the interface</strong></td><td>Not a retry hack. Completed work is not redone: a satisfied ladder rung is never re-attempted, a promoted extraction is immutable unless its <code>inputs_hash</code> changes, and an unchanged snapshot is skipped rather than re-split.</td></tr>
+        </tbody>
+      </table>
+      <pre><code>$ python3 scripts/registry.py doctor --repo ~/lit/
+{
+  "schema_version": 1,
+  "status": "error",
+  "command": "doctor",
+  "error": "no refmgr library at ~/lit/data/refmgr — nothing to check; `registry.py reindex` creates one"
+}</code></pre>
+      <p>Exit codes matter for the ones you might cron: <code>doctor</code> exits non-zero only for actual data loss — missing or corrupt assets, dangling attachments — while stale index rows are reported but stay "healthy", because <code>reindex</code> fixes those and nothing is at risk.</p>
 
       <h2>Repo And Project</h2>
       <pre><code>/deep-research:init &lt;path&gt;
@@ -44,8 +66,7 @@
 /deep-research:pool-add --repo &lt;path&gt; --query "..." --n 10
 /deep-research:pdf-lookup --repo &lt;path&gt; --evidence-id pmid:12345678
 /deep-research:bib-export --repo &lt;path&gt; --out refs.bib --select all</code></pre>
-      <p>No wrapper for a DOI-only add, PDF/bulk-bib/folder import, or the raw registry list/pool
-      projection steps — run these directly:</p>
+      <p>No wrapper for a DOI-only add, PDF/bulk-bib/folder import, or the raw registry list/pool projection steps — run these directly:</p>
       <pre><code>python3 scripts/registry.py add --repo &lt;path&gt; --doi &lt;doi&gt;
 python3 scripts/registry.py add-pdf --repo &lt;path&gt; --file &lt;pdf&gt;
 python3 scripts/registry.py import-bib --repo &lt;path&gt; --file refs.bib
@@ -54,31 +75,118 @@ python3 scripts/registry.py list --repo &lt;path&gt;
 python3 scripts/registry.py pool --repo &lt;path&gt;</code></pre>
 
       <h2>Pool Reuse</h2>
-      <p>No slash-command wrapper yet — this is internal run plumbing, not a standalone ask:</p>
+      <p>No slash-command wrapper yet — this is internal run plumbing, not a standalone ask. See <a href="architecture.html">Repo architecture</a> for what each step does to the canonical store:</p>
       <pre><code>python3 scripts/pool.py seed --run-dir &lt;run&gt; --repo &lt;path&gt; --query "..."
 python3 scripts/pool.py lookup --repo &lt;path&gt; --pmid &lt;pmid&gt; --project &lt;slug&gt;
 python3 scripts/pool.py reuse --run-dir &lt;run&gt; --repo &lt;path&gt; --pmid &lt;pmid&gt; --project &lt;slug&gt;
 python3 scripts/registry.py promote --repo &lt;path&gt; --run-dir &lt;run&gt;
 python3 scripts/registry.py appraise-promote --repo &lt;path&gt; --run-dir &lt;run&gt; --project &lt;slug&gt;</code></pre>
 
+      <h2>Full-Text Acquisition</h2>
+      <p>No wrapper — Stage 4 plumbing, but worth knowing by hand when a run stalls on a ladder handoff (<a href="pipeline.html">Stage 4</a>):</p>
+      <pre><code>python3 scripts/fulltext.py acquire --corpus &lt;corpus.jsonl&gt; --run-dir &lt;run&gt; \
+    [--only-pmid X] [--from-tier N] [--email addr] [--offline] [--no-ocr] [--workers N]
+python3 scripts/fulltext.py status --run-dir &lt;run&gt;
+python3 scripts/fulltext.py resolve-mcp     --run-dir &lt;run&gt; --evidence-id &lt;id&gt; (--text-file &lt;p&gt; | --status unavailable)
+python3 scripts/fulltext.py resolve-browser --run-dir &lt;run&gt; --evidence-id &lt;id&gt; (--text-file &lt;p&gt; [--institutional] | --status unavailable)
+
+python3 scripts/library.py ingest-inbox --run-dir &lt;run&gt; --wiki &lt;root&gt; [--no-apply]
+python3 scripts/library.py lookup --wiki &lt;root&gt; (--doi|--pmid|--pmcid|--title|--sha256)</code></pre>
+      <p><code>--from-tier N</code> discards rung state at or above N and walks again from there; <code>--offline</code> marks network rungs <code>skipped</code> rather than <code>failed</code>, so a later online pass still tries them.</p>
+
       <h2>Paper Summaries</h2>
       <pre><code>/deep-research:summarize --repo &lt;path&gt; --pmid &lt;pmid&gt; --project &lt;slug&gt; --format both
 /deep-research:summarize --repo &lt;path&gt; --pdf paper.pdf --project &lt;slug&gt;
 /deep-research:summarize-set --repo &lt;path&gt; --pmid 123 --pmid 456 --overview
 /deep-research:summarize-set --repo &lt;path&gt; --topic "..." --limit 10 --select-only</code></pre>
+      <p>Flags, statuses, and output sections: <a href="paper-summaries.html">Paper summaries</a>.</p>
+
+      <h2>Reference Manager</h2>
+      <pre><code>/deep-research:search --repo &lt;path&gt; --journal "JAMA" --min-rating 4
+/deep-research:search --repo &lt;path&gt; --q "biomarker threshold" --tag diagnostics
+/deep-research:search --repo &lt;path&gt; --similar-to pmid:38214501 --limit 5
+/deep-research:search --repo &lt;path&gt; --mesh depress --article-type randomized
+/deep-research:annotate tag  --repo &lt;path&gt; --evidence-id pmid:38214501 --add to-read
+/deep-research:annotate rate --repo &lt;path&gt; --evidence-id pmid:38214501 --stars 4
+/deep-research:annotate note --repo &lt;path&gt; --evidence-id pmid:38214501 --set "..."
+/deep-research:annotate list --repo &lt;path&gt; --tag to-read --min-rating 3
+/deep-research:embed index   --repo &lt;path&gt;
+/deep-research:embed similar --repo &lt;path&gt; --evidence-id pmid:38214501 --k 5
+/deep-research:embed query   --repo &lt;path&gt; --text "does X reduce Y?" --k 10
+/deep-research:ask --repo &lt;path&gt; "does exercise reduce depressive symptoms in adolescents?"
+/deep-research:alerts save --repo &lt;path&gt; --name cbt --query "CBT AND adolescents"
+/deep-research:alerts run  --repo &lt;path&gt; --register
+/deep-research:reindex --repo &lt;path&gt;
+/deep-research:doctor  --repo &lt;path&gt; --deep
+/deep-research:okf-export --repo &lt;path&gt; --evidence-id pmid:38214501 --wiki &lt;wiki-root&gt;</code></pre>
+      <p><code>embed index</code> and <code>embed query</code> require the optional third-party package <code>sentence-transformers</code>
+      — the one scoped exception to the skill's no-pip-installs policy; <code>ask</code> runs without it, on lexical
+      retrieval alone. <code>ask</code> answers only from spans that verify against the snapshot store, and only from
+      papers the repo already holds — it is not a literature search. <code>okf-export</code> requires each
+      <code>--evidence-id</code> to already have an extraction on file. Details:
+      <a href="reference-manager.html">Reference manager</a>.</p>
+
+      <h2>ReadCube Export</h2>
+      <pre><code>/deep-research:export --repo &lt;path&gt; --all --destination &lt;folder&gt; --require-pdfs
+/deep-research:export --repo &lt;path&gt; --evidence-id pmid:38214501 --destination &lt;folder&gt; --incremental
+/deep-research:export --repo &lt;path&gt; --run-dir &lt;run&gt; --destination &lt;folder&gt; --bib --dry-run</code></pre>
+      <p>Distinct from <code>okf-export</code>: this publishes a local RIS + PDF bundle for the ReadCube
+      desktop app, not an OKF wiki bundle — it never touches wiki state and needs no extraction on file.
+      Add <code>--source refmgr --library &lt;path&gt;</code> to read from the newer SQLite reference-manager
+      layer instead of the registry (supports multiple attachments per paper; <code>--all</code>/
+      <code>--evidence-id</code> selection only, not <code>--run-dir</code>). Details:
+      <a href="readcube-export.html">ReadCube export</a>.</p>
 
       <h2>Run Monitoring</h2>
       <pre><code>/deep-research:status &lt;run&gt; --table
 /deep-research:status &lt;run&gt; --missing
 /deep-research:watch --run-dir &lt;run&gt; --once</code></pre>
+      <p>And the task board and no-progress guard, which have no wrappers:</p>
+      <pre><code>python3 scripts/corpus.py task list --run-dir &lt;run&gt; --stage extract
+python3 scripts/corpus.py guard --run-dir &lt;run&gt; --no-record    # status check, records nothing
+python3 scripts/corpus.py prisma --run-dir &lt;run&gt;</code></pre>
+      <p>Use <code>--no-record</code> when polling: every recording call appends a probe, so repeatedly checking a legitimately parked run manufactures the flat window the guard looks for.</p>
 
       <h2>Verification And Rendering</h2>
       <pre><code>/deep-research:verify run --run-dir &lt;run&gt; --report &lt;run&gt;/outputs/report.md
 /deep-research:verify single-paper-summary --summary &lt;run&gt;/workspace/summaries/pmid-123.json --run-dir &lt;run&gt;
 /deep-research:verify paper-summary-set --summary-set &lt;run&gt;/workspace/summary-set.json --run-dir &lt;run&gt;</code></pre>
-      <p>No wrapper for HTML/PDF/docx rendering — run these directly:</p>
-      <pre><code>python3 scripts/html_report.py build --run-dir &lt;run&gt; --out &lt;run&gt;/outputs/report.html
-python3 scripts/render.py all --run-dir &lt;run&gt; --formats pdf,docx</code></pre>
+      <p>No wrapper for assembly or for HTML/PDF/docx rendering — and the order matters (<a href="evidence-kernel.html">why</a>):</p>
+      <pre><code>python3 scripts/assemble.py run --run-dir &lt;run&gt; [--strict]
+python3 scripts/verify.py run --run-dir &lt;run&gt; [--gate]
+python3 scripts/html_report.py build --run-dir &lt;run&gt; --out &lt;run&gt;/outputs/report.html
+python3 scripts/render.py all --run-dir &lt;run&gt; --formats pdf,docx
+python3 scripts/okf.py promote --run-dir &lt;run&gt; --wiki &lt;root&gt; --check
+python3 scripts/okf.py promote --run-dir &lt;run&gt; --wiki &lt;root&gt;</code></pre>
+
+      <h2>Script Index</h2>
+      <p>What each script owns, when you need to go below the command layer:</p>
+      <table>
+        <thead><tr><th>Script</th><th>Job</th></tr></thead>
+        <tbody>
+          <tr><td><code>eutils.py</code></td><td>esearch / efetch / elink, throttle, retry, hit counts, translated query</td></tr>
+          <tr><td><code>fulltext.py</code></td><td>The acquisition ladder — resumable, with the truncation detector</td></tr>
+          <tr><td><code>library.py</code></td><td>Wiki-mode PDF index, matching, inbox ingestion</td></tr>
+          <tr><td><code>pool.py</code></td><td>Shared extraction/appraisal pool, <code>--wiki</code> or <code>--repo</code>; <code>seed</code> before search, <code>reuse</code> carries spans across runs; <code>migrate --from-wiki</code>; wiki-wide BibTeX</td></tr>
+          <tr><td><code>research.py</code></td><td>Standalone repo mode: <code>init</code>, <code>project</code>, <code>export wiki</code>, <code>okf-export</code></td></tr>
+          <tr><td><code>registry.py</code></td><td>The canonical registry: intake, lookup, promotion, search, facets, reindex, doctor, BibTeX</td></tr>
+          <tr><td><code>corpus.py</code></td><td><code>corpus.jsonl</code>, dedupe, PRISMA counters, the <code>task</code> CLI, guards</td></tr>
+          <tr><td><code>paper.py</code></td><td>Single-paper and selected-paper summary profiles</td></tr>
+          <tr><td><code>store.py</code></td><td>Evidence kernel: immutable snapshots, spans, event log, freshness</td></tr>
+          <tr><td><code>source.py</code></td><td><code>fetch</code> / <code>read</code> / <code>spans</code> / <code>local</code> over the snapshot store</td></tr>
+          <tr><td><code>assemble.py</code></td><td>Admissibility gate → <code>outputs/result.json</code></td></tr>
+          <tr><td><code>verify.py</code></td><td>Citation / corpus / OKF / kernel consistency checks</td></tr>
+          <tr><td><code>okf.py</code></td><td>Bundle concept writer and validator</td></tr>
+          <tr><td><code>render.py</code></td><td><code>report.md</code> → <code>.qmd</code> + <code>refs.bib</code> → quarto render (pdf/docx)</td></tr>
+          <tr><td><code>html_report.py</code></td><td>Self-contained HTML deliverable: evidence table, effect-direction chart, per-study cards</td></tr>
+          <tr><td><code>status.py</code></td><td>Stage, progress bar, per-paper coverage table, missing list</td></tr>
+          <tr><td><code>watch.py</code></td><td>Read-only TUI; attaches to a live or finished run</td></tr>
+          <tr><td><code>annotations.py</code> · <code>embeddings.py</code> · <code>ask.py</code> · <code>alerts.py</code></td><td>The reference-manager layer</td></tr>
+          <tr><td><code>export.py</code> · <code>ris.py</code> · <code>export_ledger.py</code></td><td>ReadCube bundle publication</td></tr>
+          <tr><td><code>eval.py</code></td><td>Fixture-based smoke harness; <code>--live</code> for real PubMed</td></tr>
+        </tbody>
+      </table>
+      <p>All scripts are <code>python3</code> (there is no <code>python</code> on this machine), stdlib plus <code>requests</code> and <code>pdfminer</code> only. <strong>No pip installs</strong> — with the single scoped exception of <code>embeddings.py</code>.</p>
 
       <footer class="footer">Full flag reference for a command: <code>commands/&lt;name&gt;.md</code>, or <code>/deep-research:help</code>. For a raw script: <code>python3 scripts/&lt;name&gt;.py --help</code>.</footer>
     </main>

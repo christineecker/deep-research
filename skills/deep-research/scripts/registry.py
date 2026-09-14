@@ -71,19 +71,239 @@ def repo_paths(repo_root: Path) -> dict[str, Path]:
         "extractions": papers / "extractions",
         "appraisals": papers / "appraisals",
         "sources": repo_root / "data" / "sources",
+        "refmgr": repo_root / "data" / "refmgr",
         "locks": repo_root / ".locks",
     }
 
 
+def _refmgr_service(repo_root: Path):
+    """Open the shared refmgr SQLite library (`data/refmgr/`) that now backs
+    PDF attachment storage for `add-pdf`/`import-folder` (plan Phase 5:
+    "route research acquisition into the shared refmgr attachment pool").
+    """
+    import refmgr.service as _refmgr_service_mod
+    return _refmgr_service_mod.ReferenceManagerService(repo_paths(repo_root)["refmgr"])
+
+
+def _refmgr_identifiers(raw: dict) -> list[tuple[str, str]]:
+    """`{pmid, doi, pmcid, url}` -> refmgr `(scheme, raw_value)` pairs, skipping
+    values that don't normalize (refmgr's own normalizers are the authority,
+    not `corpus.py`'s — the two identity models are deliberately independent,
+    see plan "Known issues and standing decisions").
+
+    `url` is included for records that carry one as an extra field. A `url:<digest>`
+    *evidence_id* is not a URL and yields no identifier at all; those records dedupe
+    on the registry record's own `refmgr_paper_id` instead (see `_refmgr_paper_id`),
+    which is why the mirror persists that id before rewriting `registry.jsonl`.
+    """
+    import refmgr.identity as _identity
+
+    pairs = []
+    for scheme, value in (("pmid", raw.get("pmid")), ("doi", raw.get("doi")),
+                          ("pmcid", raw.get("pmcid")), ("url", raw.get("url"))):
+        if not value:
+            continue
+        try:
+            _identity.normalize_identifier(scheme, str(value))
+        except _identity.IdentifierError:
+            continue
+        pairs.append((scheme, str(value)))
+    return pairs
+
+
+def _refmgr_paper_id(service, rec: dict, raw: dict, title: str) -> str:
+    """Resolve (or create) the refmgr paper backing this registry record.
+
+    The registry record's own `refmgr_paper_id` is the durable idempotency
+    key across repeated CLI calls -- once linked, later calls reuse it
+    directly rather than re-deriving it, since a registry record with no
+    pmid/doi/pmcid (title-only) has nothing refmgr can match on. But reuse
+    is not a shortcut past reconciliation: `raw` may carry an identifier
+    added since the paper was first linked (a PMID-only record later
+    enriched with a DOI, say), and every relevant call must attach it --
+    `reconcile_identifiers` runs on every pass, existing link or not, so an
+    enrichment is never silently dropped just because the paper already
+    exists (hardening plan package 3).
+    """
+    identifiers = _refmgr_identifiers(raw)
+    existing = rec.get("refmgr_paper_id")
+    if existing and service.papers.get(existing) is not None:
+        service.reconcile_identifiers(existing, identifiers)
+        return existing
+    return service.add_paper(
+        title=title, paper_type="article",
+        identifiers=identifiers,
+    )
+
+
+def _import_pdf_attachment(service, paper_id: str, pdf: Path, *,
+                           digest: str, pages: int, move: bool) -> dict:
+    """Stage `pdf`'s bytes into the refmgr asset store and link them to
+    `paper_id`, reusing an existing attachment instead of creating a
+    duplicate row if this exact asset is already attached to this paper
+    (attachments are append-only in refmgr -- see `AttachmentRepository.link`
+    -- so callers that want idempotent re-imports must guard for it here)."""
+    for att in service.attachments.list_for_paper(paper_id):
+        if att["asset_sha256"] == digest:
+            attachment_id = att["id"]
+            break
+    else:
+        attachment_id = service.import_attachment(
+            paper_id, pdf, role="fulltext", mime_type="application/pdf",
+            original_filename=pdf.name, page_count=pages,
+        )
+    if move:
+        pdf.unlink(missing_ok=True)
+    asset_row = service.assets.get(digest)
+    return {
+        "refmgr_paper_id": paper_id, "attachment_id": attachment_id,
+        "sha256": digest, "bytes": asset_row["byte_size"] if asset_row else None,
+        "pages": pages, "mime_type": "application/pdf", "added_at": utcnow(),
+    }
+
+
+#: Names the extraction that produced a figure row, so a later heuristic's output can
+#: be told apart from an earlier one's (figures are not a cheaply rebuildable index —
+#: see migrations/0005_figures.sql).
+FIGURE_EXTRACTOR = "library.extract_figures/1"
+
+
+def extract_figures_for_attachment(service, paper_id: str, attachment_id: str, *,
+                                   dpi: int = 300, max_figures: int = 100,
+                                   replace: bool = False) -> dict:
+    """Crop figures out of one PDF attachment and store them against its paper.
+
+    This is the seam between the two halves: `library.extract_figures` knows about
+    poppler and page layout, `service.import_figures` knows about assets and rows,
+    and neither imports the other. Extraction reads the asset from refmgr's own
+    store rather than the original file, which may have been moved or deleted after
+    import — the stored bytes are the checksummed copy.
+
+    Progress is tracked in `figure_extraction_state`
+    (`service.figure_extraction`), keyed on `(source_asset_sha256, extractor,
+    dpi, max_figures)` -- not on "does a figures row exist", which cannot tell a
+    complete extraction from one interrupted halfway, cannot tell a genuine
+    zero-figure PDF from one never attempted, and cannot tell a changed DPI/extractor
+    from the one already run. `should_run=False` (this call's `skipped=True`) only
+    when a PRIOR attempt already completed under the exact same configuration;
+    anything else -- never attempted, a different configuration, a prior failure, or
+    a prior attempt that never got to mark itself complete (interrupted) -- runs
+    again. `replace=True` forces a rerun even of an already-complete, unchanged
+    configuration.
+
+    Returns `{"figures": n, "skipped": bool, ...}`. `skipped` reports the figure
+    count `complete_attempt` recorded last time, not a placeholder.
+    """
+    import library as _library_mod
+
+    attachment = next(
+        (a for a in service.attachments.list_for_paper(paper_id)
+         if a["id"] == attachment_id), None)
+    if attachment is None:
+        return {"attachment_id": attachment_id, "figures": 0, "skipped": False,
+                "error": "no such attachment for this paper"}
+
+    options = {"dpi": dpi, "max_figures": max_figures}
+    state = service.figure_extraction.begin_attempt(
+        paper_id=paper_id, source_attachment_id=attachment_id,
+        source_asset_sha256=attachment["asset_sha256"], extractor=FIGURE_EXTRACTOR,
+        options=options, force=replace,
+    )
+    if not state["should_run"]:
+        return {"attachment_id": attachment_id,
+                "figures": state["figure_count"] or 0, "skipped": True}
+
+    pdf_path = service.asset_path(attachment["asset_sha256"])
+    if pdf_path is None or not pdf_path.exists():
+        error = "asset bytes are missing (run `registry.py doctor`)"
+        service.figure_extraction.fail_attempt(attachment_id, error)
+        return {"attachment_id": attachment_id, "figures": 0, "skipped": False,
+                "error": error}
+
+    try:
+        figures = _library_mod.extract_figures(
+            pdf_path, dpi=dpi, max_figures=max_figures)
+        stored = service.import_figures(
+            paper_id, attachment_id, figures, extractor=FIGURE_EXTRACTOR, replace=True)
+    except Exception as exc:  # a failed attempt must be recorded, not left 'running'
+        service.figure_extraction.fail_attempt(attachment_id, str(exc))
+        return {"attachment_id": attachment_id, "figures": 0, "skipped": False,
+                "error": f"figure extraction failed: {exc}"}
+
+    service.figure_extraction.complete_attempt(attachment_id, len(stored))
+    return {"attachment_id": attachment_id, "figures": len(stored),
+            "skipped": False, "stored": stored}
+
+
+def extract_figures_for_paper(service, paper_id: str, **kwargs) -> dict:
+    """Run figure extraction over every role='fulltext' PDF attached to a paper."""
+    results = [
+        extract_figures_for_attachment(service, paper_id, att["id"], **kwargs)
+        for att in service.attachments.list_for_paper(paper_id)
+        if att["role"] == "fulltext"
+    ]
+    return {"paper_id": paper_id,
+            "figures": sum(r["figures"] for r in results),
+            "attachments": results}
+
+
+#: Registry fields mirrored into a refmgr paper's `metadata_json`. `evidence_id` is
+#: carried so a refmgr row can always be traced back to the registry record that owns
+#: it; the rest is what `papers_fts` indexes or what search filters read.
+_REFMGR_METADATA_FIELDS = (
+    "evidence_id", "journal", "publication_date", "abstract", "authors",
+    "article_types", "mesh_terms", "keywords", "is_preprint", "retraction_status",
+)
+
+
+def _refmgr_metadata(rec: dict) -> dict:
+    """The `metadata_json` payload for a mirrored paper. Empty values are dropped so a
+    partial registry record never overwrites richer refmgr metadata with nulls."""
+    out = {}
+    for field in _REFMGR_METADATA_FIELDS:
+        val = rec.get(field)
+        if val in (None, "", [], {}):
+            continue
+        out[field] = val
+    return out
+
+
+class AdvisoryLockTimeout(TimeoutError):
+    """Raised when `advisory_lock(..., timeout=...)` cannot acquire the lock in time."""
+
+
 @contextlib.contextmanager
-def advisory_lock(repo_root: Path, name: str):
-    """Cross-process exclusive lock, repo-scoped (`corpus.py advisory_lock` is run-scoped)."""
+def advisory_lock(repo_root: Path, name: str, *, timeout: float | None = None):
+    """Cross-process exclusive lock, repo-scoped (`corpus.py advisory_lock` is run-scoped).
+
+    `timeout=None` (the default, and every existing call site's behavior) blocks
+    indefinitely, matching a normal CLI command that should simply wait its turn.
+    A caller that must not hang forever -- `backup.py create`, which needs to refuse
+    cleanly rather than block a live library indefinitely -- passes a bound and gets
+    `AdvisoryLockTimeout` instead of an unbounded wait.
+    """
     import fcntl
+    import time as _time
+
     lock_dir = repo_paths(repo_root)["locks"]
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_path = lock_dir / f"{name}.lock"
     with open(lock_path, "a+", encoding="utf-8") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        if timeout is None:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        else:
+            deadline = _time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if _time.monotonic() >= deadline:
+                        raise AdvisoryLockTimeout(
+                            f"could not acquire {name!r} lock on {repo_root} within "
+                            f"{timeout}s — another process is writing to this repo"
+                        )
+                    _time.sleep(0.1)
         try:
             yield
         finally:
@@ -98,6 +318,10 @@ class Registry:
         self.repo_root = self.paths["repo_root"]
         self.path = self.paths["registry"]
         self.records: dict[str, dict] = {}
+        #: evidence_ids mutated since the last `commit()` — what the refmgr mirror
+        #: has to catch up on. A plain set, not a timestamp scan: `updated_at` has
+        #: second granularity and two writes can share one.
+        self._dirty: set[str] = set()
         self._load()
 
     def _load(self) -> None:
@@ -115,6 +339,27 @@ class Registry:
                 eid = rec.get("evidence_id")
                 if eid:
                     self.records[eid] = rec
+
+    def reload(self) -> None:
+        """Re-read `registry.jsonl`, discarding whatever is in memory."""
+        self.records = {}
+        self._dirty = set()
+        self._load()
+
+    @contextlib.contextmanager
+    def locked(self):
+        """Hold `advisory_lock(repo_root, "registry")` across a read-modify-write.
+
+        Re-reads the store **inside** the lock. `__init__` loads before any caller can
+        acquire the lock, so a `Registry` built outside it may already be stale by the
+        time the lock is granted -- and `save()` rewrites the whole file from memory,
+        so saving that stale state silently drops every record another process wrote in
+        between. Every mutating call site goes through here rather than taking
+        `advisory_lock` directly.
+        """
+        with advisory_lock(self.repo_root, "registry"):
+            self.reload()
+            yield self
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,6 +437,7 @@ class Registry:
         )
         target["updated_at"] = utcnow()
         self.records[target["evidence_id"]] = target
+        self._dirty.add(target["evidence_id"])
         return target, is_new
 
     def set_asset(self, evidence_id: str, asset: dict) -> dict:
@@ -204,6 +450,7 @@ class Registry:
         rec["asset"] = asset
         rec["asset_status"] = "available"
         rec["updated_at"] = utcnow()
+        self._dirty.add(evidence_id)
         return rec
 
     def set_extraction(self, evidence_id: str, extraction_path: str) -> dict:
@@ -216,6 +463,7 @@ class Registry:
         rec["extraction_path"] = extraction_path
         rec["extraction_status"] = "extracted"
         rec["updated_at"] = utcnow()
+        self._dirty.add(evidence_id)
         return rec
 
     def set_appraisal(self, evidence_id: str, project: str, appraisal_path: str) -> dict:
@@ -232,7 +480,99 @@ class Registry:
         appraisals[project] = appraisal_path
         rec["appraisal_status"] = "appraised"
         rec["updated_at"] = utcnow()
+        self._dirty.add(evidence_id)
         return rec
+
+    def mirror_to_refmgr(self, evidence_ids=None, *, service=None) -> dict:
+        """Mirror registry records into refmgr's `papers`/`identifiers` + `papers_fts`.
+
+        `registry.jsonl` stays the source of truth and the durable append log; refmgr
+        is the *index* built from it (OPTIMIZATION_PLAN.md item 4, resolving the v2
+        plan's "Open decision 1" as mirror rather than cutover). Nothing that reads
+        `registry.jsonl` has to change, and a lost or corrupt refmgr database is
+        rebuilt with `registry.py reindex`, never restored from backup.
+
+        Defaults to the dirty set; pass `evidence_ids` to mirror a chosen subset (or
+        `self.records` for a full pass). Returns a report — a paper that fails to
+        mirror is collected in `errors`, never raised, so one bad record cannot block
+        the rest of a bulk import.
+        """
+        ids = sorted(self._dirty if evidence_ids is None else evidence_ids)
+        report = {"mirrored": 0, "linked": 0, "terms": 0, "errors": []}
+        if not ids:
+            return report
+
+        # Lazy, like every other refmgr import here: nothing in this module pulls the
+        # package in until a caller actually touches the library.
+        import refmgr.repositories.terms as _refmgr_terms
+        from refmgr.repositories.identifiers import IdentifierConflictError
+
+        own_service = service is None
+        if own_service:
+            service = _refmgr_service(self.repo_root)
+        try:
+            for eid in ids:
+                rec = self.records.get(eid)
+                if rec is None:
+                    continue
+                try:
+                    had_paper_id = bool(rec.get("refmgr_paper_id"))
+                    title = rec.get("title") or eid
+                    paper_id = _refmgr_paper_id(service, rec, rec, title)
+                    if not had_paper_id:
+                        report["linked"] += 1
+                    rec["refmgr_paper_id"] = paper_id
+                    service.papers.update_title(paper_id, title)
+                    metadata = _refmgr_metadata(rec)
+                    if metadata:
+                        service.papers.update_metadata(paper_id, metadata)
+                    # `update_title`/`update_metadata` deliberately do not auto-reindex
+                    # (see ReferenceManagerService.reindex_paper); the mirror is the
+                    # writer here, so it owns keeping the index current.
+                    service.reindex_paper(paper_id)
+                    report["terms"] += service.terms.set_terms(
+                        paper_id, _refmgr_terms.terms_from_metadata(rec))
+                    report["mirrored"] += 1
+                except IdentifierConflictError as exc:
+                    # A conflicting enrichment must be reported with enough detail
+                    # to resolve by hand -- both paper identities, not just a
+                    # message -- and must leave the record (both its registry
+                    # fields and refmgr state) exactly as it was: nothing above
+                    # this point in the try block wrote anything for this record,
+                    # since `_refmgr_paper_id`/`reconcile_identifiers` validate
+                    # every identifier before attaching any of them.
+                    report["errors"].append({
+                        "evidence_id": eid, "error": str(exc), "kind": "identifier_conflict",
+                        "scheme": exc.scheme, "value": exc.value,
+                        "existing_paper_id": exc.existing_paper_id,
+                        "conflicting_paper_id": exc.new_paper_id,
+                    })
+                except Exception as exc:  # one bad record must not abort a bulk import
+                    report["errors"].append({"evidence_id": eid, "error": str(exc)})
+        finally:
+            if own_service:
+                service.close()
+
+        self._dirty -= set(ids)
+        return report
+
+    def commit(self, *, mirror: bool = True, service=None) -> dict:
+        """Persist everything a mutating command changed: mirror into refmgr, then
+        rewrite `registry.jsonl` and `pool.jsonl`.
+
+        Mirror **before** save so a newly minted `refmgr_paper_id` is part of the same
+        durable write — otherwise a record with no usable identifier (a `url:<digest>`
+        evidence_id) would mint a second refmgr paper on the next pass.
+        """
+        report = self.mirror_to_refmgr(service=service) if mirror else {
+            "mirrored": 0, "linked": 0, "terms": 0, "errors": [], "skipped": True}
+        self.save()
+        self.generate_pool()
+        if report.get("errors"):
+            print(f"registry.py: {len(report['errors'])} record(s) failed to mirror into "
+                  f"refmgr; run `registry.py reindex --repo {self.repo_root}` to retry",
+                  file=sys.stderr)
+        return report
 
     def generate_pool(self) -> list[dict]:
         """Regenerate `pool.jsonl` as a search-optimized projection of the registry.
@@ -296,49 +636,61 @@ def _esearch_doi(doi: str) -> str | None:
     return pmids[0] if pmids else None
 
 
-def cmd_add_pdf(args) -> int:
-    """`data/sources/assets/sha256-<hash>.pdf` (plan "Target Repository Layout") — flat,
-    content-addressed, distinct from `library.py`'s wiki-shaped `<wiki>/assets/papers/`
-    (pmid/doi-named files + index.json manifest). Reuses `library.py`'s pure PDF helpers
-    (`sha256_file`, `pdf_pages`, `doi_from_pdf`) without its wiki-coupled `Library` class."""
+def add_pdf_to_registry(registry: "Registry", service, pdf: Path, *,
+                        pmid: str | None = None, doi: str | None = None,
+                        pmcid: str | None = None, title: str | None = None,
+                        move: bool = False, figures: bool = False) -> tuple[dict, bool]:
+    """Register `pdf` in `registry` and attach it via the shared refmgr attachment
+    pool -- content-addressed storage, multi-attachment-capable, superseding the
+    old flat `data/sources/assets/sha256-<hash>.pdf` store. The single PDF-intake
+    implementation shared by `cmd_add_pdf` (CLI) and `paper.py`'s `--pdf` ingestion
+    path (Phase 5: there is exactly one of these, not two independently
+    maintained copies). Caller owns `registry.commit()` and the
+    `advisory_lock`/`service` lifecycle — pass the same `service` to `commit()` so the
+    refmgr mirror reuses this connection instead of opening a second one."""
     import library as _library_mod
+    digest = _library_mod.sha256_file(pdf)
+    pages = _library_mod.pdf_pages(pdf)
+    resolved_doi = doi or _library_mod.doi_from_pdf(pdf)
+    raw = {"pmid": pmid, "doi": resolved_doi, "pmcid": pmcid, "title": title or pdf.stem}
+    rec, is_new = registry.register(raw)
+    eid = rec["evidence_id"]
+    paper_id = _refmgr_paper_id(service, rec, raw, rec.get("title") or pdf.stem)
+    asset = _import_pdf_attachment(service, paper_id, pdf, digest=digest, pages=pages, move=move)
+    if figures:
+        # Opt-in, and best-effort: a heuristic crop failing is never a reason to
+        # fail an import whose PDF is already safely stored.
+        try:
+            asset["figures"] = extract_figures_for_attachment(
+                service, paper_id, asset["attachment_id"])["figures"]
+        except Exception as exc:  # noqa: BLE001 - reported, never fatal
+            asset["figures_error"] = str(exc)
+    rec["refmgr_paper_id"] = paper_id
+    rec = registry.set_asset(eid, asset)
+    return rec, is_new
+
+
+def cmd_add_pdf(args) -> int:
+    """Register a paper from a local PDF and attach it via the shared refmgr
+    attachment pool (plan Phase 5 cutover). See `add_pdf_to_registry`."""
     pdf = Path(args.file).expanduser().resolve()
     if not pdf.exists():
         emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "add-pdf",
               "error": f"no such file: {pdf}"})
         return 1
     registry = Registry(args.repo)
-    digest = _library_mod.sha256_file(pdf)
-    assets_dir = registry.paths["sources"] / "assets"
-    dest = assets_dir / f"sha256-{digest}.pdf"
-
-    doi = args.doi or _library_mod.doi_from_pdf(pdf)
-    raw = {
-        "pmid": args.pmid, "doi": doi, "pmcid": args.pmcid,
-        "title": args.title or pdf.stem,
-    }
-    with advisory_lock(args.repo, "registry"):
-        rec, is_new = registry.register(raw)
-        eid = rec["evidence_id"]
-        if not dest.exists():
-            assets_dir.mkdir(parents=True, exist_ok=True)
-            import shutil
-            if args.move:
-                shutil.move(str(pdf), str(dest))
-            else:
-                shutil.copy2(str(pdf), str(dest))
-        elif args.move:
-            pdf.unlink(missing_ok=True)
-        asset = {
-            "sha256": digest, "path": str(dest.relative_to(registry.repo_root)),
-            "bytes": dest.stat().st_size, "pages": _library_mod.pdf_pages(dest),
-            "added_at": utcnow(),
-        }
-        rec = registry.set_asset(eid, asset)
-        registry.save()
-        registry.generate_pool()
+    service = _refmgr_service(args.repo)
+    try:
+        with registry.locked():
+            rec, is_new = add_pdf_to_registry(
+                registry, service, pdf, pmid=args.pmid, doi=args.doi, pmcid=args.pmcid,
+                title=args.title, move=args.move, figures=args.figures)
+            registry.commit(service=service)
+    finally:
+        service.close()
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "add-pdf",
-          "evidence_id": eid, "is_new": is_new, "asset": asset, "record": rec})
+          "evidence_id": rec["evidence_id"], "is_new": is_new, "asset": rec["asset"],
+          "record": rec})
     return 0
 
 
@@ -409,7 +761,7 @@ def cmd_import_bib(args) -> int:
     parsed = parse_bibtex(text)
     registry = Registry(args.repo)
     results = []
-    with advisory_lock(args.repo, "registry"):
+    with registry.locked():
         for entry in parsed:
             raw = _bibtex_to_registry_raw(entry["fields"])
             if not raw.get("title"):
@@ -419,8 +771,7 @@ def cmd_import_bib(args) -> int:
             rec, is_new = registry.register(raw)
             results.append({"citekey": entry["citekey"], "status": "ok",
                             "evidence_id": rec["evidence_id"], "is_new": is_new})
-        registry.save()
-        registry.generate_pool()
+        registry.commit()
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "import-bib",
           "repo": str(registry.repo_root), "file": str(path), "entries_seen": len(parsed),
           "registered": sum(1 for r in results if r["status"] == "ok"),
@@ -431,33 +782,22 @@ def cmd_import_bib(args) -> int:
 
 
 def cmd_import_folder(args) -> int:
-    import library as _library_mod
-    import shutil
+    """Bulk `add-pdf` over a folder -- see `add_pdf_to_registry` for the refmgr
+    attachment-pool cutover this shares."""
     folder = Path(args.dir).expanduser().resolve()
     pdfs = sorted(folder.rglob("*.pdf")) if args.recursive else sorted(folder.glob("*.pdf"))
     registry = Registry(args.repo)
-    assets_dir = registry.paths["sources"] / "assets"
     results = []
-    with advisory_lock(args.repo, "registry"):
-        for pdf in pdfs:
-            digest = _library_mod.sha256_file(pdf)
-            dest = assets_dir / f"sha256-{digest}.pdf"
-            doi = _library_mod.doi_from_pdf(pdf)
-            raw = {"doi": doi, "title": pdf.stem}
-            rec, is_new = registry.register(raw)
-            eid = rec["evidence_id"]
-            if not dest.exists():
-                assets_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(pdf), str(dest))
-            asset = {
-                "sha256": digest, "path": str(dest.relative_to(registry.repo_root)),
-                "bytes": dest.stat().st_size, "pages": _library_mod.pdf_pages(dest),
-                "added_at": utcnow(),
-            }
-            registry.set_asset(eid, asset)
-            results.append({"file": str(pdf), "evidence_id": eid, "is_new": is_new})
-        registry.save()
-        registry.generate_pool()
+    service = _refmgr_service(args.repo)
+    try:
+        with registry.locked():
+            for pdf in pdfs:
+                rec, is_new = add_pdf_to_registry(registry, service, pdf)
+                results.append({"file": str(pdf), "evidence_id": rec["evidence_id"],
+                               "is_new": is_new})
+            registry.commit(service=service)
+    finally:
+        service.close()
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "import-folder",
           "repo": str(registry.repo_root), "dir": str(folder), "files_seen": len(pdfs),
           "registered": len(results), "new": sum(1 for r in results if r["is_new"]),
@@ -486,10 +826,9 @@ def cmd_add(args) -> int:
               "error": "could not resolve a title for this identifier "
                        "(pass --title to register with partial metadata)"})
         return 1
-    with advisory_lock(args.repo, "registry"):
+    with registry.locked():
         rec, is_new = registry.register(raw)
-        registry.save()
-        registry.generate_pool()
+        registry.commit()
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "add",
           "evidence_id": rec["evidence_id"], "is_new": is_new, "record": rec})
     return 0
@@ -586,7 +925,7 @@ def cmd_promote(args) -> int:
     span_store = _store.Store(run_dir, repo_root=repo_root) if verify else None
 
     promoted, skipped = [], []
-    with advisory_lock(args.repo, "registry"), _corpus.advisory_lock(run_dir, "corpus"):
+    with registry.locked(), _corpus.advisory_lock(run_dir, "corpus"):
         corpus = _corpus.Corpus(run_dir, corpus_path).load()
         for eid in list(corpus.order):
             rec = corpus.records.get(eid)
@@ -620,8 +959,7 @@ def cmd_promote(args) -> int:
                 rec["extraction_path"] = canonical_rel
             promoted.append({"evidence_id": eid, "canonical_path": str(dest_path)})
         if not args.dry_run:
-            registry.save()
-            registry.generate_pool()
+            registry.commit()
             corpus.save()
 
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "promote",
@@ -642,7 +980,7 @@ def cmd_appraise_promote(args) -> int:
     project_dir = registry.paths["appraisals"] / args.project
 
     promoted, skipped = [], []
-    with advisory_lock(args.repo, "registry"), _corpus.advisory_lock(run_dir, "corpus"):
+    with registry.locked(), _corpus.advisory_lock(run_dir, "corpus"):
         corpus = _corpus.Corpus(run_dir, corpus_path).load()
         for eid in list(corpus.order):
             rec = corpus.records.get(eid)
@@ -664,8 +1002,7 @@ def cmd_appraise_promote(args) -> int:
                 rec["appraisal_path"] = canonical_rel
             promoted.append({"evidence_id": eid, "canonical_path": str(dest_path)})
         if not args.dry_run:
-            registry.save()
-            registry.generate_pool()
+            registry.commit()
             corpus.save()
 
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "appraise-promote",
@@ -677,12 +1014,200 @@ def cmd_appraise_promote(args) -> int:
 
 def cmd_pool(args) -> int:
     registry = Registry(args.repo)
-    with advisory_lock(args.repo, "registry"):
+    with registry.locked():
         entries = registry.generate_pool()
     emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "pool",
           "repo": str(registry.repo_root), "pool": str(registry.paths["pool"]),
           "count": len(entries)})
     return 0
+
+
+def index_chunks(registry: "Registry", service, evidence_ids=None) -> dict:
+    """Index every full-text snapshot a registry record cites into `chunks_fts`.
+
+    The snapshots in the global source store stay canonical; this builds the
+    rebuildable chunk index over them (OPTIMIZATION_PLAN.md item 5). A record with no
+    refmgr paper is skipped rather than mirrored implicitly — run the mirror first
+    (`Registry.mirror_to_refmgr`) so paper identity is settled before text is attached
+    to it. Unreadable or unchanged snapshots are counted, never fatal.
+    """
+    repo_root = registry.repo_root
+    ids = sorted(registry.records) if evidence_ids is None else sorted(evidence_ids)
+    report = {"papers": 0, "sources_indexed": 0, "sources_current": 0,
+              "chunks": 0, "no_paper_id": 0, "unreadable": []}
+
+    for eid in ids:
+        rec = registry.records.get(eid)
+        if rec is None:
+            continue
+        paper_id = rec.get("refmgr_paper_id")
+        if not paper_id:
+            report["no_paper_id"] += 1
+            continue
+        extraction = _extraction_data(rec, repo_root)
+        source_ids = _record_source_ids(rec, extraction)
+        if not source_ids:
+            continue
+        touched = False
+        for source_id in source_ids:
+            try:
+                snapshot = _store.global_read_snapshot(repo_root, source_id)
+            except Exception as exc:
+                report["unreadable"].append({"evidence_id": eid, "source_id": source_id,
+                                             "error": str(exc)})
+                continue
+            text = snapshot.get("text") if isinstance(snapshot, dict) else None
+            if not isinstance(text, str) or not text.strip():
+                continue
+            content_hash = snapshot.get("content_hash") or _store.compute_content_hash(text)
+            result = service.chunks.index_source(paper_id, source_id, text, content_hash)
+            if result["skipped"]:
+                report["sources_current"] += 1
+            else:
+                report["sources_indexed"] += 1
+                report["chunks"] += result["indexed"]
+            touched = True
+        if touched:
+            report["papers"] += 1
+    return report
+
+
+def cmd_reindex(args) -> int:
+    """Rebuild refmgr's derived indexes from `registry.jsonl` and the snapshot store.
+
+    Both indexes are rebuildable by design, so this is always safe to re-run: it is
+    the repair path for a refmgr database that was deleted, corrupted, or simply
+    never populated (every record registered before the mirror existed).
+    """
+    registry = Registry(args.repo)
+    do_papers = not args.chunks_only
+    do_chunks = not args.papers_only
+    service = _refmgr_service(args.repo)
+    payload = {"schema_version": SCHEMA_VERSION, "status": "ok", "command": "reindex",
+               "repo": str(registry.repo_root), "records": len(registry.records)}
+    try:
+        with registry.locked():
+            if do_papers:
+                payload["papers"] = registry.mirror_to_refmgr(
+                    registry.records.keys(), service=service)
+                registry.save()
+                registry.generate_pool()
+            if do_chunks:
+                payload["chunks"] = index_chunks(registry, service)
+            payload["coverage"] = {"papers_fts": service.search.coverage(),
+                                   "chunks": service.chunks.coverage(),
+                                   "terms": service.terms.coverage()}
+    finally:
+        service.close()
+    emit(payload)
+    errors = (payload.get("papers") or {}).get("errors") or []
+    return 1 if errors else 0
+
+
+def cmd_figures(args) -> int:
+    """Extract figure images from stored PDFs, or search the captions already stored.
+
+    Extraction is not part of `reindex`: it re-runs poppler over every PDF rather
+    than re-reading canonical text, which makes it far too slow to fold into the
+    routine index repair path. It is a separate, resumable pass — already-extracted
+    PDFs are skipped unless `--replace` is given.
+    """
+    registry = Registry(args.repo)
+    service = _refmgr_service(args.repo)
+    payload = {"schema_version": SCHEMA_VERSION, "status": "ok", "command": "figures"}
+    try:
+        if args.query:
+            hits = service.figures.search(args.query, limit=args.limit)
+            payload["query"] = args.query
+            payload["count"] = len(hits)
+            payload["hits"] = [
+                {k: v for k, v in hit.items() if k != "bbox_json"} for hit in hits]
+            emit(payload)
+            return 0
+
+        if args.evidence_id:
+            rec = registry.records.get(args.evidence_id)
+            if rec is None:
+                emit({"schema_version": SCHEMA_VERSION, "status": "error",
+                      "command": "figures",
+                      "error": f"no registry record for {args.evidence_id!r}"})
+                return 2
+            paper_ids = [rec.get("refmgr_paper_id")] if rec.get("refmgr_paper_id") else []
+        else:
+            paper_ids = [rec["refmgr_paper_id"] for rec in registry.records.values()
+                         if rec.get("refmgr_paper_id")]
+
+        results = []
+        for paper_id in paper_ids:
+            result = extract_figures_for_paper(
+                service, paper_id, dpi=args.dpi, max_figures=args.limit,
+                replace=args.replace)
+            if result["figures"] or any(a.get("error") for a in result["attachments"]):
+                results.append(result)
+        payload["papers_scanned"] = len(paper_ids)
+        payload["papers_with_new_figures"] = len(results)
+        payload["figures"] = sum(r["figures"] for r in results)
+        payload["results"] = results
+        payload["coverage"] = service.figures.coverage()
+    finally:
+        service.close()
+    emit(payload)
+    return 0
+
+
+def cmd_facets(args) -> int:
+    """What controlled vocabulary this library actually contains, with paper counts.
+
+    The complement to `search --mesh/--author/--article-type`: those filter by a term you
+    already have in mind, this shows which terms exist to filter on.
+    """
+    repo_root = repo_paths(args.repo)["repo_root"]
+    import refmgr.repositories.terms as _terms_mod
+
+    scheme = args.scheme
+    if scheme not in _terms_mod.SCHEMES:
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "facets",
+              "error": f"unknown scheme {scheme!r} (known: {', '.join(_terms_mod.SCHEMES)})"})
+        return 2
+    if not (repo_paths(repo_root)["refmgr"] / "library.sqlite3").exists():
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "facets",
+              "error": f"no refmgr library yet — run `registry.py reindex --repo {repo_root}`"})
+        return 1
+
+    service = _refmgr_service(repo_root)
+    try:
+        values = service.terms.facets(scheme, limit=args.limit)
+        coverage = service.terms.coverage()
+    finally:
+        service.close()
+    emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "facets",
+          "repo": str(repo_root), "scheme": scheme, "count": len(values),
+          "values": values, "coverage": coverage})
+    return 0
+
+
+def cmd_doctor(args) -> int:
+    """Read-only integrity report over the refmgr library (OPTIMIZATION_PLAN.md item 10).
+
+    Exits 1 when something is actually wrong — a missing or corrupt asset, a dangling
+    attachment — not merely un-indexed, so this is usable as a cron check.
+    """
+    repo_root = repo_paths(args.repo)["repo_root"]
+    if not (repo_paths(repo_root)["refmgr"] / "library.sqlite3").exists():
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "doctor",
+              "error": f"no refmgr library at {repo_paths(repo_root)['refmgr']} — nothing "
+                       f"to check; `registry.py reindex` creates one"})
+        return 1
+    import refmgr.doctor as _doctor
+
+    service = _refmgr_service(repo_root)
+    try:
+        report = _doctor.run(service, deep=args.deep)
+    finally:
+        service.close()
+    emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "doctor",
+          "repo": str(repo_root), "deep": bool(args.deep), **report})
+    return 0 if report["healthy"] else 1
 
 
 def cmd_bib(args) -> int:
@@ -726,6 +1251,478 @@ def cmd_bib(args) -> int:
     return 0
 
 
+_SEARCH_SNIPPET_RADIUS = 80  # chars either side of the first matched term (~160 total)
+
+
+def _record_year(rec: dict) -> int | None:
+    """Leading 4-digit year out of `publication_date` (e.g. `"2026-01-01"` -> 2026),
+    or None when unparseable/absent — such a record never matches a `--year` filter."""
+    m = re.match(r"(\d{4})", str(rec.get("publication_date") or ""))
+    return int(m.group(1)) if m else None
+
+
+def _parse_year_arg(value: str) -> tuple[int, int]:
+    """`"2020"` -> (2020, 2020); `"2018-2022"` -> (2018, 2022)."""
+    m = re.match(r"^(\d{4})(?:-(\d{4}))?$", value.strip())
+    if not m:
+        raise SystemExit(f"--year must be YYYY or YYYY-YYYY, got {value!r}")
+    lo = int(m.group(1))
+    hi = int(m.group(2)) if m.group(2) else lo
+    return (lo, hi) if lo <= hi else (hi, lo)
+
+
+def _facet_filter(records: list[dict], args) -> list[dict]:
+    """Cheap in-memory filters against existing registry fields — no annotation lookups,
+    no file reads (plan §1 "operates directly on Registry._load()'s in-memory dict")."""
+    out = records
+    if args.journal:
+        needle = args.journal.lower()
+        out = [r for r in out if needle in str(r.get("journal") or "").lower()]
+    if args.year:
+        lo, hi = _parse_year_arg(args.year)
+        out = [r for r in out if (lambda y: y is not None and lo <= y <= hi)(_record_year(r))]
+    if args.status:
+        out = [r for r in out if r.get("status") == args.status]
+    if args.extraction_status:
+        out = [r for r in out if r.get("extraction_status") == args.extraction_status]
+    if args.appraisal_status:
+        if args.appraisal_status == "appraised" and args.project:
+            # --project scopes "appraised" to that project's own appraisal entry, never
+            # the record's repo-wide `appraisal_status` (appraisal is project-scoped —
+            # `set_appraisal`).
+            out = [r for r in out if (r.get("appraisals") or {}).get(args.project)]
+        else:
+            out = [r for r in out if r.get("appraisal_status") == args.appraisal_status]
+    return out
+
+
+#: `--<flag>` -> `paper_terms.scheme` for the controlled-vocabulary facets.
+_TERM_FACET_ARGS = {"mesh": "mesh", "author": "author", "article_type": "article_type"}
+
+
+def _term_facet_filter(records: list[dict], args) -> list[dict]:
+    """`--mesh`/`--author`/`--article-type`, served by refmgr's `paper_terms` index.
+
+    Falls back to the record's own metadata lists when the index is unavailable — same
+    contract as the chunk index: an accelerator, never a precondition. The fallback is
+    exact on normalized values *contained in* the record, so both paths agree on what
+    matches.
+    """
+    import refmgr.repositories.terms as _terms_mod
+
+    requested = [(scheme, getattr(args, arg, None))
+                 for arg, scheme in _TERM_FACET_ARGS.items()
+                 if getattr(args, arg, None)]
+    if not requested:
+        return records
+
+    repo_root = repo_paths(args.repo)["repo_root"]
+    service = None
+    if (repo_paths(repo_root)["refmgr"] / "library.sqlite3").exists():
+        try:
+            service = _refmgr_service(repo_root)
+        except Exception:
+            service = None
+
+    out = records
+    try:
+        for scheme, needle in requested:
+            if service is not None:
+                try:
+                    paper_ids = service.terms.papers_with_term(scheme, needle)
+                    out = [r for r in out if r.get("refmgr_paper_id") in paper_ids]
+                    continue
+                except Exception:
+                    print(f"registry.py: term index unusable; filtering {scheme} in "
+                          f"memory — `registry.py reindex --repo {repo_root}` rebuilds it",
+                          file=sys.stderr)
+            field = _terms_mod.SCHEME_FIELDS[scheme]
+            norm_needle = _terms_mod.normalize(needle)
+            out = [r for r in out
+                   if any(norm_needle in _terms_mod.normalize(v)
+                          for v in (r.get(field) or []) if isinstance(v, str))]
+    finally:
+        if service is not None:
+            service.close()
+    return out
+
+
+def _annotation_filter(records: list[dict], args) -> list[dict]:
+    """`--tag`/`--min-rating`, joined against `annotations.jsonl` (plan §1 "join against
+    the new annotations file"). Imported lazily — `annotations.py` imports `registry.py`
+    at module scope, so a top-level import here would be circular."""
+    if not args.tag and args.min_rating is None:
+        return records
+    import annotations as _annotations
+    ann = _annotations.Annotations(args.repo)
+    out = records
+    if args.tag:
+        out = [r for r in out if args.tag in (ann.get(r["evidence_id"]).get("tags") or [])]
+    if args.min_rating is not None:
+        out = [r for r in out if (ann.get(r["evidence_id"]).get("rating") or 0) >= args.min_rating]
+    return out
+
+
+def _read_json_best_effort(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _extraction_data(rec: dict, repo_root: Path) -> dict | None:
+    rel = rec.get("extraction_path")
+    if not rel:
+        return None
+    path = Path(rel)
+    if not path.is_absolute():
+        path = repo_root / path
+    if not path.exists():
+        return None
+    return _read_json_best_effort(path)
+
+
+def _appraisal_texts(rec: dict, repo_root: Path, project: str | None) -> list[str]:
+    """Domain `rationale` strings from whichever appraisal file(s) apply — the given
+    `--project`'s entry, or every project's when none was given (best-effort, schema/
+    08-appraisal.md `domains[].rationale`)."""
+    appraisals = rec.get("appraisals") or {}
+    if not isinstance(appraisals, dict):
+        return []
+    projects = [project] if project else list(appraisals.keys())
+    texts: list[str] = []
+    for proj in projects:
+        rel = appraisals.get(proj)
+        if not rel:
+            continue
+        path = Path(rel)
+        if not path.is_absolute():
+            path = repo_root / path
+        if not path.exists():
+            continue
+        data = _read_json_best_effort(path)
+        if not data:
+            continue
+        for domain in data.get("domains") or []:
+            if isinstance(domain, dict):
+                rationale = domain.get("rationale")
+                if isinstance(rationale, str) and rationale.strip():
+                    texts.append(rationale.strip())
+    return texts
+
+
+def _record_source_ids(rec: dict, extraction: dict | None) -> list[str]:
+    """`rec["sources"]`/`rec["source_ids"]` (best-effort — the field is not always
+    populated) plus every `source_id` named by the extraction's claim spans
+    (`_extraction_spans`)."""
+    ids: list[str] = []
+    for field in ("sources", "source_ids"):
+        val = rec.get(field)
+        if isinstance(val, list):
+            ids.extend(s for s in val if isinstance(s, str))
+    if extraction:
+        for span in _extraction_spans(extraction):
+            sid = span.get("source_id")
+            if isinstance(sid, str):
+                ids.append(sid)
+    seen: list[str] = []
+    for sid in ids:
+        if sid not in seen:
+            seen.append(sid)
+    return seen
+
+
+def _extraction_claim_texts(extraction: dict) -> list[str]:
+    """Claim sentences and outcome names from an extraction (schema/07-extraction.md §7).
+
+    These are the most answer-relevant text the pipeline produces -- an extracted claim
+    states the finding in one sentence, already tied to a verifiable span -- so they are
+    searched ahead of the narrative fields and well ahead of raw snapshot bodies.
+    """
+    texts: list[str] = []
+    for span in _extraction_spans(extraction):
+        claim = span.get("claim")
+        if isinstance(claim, str) and claim.strip():
+            texts.append(claim.strip())
+    for outcome in extraction.get("outcomes") or []:
+        if not isinstance(outcome, dict):
+            continue
+        for field in ("name", "timepoint", "effect_measure", "direction"):
+            val = outcome.get(field)
+            if isinstance(val, str) and val.strip():
+                texts.append(val.strip())
+    return texts
+
+
+_NOT_GIVEN = object()
+
+
+def _search_text_pieces(rec: dict, repo_root: Path, project: str | None,
+                        *, include_fulltext: bool = True, extraction=_NOT_GIVEN) -> list[str]:
+    """Every text piece searched by `--q`, in the order a snippet should prefer them:
+    title, abstract, journal, extraction claims/outcomes, extraction narrative fields,
+    appraisal rationale, then full-text snapshot bodies (plan §1 "Keyword search").
+    Missing/unreadable pieces are skipped silently — best-effort, never a hard error.
+
+    `include_fulltext=False` leaves out the snapshot bodies: that is the expensive part
+    (every cited snapshot re-read and lowercased per query), and it is redundant only
+    for a record whose chunk-index coverage is current for every source it cites — see
+    `_record_chunk_coverage`/`_keyword_filter`, which decide this per record, never
+    globally.
+
+    `extraction` lets a caller that already loaded the extraction record (to compute
+    coverage, say) pass it in rather than have this function re-read the file --
+    omit it to have this function load it itself, same as before."""
+    pieces: list[str] = []
+    for field in ("title", "abstract", "journal"):
+        val = rec.get(field)
+        if isinstance(val, str) and val.strip():
+            pieces.append(val.strip())
+
+    if extraction is _NOT_GIVEN:
+        extraction = _extraction_data(rec, repo_root)
+    if extraction:
+        pieces.extend(_extraction_claim_texts(extraction))
+        for field in ("population", "intervention", "comparator", "limitations", "extractor_notes"):
+            val = extraction.get(field)
+            if isinstance(val, str) and val.strip():
+                pieces.append(val.strip())
+
+    pieces.extend(_appraisal_texts(rec, repo_root, project))
+
+    if not include_fulltext:
+        return pieces
+
+    for sid in _record_source_ids(rec, extraction):
+        try:
+            snapshot = _store.global_read_snapshot(repo_root, sid)
+        except Exception:
+            continue  # unresolvable source_id — best-effort, never fatal to search
+        text = snapshot.get("text") if isinstance(snapshot, dict) else None
+        if isinstance(text, str) and text.strip():
+            pieces.append(text)
+    return pieces
+
+
+def _snippet_for(pieces: list[str], terms: list[str]) -> str | None:
+    """~160-char context window around wherever the FIRST matched term was found,
+    scanning `pieces` in their given (preference) order."""
+    for piece in pieces:
+        lower = piece.lower()
+        for term in terms:
+            idx = lower.find(term)
+            if idx == -1:
+                continue
+            start = max(0, idx - _SEARCH_SNIPPET_RADIUS)
+            end = min(len(piece), idx + len(term) + _SEARCH_SNIPPET_RADIUS)
+            snippet = piece[start:end].strip()
+            if start > 0:
+                snippet = "…" + snippet
+            if end < len(piece):
+                snippet = snippet + "…"
+            return snippet
+    return None
+
+
+def _record_chunk_coverage(rec: dict, extraction: dict | None, service) -> bool:
+    """True when refmgr's chunk index currently covers every source this record cites.
+
+    Coverage is decided per record, never from the index's global row count: a nonzero
+    count proves some paper somewhere is indexed, not that THIS record's paper is, or
+    that its coverage is still current. Trusting the global count let indexing one
+    paper silently suppress full-text results for every other paper that had not been
+    (re)indexed yet -- this function is what a caller checks instead, per record, so
+    that can no longer happen (OPTIMIZATION_PLAN.md item 5 / hardening plan package 2).
+
+    A record with no `refmgr_paper_id` (never mirrored) or no cited sources at all is
+    handled by the caller's fallback path — the former has nothing to look up, and the
+    latter has nothing to miss, so both are reported as covered here would be
+    misleading; callers treat "no paper id" as "not covered" and "no sources" as
+    trivially covered.
+    """
+    paper_id = rec.get("refmgr_paper_id")
+    if not paper_id:
+        return False
+    source_ids = _record_source_ids(rec, extraction)
+    if not source_ids:
+        return True
+    indexed = service.chunks.indexed_source_ids(paper_id)
+    return all(sid in indexed for sid in source_ids)
+
+
+def _keyword_filter(records: list[dict], args) -> tuple[list[dict], dict[str, str]]:
+    """`--q "<terms>"`: lowercase-tokenized AND-match across every `_search_text_pieces`
+    source, plus refmgr's chunk index for full text. Returns the surviving records plus
+    a `{evidence_id: snippet}` map.
+
+    Each record's full text is served by the chunk index ONLY when that record's own
+    coverage is current for every source it cites (`_record_chunk_coverage`); any other
+    record still gets its snapshot bodies read and scanned directly, exactly as before
+    the index existed, so an incompletely-indexed library never loses full-text
+    results — it just serves some of them slower until `reindex` catches up.
+
+    A term counts as matched for AND purposes if it occurs *anywhere* in the union of
+    a record's metadata/claims/appraisal text and its full text (scanned or
+    chunk-indexed) — never only in one or only in the other, so a query with one term
+    in the title and another only in the body still matches.
+    """
+    if not args.q:
+        return records, {}
+    terms = [t for t in args.q.lower().split() if t]
+    if not terms:
+        return records, {}
+    repo_root = repo_paths(args.repo)["repo_root"]
+
+    service = None
+    term_paper_sets: dict[str, set] | None = None
+    if (repo_paths(args.repo)["refmgr"] / "library.sqlite3").exists():
+        try:
+            service = _refmgr_service(repo_root)
+            if service.chunks.coverage()["chunks"] > 0:
+                term_paper_sets = {
+                    term: service.chunks.papers_matching_all([term]) for term in terms
+                }
+        except Exception as exc:  # a broken index must degrade to a scan, not fail search
+            print(f"registry.py: chunk index unusable ({exc}); falling back to a full "
+                  f"scan — `registry.py reindex --repo {repo_root}` rebuilds it",
+                  file=sys.stderr)
+            if service is not None:
+                service.close()
+            service = None
+            term_paper_sets = None
+
+    out: list[dict] = []
+    snippets: dict[str, str] = {}
+    try:
+        for rec in records:
+            extraction = _extraction_data(rec, repo_root)
+            paper_id = rec.get("refmgr_paper_id")
+            covered = (
+                term_paper_sets is not None
+                and _record_chunk_coverage(rec, extraction, service)
+            )
+            pieces = _search_text_pieces(
+                rec, repo_root, args.project,
+                include_fulltext=not covered, extraction=extraction,
+            )
+            haystack = "\n".join(pieces).lower()
+
+            matched = True
+            for term in terms:
+                if term in haystack:
+                    continue
+                if covered and paper_id in term_paper_sets[term]:
+                    continue
+                matched = False
+                break
+            if not matched:
+                continue
+
+            out.append(rec)
+            chunk_snippet = None
+            if covered:
+                hits = service.chunks.search(args.q, paper_ids=[paper_id], limit=1)
+                if hits:
+                    chunk_snippet = hits[0]["snippet"]
+            snippet = _snippet_for(pieces, terms) or chunk_snippet
+            if snippet:
+                snippets[rec["evidence_id"]] = snippet
+    finally:
+        if service is not None:
+            service.close()
+    return out, snippets
+
+
+def _similarity_rank(records: list[dict], args) -> tuple[list[dict], dict[str, float]] | int:
+    """`--similar-to <evidence_id>`: rank the surviving `records` by cosine similarity
+    against `embeddings.jsonl` (plan §1 "delegate to embeddings.py's similarity
+    function"). Returns `(ranked_records, {evidence_id: score})` on success, or an int
+    exit code on the "no embeddings yet" error path (mirrors `embeddings.py similar`'s
+    own message so the two commands fail the same way)."""
+    import embeddings as _embeddings
+
+    repo_root = repo_paths(args.repo)["repo_root"]
+    path = _embeddings.embeddings_path(repo_root)
+    if not path.exists():
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "search",
+              "error": f"no embeddings file at {path} — run `embeddings.py index` first"})
+        return 1
+    all_embeddings = _embeddings.read_embeddings(repo_root)
+    target = all_embeddings.get(args.similar_to)
+    if target is None:
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "search",
+              "error": f"no embedding for evidence_id {args.similar_to!r} — run "
+                       f"`embeddings.py index` first"})
+        return 1
+
+    target_vector = target["vector"]
+    scored: list[tuple[float, str]] = []
+    for eid, rec in all_embeddings.items():
+        if eid == args.similar_to:
+            continue
+        try:
+            score = _embeddings.cosine_similarity(target_vector, rec["vector"])
+        except ValueError:
+            continue
+        scored.append((score, eid))
+    scored.sort(key=lambda pair: (-pair[0], pair[1]))
+    rank = {eid: score for score, eid in scored}
+
+    by_eid = {r["evidence_id"]: r for r in records}
+    ranked = [by_eid[eid] for _, eid in scored if eid in by_eid]
+    scores = {eid: rank[eid] for eid in by_eid if eid in rank}
+    return ranked, scores
+
+
+def cmd_search(args) -> int:
+    """`registry.py search` (plan §1): facet filters + `--tag`/`--min-rating` (joined
+    against `annotations.jsonl`) + `--q` keyword search (title/abstract/journal/
+    extraction claims and outcome names/extraction narrative/appraisal rationale/
+    full-text snapshot bodies) + `--similar-to`
+    embeddings ranking. No filters/query at all behaves like a light `list` — every
+    registry record, respecting `--limit`."""
+    registry = Registry(args.repo)
+    records = sorted(registry.records.values(), key=lambda r: r.get("evidence_id") or "")
+
+    records = _facet_filter(records, args)
+    records = _term_facet_filter(records, args)
+    records = _annotation_filter(records, args)
+    records, snippets = _keyword_filter(records, args)
+
+    scores: dict[str, float] = {}
+    if args.similar_to:
+        result = _similarity_rank(records, args)
+        if isinstance(result, int):
+            return result
+        records, scores = result
+
+    if args.limit is not None:
+        records = records[: args.limit]
+
+    results = []
+    for rec in records:
+        eid = rec["evidence_id"]
+        entry = {
+            "evidence_id": eid,
+            "title": rec.get("title"),
+            "journal": rec.get("journal"),
+            "publication_date": rec.get("publication_date"),
+            "status": rec.get("status"),
+            "extraction_status": rec.get("extraction_status"),
+            "appraisal_status": rec.get("appraisal_status"),
+        }
+        if args.q:
+            entry["snippet"] = snippets.get(eid)
+        if args.similar_to:
+            entry["score"] = scores.get(eid)
+        results.append(entry)
+
+    emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "search",
+          "repo": str(registry.repo_root), "count": len(results), "results": results})
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="registry.py", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -746,6 +1743,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--pmcid")
     s.add_argument("--title", help="default: the PDF's filename stem")
     s.add_argument("--move", action="store_true", help="move instead of copy into the asset store")
+    s.add_argument("--figures", action="store_true",
+                   help="also crop captioned figures out of the PDF (slow; see `figures`)")
     s.set_defaults(func=cmd_add_pdf)
 
     s = sub.add_parser("import-bib", help="bulk-register papers from a .bib file")
@@ -776,6 +1775,42 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--repo", required=True)
     s.set_defaults(func=cmd_pool)
 
+    s = sub.add_parser("reindex", help="rebuild refmgr's paper and chunk indexes from "
+                                       "the registry and the snapshot store")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--papers-only", action="store_true",
+                   help="mirror papers/identifiers into refmgr, skip the chunk index")
+    s.add_argument("--chunks-only", action="store_true",
+                   help="rebuild the full-text chunk index only")
+    s.set_defaults(func=cmd_reindex)
+
+    s = sub.add_parser("figures", help="crop captioned figures out of stored PDFs, "
+                                       "or search the captions already stored")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--evidence-id", dest="evidence_id",
+                   help="one record (default: every record with a refmgr paper)")
+    s.add_argument("--query", help="search stored captions instead of extracting")
+    s.add_argument("--dpi", type=int, default=300, help="render resolution for crops")
+    s.add_argument("--limit", type=int, default=100,
+                   help="max figures per PDF, or max hits when searching")
+    s.add_argument("--replace", action="store_true",
+                   help="re-extract PDFs that already have figures (for a changed extractor)")
+    s.set_defaults(func=cmd_figures)
+
+    s = sub.add_parser("facets", help="most common MeSH/keyword/article-type/author "
+                                      "values in the library, with paper counts")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--scheme", default="mesh",
+                   choices=("mesh", "keyword", "article_type", "author"))
+    s.add_argument("--limit", type=int, default=50)
+    s.set_defaults(func=cmd_facets)
+
+    s = sub.add_parser("doctor", help="read-only integrity report over the refmgr library")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--deep", action="store_true",
+                   help="re-hash every asset instead of trusting a matching file size")
+    s.set_defaults(func=cmd_doctor)
+
     s = sub.add_parser("bib", help="export repo-wide or scoped BibTeX from the registry")
     s.add_argument("--repo", required=True)
     s.add_argument("--out", required=True, help="output .bib path")
@@ -796,6 +1831,32 @@ def build_parser() -> argparse.ArgumentParser:
                    help="skip evidence_id/span verification and copy extractions as-is "
                         "(the pre-priority-6 behavior; for migration/debugging)")
     s.set_defaults(func=cmd_promote)
+
+    s = sub.add_parser("search", help="faceted/keyword/similarity search over the registry")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--journal", help="case-insensitive substring match against journal")
+    s.add_argument("--year", help="YYYY or YYYY-YYYY, matched against publication_date")
+    s.add_argument("--status", choices=STATUS_VALUES)
+    s.add_argument("--extraction-status", dest="extraction_status", choices=EXTRACTION_STATUS_VALUES)
+    s.add_argument("--appraisal-status", dest="appraisal_status", choices=APPRAISAL_STATUS_VALUES)
+    s.add_argument("--mesh", help="require a MeSH heading containing this text")
+    s.add_argument("--author", help="require an author whose name contains this text")
+    s.add_argument("--article-type", dest="article_type",
+                   help="require an article type containing this text (e.g. 'randomized')")
+    s.add_argument("--tag", help="require this annotation tag (data/papers/annotations.jsonl)")
+    s.add_argument("--min-rating", dest="min_rating", type=int,
+                   help="require an annotation star rating >= N")
+    s.add_argument("--project",
+                   help="scope --appraisal-status appraised, and --q's appraisal-rationale "
+                        "search, to this project's own appraisal entry")
+    s.add_argument("--q", help="keyword search: lowercase AND-of-terms over title/abstract/"
+                              "journal/extraction claims and outcomes/extraction narrative/"
+                              "appraisal rationale/full text")
+    s.add_argument("--similar-to", dest="similar_to",
+                   help="rank surviving results by embeddings.py cosine similarity to this "
+                        "evidence_id (requires `embeddings.py index` to have run)")
+    s.add_argument("--limit", type=int, help="cap the number of results (default: all)")
+    s.set_defaults(func=cmd_search)
 
     s = sub.add_parser("appraise-promote",
                        help="promote a run's appraisals into a project's appraisal store")

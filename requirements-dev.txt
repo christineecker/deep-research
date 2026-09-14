@@ -1,0 +1,19 @@
+# Test environment for the deep-research plugin. See pyproject.toml for why the
+# repo declares no runtime package of its own.
+#
+#   uv venv --python 3.11 .venv
+#   uv pip install --python .venv/bin/python -r requirements-dev.txt
+#   .venv/bin/python -m pytest
+#
+# The skill's scripts are stdlib-only by policy; the two runtime packages below
+# are the documented exceptions the full-text ladder already depends on
+# (references/acquisition.md §1), needed here so the suite can import the
+# modules that use them.
+pytest>=8
+requests>=2.31
+pdfminer.six>=20231228
+
+# Deliberately absent: sentence-transformers. It is the skill's one scoped
+# pip-install exception (references/reference-manager.md) and stays optional —
+# the suite skips the tests that need it rather than pulling a ~2GB torch stack
+# into CI. Install it by hand when working on embeddings.

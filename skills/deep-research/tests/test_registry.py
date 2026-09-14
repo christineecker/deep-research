@@ -102,6 +102,122 @@ class RegistryCoreTest(unittest.TestCase):
                          "doi-10.1000-example")
 
 
+class RegistryRefmgrAttachmentPoolTest(unittest.TestCase):
+    """`add-pdf`/`import-folder` route PDF bytes into the shared refmgr
+    attachment pool instead of the old flat `data/sources/assets/` store
+    (plan Phase 5 cutover)."""
+
+    def _pdf_args(self, repo: Path, *, file: Path, pmid=None, doi=None, pmcid=None,
+                  title=None, move=False) -> object:
+        argv = ["add-pdf", "--repo", str(repo), "--file", str(file)]
+        if pmid:
+            argv += ["--pmid", pmid]
+        if doi:
+            argv += ["--doi", doi]
+        if pmcid:
+            argv += ["--pmcid", pmcid]
+        if title:
+            argv += ["--title", title]
+        if move:
+            argv += ["--move"]
+        return registry.build_parser().parse_args(argv)
+
+    def test_add_pdf_links_attachment_via_refmgr_and_no_flat_store_is_written(self):
+        import refmgr.service as refmgr_service
+
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            pdf = Path(tmp) / "paper.pdf"
+            pdf.write_bytes(b"%PDF-1.4\nfake pdf body\n")
+
+            rc = registry.cmd_add_pdf(self._pdf_args(repo, file=pdf, pmid="555",
+                                                      title="Refmgr-backed paper"))
+            self.assertEqual(rc, 0)
+
+            reg = registry.Registry(repo)
+            rec = reg.lookup(pmid="555")
+            self.assertIsNotNone(rec)
+            self.assertEqual(rec["asset_status"], "available")
+            paper_id = rec["asset"]["refmgr_paper_id"]
+            self.assertTrue(paper_id)
+            self.assertEqual(rec["refmgr_paper_id"], paper_id)
+
+            # Old flat asset store must not be written by the cutover path.
+            self.assertFalse((repo / "data" / "sources" / "assets").exists())
+
+            service = refmgr_service.ReferenceManagerService(
+                registry.repo_paths(repo)["refmgr"])
+            try:
+                paper = service.papers.get(paper_id)
+                self.assertEqual(paper["title"], "Refmgr-backed paper")
+                attachments = service.attachments.list_for_paper(paper_id)
+                self.assertEqual(len(attachments), 1)
+                self.assertEqual(attachments[0]["role"], "fulltext")
+                self.assertEqual(attachments[0]["asset_sha256"], rec["asset"]["sha256"])
+                identifiers = {i["scheme"]: i["value"]
+                              for i in service.identifiers.list_for_paper(paper_id)}
+                self.assertEqual(identifiers.get("pmid"), "555")
+            finally:
+                service.close()
+
+    def test_add_pdf_is_idempotent_across_repeated_calls(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            pdf = Path(tmp) / "paper.pdf"
+            pdf.write_bytes(b"%PDF-1.4\nsame bytes\n")
+
+            self.assertEqual(registry.cmd_add_pdf(
+                self._pdf_args(repo, file=pdf, pmid="900")), 0)
+            self.assertEqual(registry.cmd_add_pdf(
+                self._pdf_args(repo, file=pdf, pmid="900")), 0)
+
+            import refmgr.service as refmgr_service
+            reg = registry.Registry(repo)
+            rec = reg.lookup(pmid="900")
+            paper_id = rec["refmgr_paper_id"]
+            service = refmgr_service.ReferenceManagerService(
+                registry.repo_paths(repo)["refmgr"])
+            try:
+                self.assertEqual(len(service.papers.list()), 1)
+                self.assertEqual(len(service.attachments.list_for_paper(paper_id)), 1)
+            finally:
+                service.close()
+
+    def test_add_pdf_move_deletes_source_after_staging(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            pdf = Path(tmp) / "paper.pdf"
+            pdf.write_bytes(b"%PDF-1.4\nmove me\n")
+
+            rc = registry.cmd_add_pdf(
+                self._pdf_args(repo, file=pdf, doi="10.1000/refmgr-move", move=True))
+            self.assertEqual(rc, 0)
+            self.assertFalse(pdf.exists())
+
+    def test_import_folder_links_each_pdf_as_a_distinct_refmgr_paper(self):
+        import refmgr.service as refmgr_service
+
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            folder = Path(tmp) / "incoming"
+            folder.mkdir()
+            (folder / "a.pdf").write_bytes(b"%PDF-1.4\npaper a\n")
+            (folder / "b.pdf").write_bytes(b"%PDF-1.4\npaper b\n")
+
+            args = registry.build_parser().parse_args(
+                ["import-folder", "--repo", str(repo), "--dir", str(folder)])
+            rc = registry.cmd_import_folder(args)
+            self.assertEqual(rc, 0)
+
+            service = refmgr_service.ReferenceManagerService(
+                registry.repo_paths(repo)["refmgr"])
+            try:
+                self.assertEqual(len(service.papers.list()), 2)
+            finally:
+                service.close()
+            self.assertFalse((repo / "data" / "sources" / "assets").exists())
+
+
 class RegistryBibTexTest(unittest.TestCase):
     def test_parse_bibtex_extracts_pmid_from_note_and_splits_authors(self):
         text = (

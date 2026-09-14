@@ -34,6 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import slugify, utcnow  # noqa: E402
+import annotations as _annotations  # noqa: E402
 import corpus as _corpus  # noqa: E402
 import registry as _registry  # noqa: E402
 import store as _store  # noqa: E402
@@ -130,9 +131,19 @@ def resolve_paper(repo_root: Path, args) -> dict:
         args = argparse.Namespace(**{**vars(args), "evidence_id": None, kind: key})
         return resolve_paper(repo_root, args)
     if args.pdf:
-        with _registry.advisory_lock(repo_root, "registry"):
-            asset = _registry_add_pdf(registry, args)
-        return asset
+        pdf_path = Path(args.pdf).expanduser().resolve()
+        if not pdf_path.is_file():
+            raise SystemExit(f"paper.py: --pdf not found: {pdf_path}")
+        service = _registry._refmgr_service(repo_root)
+        try:
+            with registry.locked():
+                rec, _is_new = _registry.add_pdf_to_registry(
+                    registry, service, pdf_path, pmid=args.pmid, doi=args.doi,
+                    pmcid=args.pmcid, title=args.title)
+                registry.commit(service=service)
+        finally:
+            service.close()
+        return rec
     if not (args.pmid or args.doi or args.pmcid):
         raise SystemExit("paper.py: one of --pmid/--doi/--pmcid/--pdf/--evidence-id is required")
     existing = registry.lookup(pmid=args.pmid, doi=args.doi, pmcid=args.pmcid)
@@ -154,35 +165,9 @@ def resolve_paper(repo_root: Path, args) -> dict:
         raise SystemExit(
             "paper.py: could not resolve a title for this identifier; register manually with "
             "`registry.py add --title ...` first")
-    with _registry.advisory_lock(repo_root, "registry"):
+    with registry.locked():
         rec, _is_new = registry.register(raw)
-        registry.save()
-        registry.generate_pool()
-    return rec
-
-
-def _registry_add_pdf(registry: "_registry.Registry", args) -> dict:
-    import hashlib
-    pdf_path = Path(args.pdf).expanduser().resolve()
-    if not pdf_path.is_file():
-        raise SystemExit(f"paper.py: --pdf not found: {pdf_path}")
-    sha256 = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
-    assets_dir = registry.paths["sources"] / "assets"
-    assets_dir.mkdir(parents=True, exist_ok=True)
-    dest = assets_dir / f"sha256-{sha256}.pdf"
-    if not dest.exists():
-        dest.write_bytes(pdf_path.read_bytes())
-    raw = {
-        "pmid": args.pmid, "doi": args.doi, "pmcid": args.pmcid,
-        "title": args.title or pdf_path.stem,
-    }
-    rec, _is_new = registry.register(raw)
-    rec = registry.set_asset(rec["evidence_id"], {
-        "sha256": sha256, "path": str(dest.relative_to(registry.repo_root)),
-        "bytes": pdf_path.stat().st_size, "added_at": utcnow(),
-    })
-    registry.save()
-    registry.generate_pool()
+        registry.commit()
     return rec
 
 
@@ -302,6 +287,8 @@ def render_single_paper(summary: dict, extraction: dict, appraisal: dict | None,
         "APPRAISAL_PATH_OR_SKIP_REASON": summary.get("appraisal_path")
                                           or f"skipped: {summary.get('appraisal_skipped_reason')}",
         "VERIFICATION_STATUS": verification_status,
+        "PERSONAL_NOTES": _ps.render_personal_notes(
+            _annotations.Annotations(repo_root).get(summary.get("evidence_id"))),
     }
     return _ps.render_template(template_text, values)
 
@@ -457,25 +444,23 @@ def _promote(repo_root: Path, run_dir: Path, evidence_id: str, project: str | No
             evidence_id, extraction_src, store)
         if reason is None:
             dest = registry.paths["extractions"] / f"{slug}.json"
-            with _registry.advisory_lock(repo_root, "registry"):
+            with registry.locked():
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_text(json.dumps(extraction, indent=2, ensure_ascii=False) + "\n",
                                 encoding="utf-8")
                 registry.set_extraction(evidence_id, str(dest.relative_to(registry.repo_root)))
-                registry.save()
-                registry.generate_pool()
+                registry.commit()
     if project:
         appraisal_src = run_dir / "workspace" / "appraisals" / f"{slug}.json"
         if appraisal_src.exists():
             registry = _registry.Registry(repo_root)
             dest = registry.paths["appraisals"] / project / f"{slug}.json"
-            with _registry.advisory_lock(repo_root, "registry"):
+            with registry.locked():
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_text(appraisal_src.read_text(encoding="utf-8"), encoding="utf-8")
                 registry.set_appraisal(evidence_id, project,
                                        str(dest.relative_to(registry.repo_root)))
-                registry.save()
-                registry.generate_pool()
+                registry.commit()
 
 
 def _copy_project_export(repo_root: Path, project: str, subdir: str, evidence_id: str,

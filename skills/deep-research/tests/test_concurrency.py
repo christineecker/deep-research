@@ -1,14 +1,17 @@
-"""Concurrency invariants for `fulltext.py acquire --workers`.
+"""Concurrency invariants for `fulltext.py acquire --workers` and the registry store.
 
-Two things break silently when the acquisition ladder is parallelised, so both are pinned here:
+Things that break silently under concurrency, pinned here:
 
   * R23 — `event_id`s must be unique within a run and allocated in append order. The `flock`
     in `store.append_event` makes the write atomic but not the read-allocate-check sequence
     that precedes it; without `store._EVENT_LOCK` two threads allocate the same `ev-000N`.
   * Politeness — the per-host interval must remain a real floor under N workers, or the pool
     turns a rate limit into a burst.
+  * Registry lost updates — `Registry.save()` rewrites the whole file from memory, so a
+    `Registry` loaded *before* the lock was granted drops every record written in between.
+    `Registry.locked()` re-reads inside the lock; see `RegistryLostUpdateTest`.
 
-Neither test touches the network.
+No test here touches the network.
 """
 
 from __future__ import annotations
@@ -20,11 +23,12 @@ import unittest
 from tempfile import TemporaryDirectory
 from pathlib import Path
 
-from helpers import load_script, make_run
+from helpers import SCRIPTS, load_script, make_run, run_py
 
 
 store = load_script("store.py")
 fulltext = load_script("fulltext.py")
+registry = load_script("registry.py")
 
 
 def _event(etype: str, snapshot: dict) -> dict:
@@ -217,6 +221,65 @@ class McpTaskResolutionTest(unittest.TestCase):
             })
 
             self.assertEqual(fulltext.pending_mcp_tasks(run, [rec]), [])
+
+
+class RegistryLostUpdateTest(unittest.TestCase):
+    """`Registry.locked()` must re-read inside the lock, or writers clobber each other."""
+
+    @staticmethod
+    def _bib(repo: Path, key: str) -> Path:
+        path = repo / f"{key}.bib"
+        path.write_text(
+            "@article{%s,\n  title = {Trial %s},\n  doi = {10.1000/%s},\n"
+            "  journal = {Journal of Validation},\n  year = {2026}\n}\n" % (key, key, key),
+            encoding="utf-8")
+        return path
+
+    def test_stale_in_memory_state_does_not_drop_another_writers_record(self):
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+
+            # Both handles load an empty registry -- exactly what every CLI entry point
+            # does before it takes the lock.
+            first = registry.Registry(repo)
+            second = registry.Registry(repo)
+
+            with first.locked():
+                first.register({"doi": "10.1000/first", "title": "First"})
+                first.save()
+
+            with second.locked():
+                second.register({"doi": "10.1000/second", "title": "Second"})
+                second.save()
+
+            on_disk = registry.Registry(repo).records
+            self.assertIn("doi:10.1000/first", on_disk)
+            self.assertIn("doi:10.1000/second", on_disk)
+
+    def test_concurrent_import_bib_processes_all_survive(self):
+        """End-to-end smoke test over real processes. The deterministic reproducer is
+        the test above -- process scheduling decides how wide the stale-read window
+        actually opens here, so this one confirms the CLI path holds together under
+        real contention rather than pinning the race itself."""
+        workers = 8
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            bibs = [self._bib(repo, f"paper{i}") for i in range(workers)]
+
+            def worker(bib: Path):
+                return run_py([str(SCRIPTS / "registry.py"), "import-bib",
+                               "--repo", str(repo), "--file", str(bib)])
+
+            with cf.ThreadPoolExecutor(max_workers=workers) as pool:
+                for fut in [pool.submit(worker, b) for b in bibs]:
+                    proc = fut.result()
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+
+            records = registry.Registry(repo).records
+            self.assertEqual(len(records), workers,
+                             f"lost updates: {sorted(records)}")
 
 
 class _Args:

@@ -20,6 +20,8 @@ Environment: python3, stdlib only. No pip installs.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import sys
 from pathlib import Path
@@ -105,7 +107,7 @@ def _import_from_wiki(wiki_root: Path, repo_root: Path) -> dict:
     import registry as _registry
     reg = _registry.Registry(repo_root)
     count = 0
-    with _registry.advisory_lock(repo_root, "registry"):
+    with reg.locked():
         with legacy_pool.open(encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
@@ -117,8 +119,7 @@ def _import_from_wiki(wiki_root: Path, repo_root: Path) -> dict:
                     continue
                 reg.register(rec)
                 count += 1
-        reg.save()
-        reg.generate_pool()
+        reg.commit()
     return {"wiki_root": str(wiki_root), "legacy_pool_found": True, "registered": count}
 
 
@@ -202,6 +203,246 @@ def cmd_export_wiki(args) -> int:
     return 0
 
 
+def _okf_export_footnote_key(evidence_id: str) -> str:
+    """`pmid:123` -> `pmid-123`. Matches the first form `verify.py RunData._build_cite_keys`
+    always registers for any evidence_id (`put(eid.replace(":", "-"), eid)`), regardless of
+    scheme, so this key resolves without depending on pmid/doi-specific key forms."""
+    return (evidence_id or "").replace(":", "-", 1)
+
+
+def _okf_export_citation(rec: dict) -> str:
+    authors = rec.get("authors") or []
+    if authors and isinstance(authors[0], dict):
+        first = authors[0]
+        name = " ".join(x for x in (first.get("family"), first.get("initials")) if x) or \
+            (first.get("collective") or "")
+        author = f"{name} et al." if len(authors) > 1 else name
+    else:
+        author = ""
+    journal = rec.get("journal")
+    journal = journal.get("iso_abbrev") or journal.get("title") if isinstance(journal, dict) \
+        else journal
+    bits = [b for b in (author, rec.get("title"), journal, rec.get("publication_date")) if b]
+    line = ". ".join(str(b) for b in bits)
+    if rec.get("pmid"):
+        line += f". PMID {rec['pmid']}"
+    if rec.get("doi"):
+        line += f". DOI {rec['doi']}"
+    return line or rec.get("evidence_id") or "untitled"
+
+
+def _okf_export_report_md(question: str, records: list[dict]) -> str:
+    """Minimal synthetic report satisfying `verify.py`'s structural checks (C-SECTIONS,
+    C-CITE-RESOLVE, C-ATTRIBUTION, C-HYPOTHESIS-WALL): every required heading present with a
+    non-empty body, and every selected record cited by a footnote that resolves against
+    `corpus.jsonl` (`verify.py RunData._build_cite_keys`). C-PRISMA/C-SEARCH-LOG are expected
+    to fail — there is no real PRISMA flow or search history behind a registry selection (see
+    okf-export.md) — which deterministically also trips C-PROVISIONAL (verify.py
+    `check_provisional`: any failed check requires the title block to say PROVISIONAL in
+    caps), so the title block declares it up front rather than needing that check exempted
+    too."""
+    keys = [_okf_export_footnote_key(r.get("evidence_id") or "") for r in records]
+    lines = [f"# OKF export: {question}", "",
+             "**Status: PROVISIONAL** — a mechanical export of hand-picked registry "
+             "records, not a synthesized review; there is no search or PRISMA screening "
+             "history to report on.", "",
+             "## Question / Protocol", "",
+             f"Ad hoc export of {len(records)} previously registered paper(s) selected "
+             f"directly from the repo's reference registry; no new screening was performed.",
+             "",
+             "## Methods — Search", "",
+             "Papers were retrieved earlier via PubMed (NCBI E-utilities) and registered in "
+             "`data/papers/registry.jsonl`; this run performs no new search.", "",
+             "## PRISMA flow / Screening", "",
+             "Not applicable — records were selected directly by evidence_id, not screened "
+             "through a PRISMA flow.", "",
+             "## Characteristics of included studies", ""]
+    for rec, key in zip(records, keys):
+        lines.append(f"- {rec.get('title') or rec.get('evidence_id')}[^{key}]")
+    lines += ["", "## Results by outcome", "",
+              "See each study's extraction record for outcome-level data.[^" + keys[0] + "]"
+              if keys else "No records selected.", "",
+              "## Certainty of evidence", "",
+              "Not assessed by this export; see project-scoped appraisal records where present.",
+              "",
+              "## Conflicts and inconsistencies", "",
+              "Not assessed by this export.", "",
+              "## Evidence gaps", "",
+              "Not assessed by this export.", "",
+              "## New insights / hypotheses", "",
+              "> This export proposes no new hypothesis and states no prediction to test; it "
+              "only republishes previously registered evidence.", "",
+              "## Limitations / unobtainable evidence", "",
+              "This report is a mechanical export of registry records, not a synthesized "
+              "review; PRISMA counts and certainty ratings are intentionally absent.", "",
+              "## References", ""]
+    for rec, key in zip(records, keys):
+        lines.append(f"[^{key}]: {_okf_export_citation(rec)}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def cmd_okf_export(args) -> int:
+    """Feed a hand-picked set of registry papers into the existing `okf.py promote`
+    pipeline (REFERENCE_MANAGER_IMPLEMENTATION_PLAN.md §3), without reshaping `okf.py`'s
+    V1-V25 validator: synthesize a throwaway run directory `load_run()` accepts, run
+    `verify.py` over it, then call `okf.py promote` unmodified.
+    """
+    repo_root = Path(args.repo).expanduser().resolve()
+    wiki_root = Path(args.wiki).expanduser().resolve()
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import registry as _registry
+    import corpus as _corpus
+    import verify as _verify
+    import okf as _okf
+
+    registry = _registry.Registry(repo_root)
+
+    # --- 1. resolve every evidence_id up front; nothing is written until all resolve ---
+    records: list[dict] = []
+    missing: list[str] = []
+    for eid in args.evidence_id:
+        rec = registry.lookup(evidence_id=eid)
+        if rec is None:
+            missing.append(eid)
+            continue
+        extraction_path = rec.get("extraction_path")
+        if not extraction_path or not (repo_root / extraction_path).exists():
+            missing.append(f"{eid} (no extraction_path on record, or file missing)")
+            continue
+        records.append(rec)
+    if missing:
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "okf-export",
+              "error": "one or more evidence_ids could not be resolved to a usable registry "
+                       "record with an extraction on disk; nothing was written",
+              "missing": missing})
+        return 1
+
+    # --- 2. synthesize a run directory shaped as `okf.py load_run()` expects ---
+    ts = utcnow()
+    base = slugify(args.project) if args.project else "export"
+    run_slug = f"{base}-okf-export-{slugify(ts)}"
+    run_dir = repo_root / "runs" / run_slug
+    if run_dir.exists():
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "okf-export",
+              "error": f"run directory already exists: {run_dir}"})
+        return 1
+    (run_dir / "workspace" / "extractions").mkdir(parents=True, exist_ok=True)
+    (run_dir / "workspace" / "appraisals").mkdir(parents=True, exist_ok=True)
+    (run_dir / "outputs").mkdir(parents=True, exist_ok=True)
+
+    def _write_json(path: Path, payload) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+                        encoding="utf-8")
+
+    question = f"selected papers for project `{args.project}`" if args.project \
+        else "hand-selected registry papers"
+    _write_json(run_dir / "config.json", {
+        "schema_version": SCHEMA_VERSION, "created_at": ts, "slug": run_slug,
+        "question": f"OKF export: {question}", "gates": {"evidence_kernel": False},
+    })
+
+    corpus_fields = tuple(_corpus.CORPUS_FIELDS) + tuple(_corpus.CORPUS_BIBLIO)
+    corpus_records = []
+    for rec in records:
+        eid = rec["evidence_id"]
+        slug = _registry.extraction_slug(eid)
+        corpus_rec = {f: rec[f] for f in corpus_fields
+                      if f not in ("screening", "fulltext") and rec.get(f) not in (None, "", [], {})}
+        corpus_rec["evidence_id"] = eid
+
+        extraction = json.loads((repo_root / rec["extraction_path"]).read_text(encoding="utf-8"))
+        extraction.setdefault("evidence_id", eid)
+        extraction_rel = f"workspace/extractions/{slug}.json"
+        _write_json(run_dir / extraction_rel, extraction)
+        corpus_rec["extraction_path"] = extraction_rel
+
+        if args.project:
+            appraisal_rel_src = (rec.get("appraisals") or {}).get(args.project)
+            if appraisal_rel_src and (repo_root / appraisal_rel_src).exists():
+                appraisal = json.loads((repo_root / appraisal_rel_src).read_text(encoding="utf-8"))
+                appraisal.setdefault("evidence_id", eid)
+                appraisal_rel = f"workspace/appraisals/{slug}.json"
+                _write_json(run_dir / appraisal_rel, appraisal)
+                corpus_rec["appraisal_path"] = appraisal_rel
+
+        corpus_records.append(corpus_rec)
+
+    with (run_dir / "corpus.jsonl").open("w", encoding="utf-8") as fh:
+        for corpus_rec in corpus_records:
+            fh.write(json.dumps(corpus_rec, ensure_ascii=False) + "\n")
+
+    (run_dir / "outputs" / "report.md").write_text(
+        _okf_export_report_md(question, corpus_records), encoding="utf-8")
+    (run_dir / "outputs" / "digest.md").write_text(
+        f"# Digest\n\nSynthetic digest for an okf-export of {len(corpus_records)} "
+        f"registry paper(s); not a synthesized review.\n", encoding="utf-8")
+    with (run_dir / "taskboard.jsonl").open("w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"task_id": "digest:slug:report", "status": "completed",
+                             "output_path": "outputs/digest.md"}, ensure_ascii=False) + "\n")
+
+    # --- 3. verify.py: best-effort — most pipeline-shaped checks (PRISMA, screening log)
+    # legitimately fail or are skipped for a registry-only export with no real screening
+    # history; that is expected and correctly downgrades the promoted status to
+    # "provisional" rather than "stable" (see okf-export.md deviations).
+    verify_args = argparse.Namespace(
+        run_dir=str(run_dir), wiki=None, repo=str(repo_root), report=None,
+        json=True, markdown=None, gate=None)
+    verify_stdout = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(verify_stdout):
+            verify_rc = _verify.cmd_run(verify_args)
+    except _verify.FatalError as exc:
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "okf-export",
+              "error": f"verify.py failed to run over the synthetic run: {exc}",
+              "run_dir": str(run_dir)})
+        return 1
+
+    # --- 4. okf.py promote, unmodified except for a narrow exemption: a registry-only
+    # export routinely fails pipeline-shaped checks (C-SEARCH-LOG, C-PRISMA) that don't
+    # apply here because there is no search/screening history to report on -- that is
+    # expected and correctly downgrades status to "provisional". Everything else
+    # (evidence identity, span integrity, source/citation consistency) is left enforced;
+    # a real verifier failure there still blocks promotion instead of being silently
+    # forced through (plan Phase 5: "remove blanket forcing as the normal mechanism").
+    promote_args = argparse.Namespace(
+        run_dir=str(run_dir), wiki=str(wiki_root), status=None, allow_unverified=False,
+        force=False, exempt_checks=["C-SEARCH-LOG", "C-PRISMA"],
+        check=False, gate=None, no_log=False, dry_run=False)
+    promote_stdout = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(promote_stdout):
+            rc = _okf.cmd_promote(promote_args)
+    except _okf.OkfError as exc:
+        emit({"schema_version": SCHEMA_VERSION, "status": "error", "command": "okf-export",
+              "error": f"okf.py promote rejected the synthetic run: {exc}",
+              "run_dir": str(run_dir)})
+        return 1
+
+    kept_run = run_dir.exists() and not args.no_keep_run
+    if args.no_keep_run:
+        import shutil
+        shutil.rmtree(run_dir, ignore_errors=True)
+
+    try:
+        verify_summary = json.loads(verify_stdout.getvalue())
+    except json.JSONDecodeError:
+        verify_summary = None
+    try:
+        promote_summary = json.loads(promote_stdout.getvalue())
+    except json.JSONDecodeError:
+        promote_summary = None
+
+    emit({"schema_version": SCHEMA_VERSION, "status": "ok" if rc == 0 else "error",
+          "command": "okf-export", "repo_root": str(repo_root), "wiki_root": str(wiki_root),
+          "project": args.project, "evidence_ids": [r["evidence_id"] for r in records],
+          "run_dir": str(run_dir) if kept_run else None, "run_kept": kept_run,
+          "verify_exit_code": verify_rc, "verify": verify_summary,
+          "promote_exit_code": rc, "promote": promote_summary})
+    return rc
+
+
 def cmd_project_list(args) -> int:
     repo_root = Path(args.repo).expanduser().resolve()
     projects_dir = repo_root / "projects"
@@ -245,6 +486,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--project", help="also copy this project's refs.bib/synthesis.md/"
                                      "manuscript.qmd into <wiki>/research/<project>/")
     s.set_defaults(func=cmd_export_wiki)
+
+    s = sub.add_parser("okf-export", help="promote hand-picked registry papers into an "
+                                          "OKF wiki bundle (REFERENCE_MANAGER_IMPLEMENTATION_"
+                                          "PLAN.md §3)")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--evidence-id", dest="evidence_id", action="append", required=True,
+                   help="repeatable; evidence_id of a registered paper (pmid:.../doi:...)")
+    s.add_argument("--wiki", required=True, help="OKF bundle root (must already be "
+                                                  "`okf.py init`-ed)")
+    s.add_argument("--project", help="also carry this project's appraisal for each paper")
+    s.add_argument("--no-keep-run", dest="no_keep_run", action="store_true",
+                   help="delete the synthetic run directory after promotion")
+    s.set_defaults(func=cmd_okf_export)
     return p
 
 

@@ -20,9 +20,17 @@ A run under either root works end to end without the other. `pool.py migrate --f
 ```text
 <repo>/
   data/
+    refmgr/
+      library.sqlite3    refmgr's paper/identifier/asset/attachment store (`registry.py
+                         add-pdf`/`import-folder` route PDF bytes here, not `data/sources/`),
+                         plus the derived search indexes mirrored from registry.jsonl
+                         (papers_fts, chunks_fts, paper_terms — all rebuildable with
+                         `registry.py reindex`) and saved searches (`alerts.py`, durable,
+                         not derived). See references/reference-manager.md.
+      assets/            content-addressed PDFs: assets/sha256/<2-char-prefix>/<hash><ext>
     sources/
-      assets/            content-addressed PDFs: sha256-<hash>.pdf
-      sources/            JSON snapshots: src-<64 hex>.json  (store.global_sources_root)
+      snapshots/          JSON snapshots: src-<64 hex>.json  (store.global_sources_root)
+      sources/            legacy snapshot dirname — read-fallback only, never written
       events.jsonl        append-only retrieval log, global
     papers/
       registry.jsonl      canonical registry — one record per evidence_id
@@ -38,11 +46,21 @@ A run under either root works end to end without the other. `pool.py migrate --f
   exports/{wiki,bib,html,docx,pdf}/
 ```
 
-`data/sources/sources/` (not `.../snapshots/`) is deliberate reuse, not a naming slip: it is
-`store.py`'s existing `<run_dir>/sources/` convention applied to `data/sources` treated as a
-`run_dir` (see the `global_sources_root` docstring in `store.py`) — every write-once/hash/verify function in
-`store.py` works unchanged against it, at zero duplication and zero risk to the audited
+`data/sources/` being shaped like a run directory is deliberate reuse, not a naming slip: it is
+`data/sources` treated as a `run_dir` (see the `global_sources_root` docstring in `store.py`) —
+every write-once/hash/verify function in `store.py` is a pure function of a `run_dir`-shaped path,
+so they all work unchanged against it, at zero duplication and zero risk to the audited
 evidence-kernel code.
+
+The snapshot subdirectory is parameterized (`dirname`), and the two values differ by scope:
+run-local stores use `sources/` (the `dirname` default), while the global store uses
+`snapshots/` (`store.GLOBAL_SNAPSHOT_DIRNAME`). `data/sources/sources/` is the **legacy** global
+dirname, kept only so repos written before priority 3 of `POOL_ARCHITECTURE_OPTIMIZATION_PLAN.md`
+keep resolving: `global_read_snapshot` tries `snapshots/` first and falls back to it, and
+`global_list_snapshots` unions both. Writes never use the legacy dirname.
+`data/sources/assets/` is separate again — hash-named binary PDFs, not JSON snapshots — and is
+itself pre-cutover: `research.py init` still creates it, but PDF bytes now route to the refmgr
+attachment pool (`data/refmgr/`).
 
 ## Registry lifecycle fields
 
@@ -56,7 +74,8 @@ Every `data/papers/registry.jsonl` record carries, beyond the bibliographic fiel
 | `asset_status` | missing / available | set by `add-pdf` / `import-folder` |
 | `extraction_status` | not_started / in_progress / extracted | set by `promote` |
 | `appraisal_status` | not_appraised / in_progress / appraised | set by `appraise-promote` |
-| `asset` | `{sha256, path, bytes, pages, added_at}` | present once `asset_status: available` |
+| `asset` | `{refmgr_paper_id, attachment_id, sha256, bytes, pages, mime_type, added_at}` | present once `asset_status: available`; PDF bytes live in the refmgr attachment pool (`data/refmgr/library.sqlite3`), not a flat file under `data/sources/` |
+| `refmgr_paper_id` | refmgr paper id | the same id, top-level, for direct lookup without unpacking `asset` |
 | `extraction_path` | repo-relative path | canonical extraction, once promoted |
 | `appraisals` | `{project: repo-relative path}` | project-scoped, see below |
 
