@@ -125,6 +125,58 @@ class FacetFilterTest(unittest.TestCase):
             self.assertEqual(miss["results"], [])
 
 
+class MissingFulltextTest(unittest.TestCase):
+    def test_lists_only_records_without_an_available_asset(self):
+        with TemporaryDirectory() as tmp:
+            repo = _init_repo(Path(tmp))
+            reg = registry.Registry(repo)
+            reg.register({"pmid": "1", "doi": "10.1/one", "title": "No asset",
+                         "journal": "J", "publication_date": "2020"})
+            rec2, _ = reg.register({"pmid": "2", "title": "Has asset", "journal": "J",
+                                    "publication_date": "2020"})
+            rec2["asset_status"] = "available"
+            reg.save()
+            result = run_py(["scripts/registry.py", "missing-fulltext", "--repo", str(repo)])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            eids = [r["evidence_id"] for r in payload["results"]]
+            self.assertEqual(eids, ["pmid:1"])
+
+    def test_doi_and_pubmed_urls_are_built_from_identifiers(self):
+        with TemporaryDirectory() as tmp:
+            repo = _init_repo(Path(tmp))
+            reg = registry.Registry(repo)
+            reg.register({"pmid": "38214501", "doi": "10.1001/jama.2023.24567",
+                         "title": "Both ids", "journal": "J", "publication_date": "2020"})
+            reg.register({"title": "Neither id", "journal": "J", "publication_date": "2020"})
+            reg.save()
+            result = run_py(["scripts/registry.py", "missing-fulltext", "--repo", str(repo)])
+            payload = json.loads(result.stdout)
+            by_title = {r["title"]: r for r in payload["results"]}
+            both = by_title["Both ids"]
+            self.assertEqual(both["doi_url"], "https://doi.org/10.1001/jama.2023.24567")
+            self.assertEqual(both["pubmed_url"], "https://pubmed.ncbi.nlm.nih.gov/38214501/")
+            neither = by_title["Neither id"]
+            self.assertIsNone(neither["doi_url"])
+            self.assertIsNone(neither["pubmed_url"])
+
+    def test_status_filter_narrows_the_report(self):
+        with TemporaryDirectory() as tmp:
+            repo = _init_repo(Path(tmp))
+            reg = registry.Registry(repo)
+            rec1, _ = reg.register({"pmid": "1", "title": "T1", "journal": "J",
+                                    "publication_date": "2020"})
+            rec1["status"] = "included"
+            rec2, _ = reg.register({"pmid": "2", "title": "T2", "journal": "J",
+                                    "publication_date": "2020"})
+            rec2["status"] = "excluded"
+            reg.save()
+            result = run_py(["scripts/registry.py", "missing-fulltext", "--repo", str(repo),
+                            "--status", "included"])
+            payload = json.loads(result.stdout)
+            self.assertEqual([r["evidence_id"] for r in payload["results"]], ["pmid:1"])
+
+
 class AnnotationFilterTest(unittest.TestCase):
     def test_tag_and_min_rating_filter(self):
         with TemporaryDirectory() as tmp:

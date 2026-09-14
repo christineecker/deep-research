@@ -16,6 +16,7 @@ reads/writes the same `data/papers/registry.jsonl` and its neighbors described i
 | Facets | `registry.py facets` | `paper_terms` | What MeSH headings / keywords / article types / authors the library actually holds, with counts |
 | Figures | `registry.py figures` | `figures` + `figures_fts`, images as role=`figure` attachments | Crops captioned figures out of stored PDFs, and searches those captions |
 | Health | `registry.py doctor` | none — read-only | Missing or corrupt assets, dangling attachments, stale index rows, figures that lost their source, SQLite integrity, figure-ownership and identifier-primary consistency, untracked asset files |
+| Manual-retrieval gaps | `registry.py missing-fulltext` | none — read-only | Every registered paper with no PDF stored, each with a `doi.org`/PubMed URL for a human to fetch by hand |
 | Backup/restore | `backup.py` | writes a versioned copy under a destination you name | Consistent, checksummed backup of the registry/refmgr/snapshot stores; restore into a fresh directory with a deep integrity pass |
 | Ask | `ask.py retrieve` | none new | Hybrid retrieval over the indexes, every hit re-verified as a span; the answering command writes prose from the result |
 | Alerts | `alerts.py` | refmgr's `saved_searches` table | Saved PubMed queries, re-run on demand to report (or register) what the repo has not seen |
@@ -255,6 +256,49 @@ Three distinctions the output depends on:
 Nothing here repairs anything. A missing or corrupt original cannot be rebuilt from the
 registry (originals are immutable by design), so the response is a restore or a
 re-import, and that is the user's call, not the script's.
+
+## Manual-retrieval gaps (`registry.py missing-fulltext`)
+
+```bash
+python3 scripts/registry.py missing-fulltext --repo <path> [--status registered|screening|included|excluded] [--limit N]
+```
+
+Read-only. Every automated acquisition rung can still come up empty — paywalled, no OA
+mirror, institutional access required. This reports every registry record whose
+`asset_status` is not `"available"` — i.e. no PDF was ever attached, by any path
+(`add-pdf`, `import-folder`, or a ladder rung that stored one) — with enough per-record
+identity to go get it by hand:
+
+```json
+{"evidence_id": "pmid:38214501", "title": "...", "journal": "...", "publication_date": "...",
+ "status": "included", "extraction_status": "not_started",
+ "doi": "10.1001/jama.2023.24567", "pmid": "38214501", "pmcid": null,
+ "doi_url": "https://doi.org/10.1001/jama.2023.24567",
+ "pubmed_url": "https://pubmed.ncbi.nlm.nih.gov/38214501/"}
+```
+
+`doi_url`/`pubmed_url` are `null`, not omitted, when the record has no DOI or PMID —
+`/deep-research:missing-fulltext` renders a plain "no DOI/PMID — see evidence_id" for
+those rather than a broken link. `--status` narrows to one lifecycle status (e.g.
+`included`, to chase only papers actually kept rather than everything ever registered);
+`--limit` caps the count. Once a copy is found by hand, `registry.py add-pdf --repo
+<path> --file <pdf> --doi <doi>` (or `--pmid`/`--pmcid`) attaches it to the *same*
+record by identifier match — this never creates a duplicate paper.
+
+Two things this deliberately does not do: it never attempts any retrieval itself (that is
+every other acquisition path in this skill — `fulltext.py`, `add-pdf`, `import-folder`),
+and it does not distinguish "acquisition never ran" from "every rung was tried and
+failed" — that per-attempt detail is run-scoped (`fulltext.py status --run-dir <run>`,
+`/deep-research:status <run> --missing`), not something the registry itself tracks. A
+paper extracted from an abstract only (`evidence_basis: abstract_only`) legitimately has
+`extraction_status: extracted` and still shows up here — that is expected, not a bug: no
+PDF was ever stored either way.
+
+**Not the same finding as `doctor`'s `missing_files`.** `doctor` flags an attachment row
+whose asset bytes used to exist and no longer do — corruption. `missing-fulltext` flags a
+paper that never had a PDF attached in the first place — a coverage gap, not damage. A
+library with zero PDFs attached is `doctor`-healthy and shows every paper here; that is
+correct, not a contradiction.
 
 ## Backup and restore (`backup.py`)
 

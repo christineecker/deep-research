@@ -32,3 +32,8 @@ Steps:
 
 This command never repairs anything. Everything it reports is either rebuildable with
 `reindex` or a restore-from-backup decision that belongs to the user.
+
+Don't confuse `missing_files` here with `/deep-research:missing-fulltext`: `doctor`'s
+`missing_files` is corruption — an attachment row points at a PDF that used to exist and
+no longer does. `/deep-research:missing-fulltext` is coverage — a paper that never had a
+PDF attached in the first place, `asset_status: missing` by design, nothing broken.

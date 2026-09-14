@@ -127,12 +127,15 @@ python3 scripts/library.py lookup --wiki &lt;root&gt; (--doi|--pmid|--pmcid|--ti
 /deep-research:alerts run  --repo &lt;path&gt; --register
 /deep-research:reindex --repo &lt;path&gt;
 /deep-research:doctor  --repo &lt;path&gt; --deep
+/deep-research:missing-fulltext --repo &lt;path&gt; --status included
 /deep-research:okf-export --repo &lt;path&gt; --evidence-id pmid:38214501 --wiki &lt;wiki-root&gt;</code></pre>
       <p><code>embed index</code> and <code>embed query</code> require the optional third-party package <code>sentence-transformers</code>
       — the one scoped exception to the skill's no-pip-installs policy; <code>ask</code> runs without it, on lexical
       retrieval alone. <code>ask</code> answers only from spans that verify against the snapshot store, and only from
       papers the repo already holds — it is not a literature search. <code>okf-export</code> requires each
-      <code>--evidence-id</code> to already have an extraction on file. Details:
+      <code>--evidence-id</code> to already have an extraction on file. <code>missing-fulltext</code> reports
+      every registered paper with no PDF stored, each with a <code>doi.org</code>/PubMed link for manual
+      retrieval — read-only, it never fetches anything itself. Details:
       <a href="reference-manager.html">Reference manager</a>.</p>
 
       <h2>ReadCube Export</h2>

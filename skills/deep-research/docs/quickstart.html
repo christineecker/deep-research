@@ -170,6 +170,7 @@ python3 scripts/render.py all --run-dir &lt;run&gt; --formats pdf,docx</code></p
         <tbody>
           <tr><td>To know what one paper says</td><td><code>/deep-research:summarize</code></td><td>A verified summary with appraisal, in Markdown and HTML</td></tr>
           <tr><td>To orient across papers you picked</td><td><code>/deep-research:summarize-set --overview</code></td><td>One summary each, plus a descriptive overview — no pooled claims</td></tr>
+          <tr><td>Just the extracted data, no write-up yet</td><td><code>/deep-research:extract</code></td><td>Full text fetched, a verified extraction promoted into the registry — no appraisal, no summary</td></tr>
           <tr><td>To answer a question from papers you already hold</td><td><code>/deep-research:ask</code></td><td>An answer built only from spans that still verify. Not a literature search</td></tr>
           <tr><td>To find what the literature says</td><td>A full review — ask the agent</td><td>Report, evidence table, PRISMA flow, verification, optional bundle</td></tr>
           <tr><td>To build a reusable paper pool without a report</td><td>A run with <code>pipeline.stop_after_stage: 5</code></td><td>Extractions every later run can reuse</td></tr>

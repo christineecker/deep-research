@@ -20,6 +20,8 @@ Print this cheat sheet directly. Do not read SKILL.md or run any script.
 | `alerts` | Saved PubMed searches (`save`/`list`/`delete`/`run`); `run` reports what's new | no |
 | `reindex` | Rebuild the repo's derived search indexes (safe to re-run) | no |
 | `doctor` | Read-only integrity check: missing/corrupt PDFs, stale index rows | no |
+| `missing-fulltext` | Table of registered papers with no PDF/full text, with a doi.org/PubMed link each | no |
+| `gc-runs` | Delete summarize/extract run dirs whose paper data is already promoted into the registry (dry-run by default) | no |
 | `annotate` | Personal tags/rating/note on a paper (tag/rate/note/show/list) | no |
 | `embed` | Build/query the semantic-similarity index (`index`/`similar`/`query`) | no |
 | `okf-export` | Promote hand-picked registry papers into an OKF wiki bundle | no* |

@@ -443,6 +443,214 @@ def cmd_okf_export(args) -> int:
     return rc
 
 
+def _dir_size(path: Path) -> int:
+    total = 0
+    for p in path.rglob("*"):
+        if p.is_file():
+            try:
+                total += p.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def _gc_pending_tasks(run_dir: Path) -> list[str]:
+    import taskboard as _taskboard
+    board = _taskboard.TaskBoard(run_dir)
+    return sorted(tid for tid, rec in board.state().items()
+                 if rec.get("status") in ("pending", "active"))
+
+
+def _gc_extraction_promoted(repo_root: Path, registry, eid: str | None) -> bool:
+    if not eid:
+        return False
+    rec = registry.lookup(evidence_id=eid)
+    return bool(rec and rec.get("extraction_status") == "extracted"
+               and rec.get("extraction_path")
+               and (repo_root / rec["extraction_path"]).exists())
+
+
+def _gc_classify_single_paper(repo_root: Path, registry, run_dir: Path, config: dict) -> dict:
+    """A `paper.py summarize`/`summarize --extract-only` run directory (`config.json`
+    `profile: single-paper-summary`, one evidence_id). Blocking = paper data (the
+    extraction) would be lost outright. Unsaved = the paper data is safe in the registry,
+    but a per-run-only artifact (an unprojected appraisal or rendered write-up) would be
+    lost — recoverable only by re-dispatching that one subagent, never by re-fetching."""
+    import paper_summary as _ps
+
+    evidence_id = config.get("evidence_id")
+    project = config.get("project")
+    blocking: list[str] = []
+    unsaved: list[str] = []
+
+    pending = _gc_pending_tasks(run_dir)
+    if pending:
+        blocking.append(f"unfinished task(s): {', '.join(pending)}")
+
+    evidence_ids = [evidence_id] if evidence_id else []
+    extractions_dir = run_dir / "workspace" / "extractions"
+    for f in sorted(extractions_dir.glob("*.json")) if extractions_dir.is_dir() else []:
+        try:
+            eid = json.loads(f.read_text(encoding="utf-8")).get("evidence_id") or evidence_id
+        except (OSError, json.JSONDecodeError):
+            eid = evidence_id
+        if eid and eid not in evidence_ids:
+            evidence_ids.append(eid)
+        if not _gc_extraction_promoted(repo_root, registry, eid):
+            blocking.append(f"extraction for {eid} not (yet) promoted to the registry")
+
+    appraisals_dir = run_dir / "workspace" / "appraisals"
+    for f in sorted(appraisals_dir.glob("*.json")) if appraisals_dir.is_dir() else []:
+        try:
+            eid = json.loads(f.read_text(encoding="utf-8")).get("evidence_id") or evidence_id
+        except (OSError, json.JSONDecodeError):
+            eid = evidence_id
+        rec = registry.lookup(evidence_id=eid) if eid else None
+        appraisal_rel = (rec.get("appraisals") or {}).get(project) if (rec and project) else None
+        if not (appraisal_rel and (repo_root / appraisal_rel).exists()):
+            reason = f"appraisal for {eid} exists only in this run"
+            unsaved.append(reason if project else f"{reason} (no --project to promote it against)")
+
+    md_path = run_dir / "outputs" / "single-paper-summary.md"
+    if md_path.exists() and evidence_id:
+        if project:
+            dest = (repo_root / "projects" / project / "paper-summaries"
+                    / f"{_ps.evidence_slug(evidence_id)}.md")
+            if not dest.exists():
+                unsaved.append("rendered summary not copied to its project")
+        else:
+            unsaved.append("rendered summary has no --project — it exists only in this run")
+
+    return {
+        "run_dir": str(run_dir.relative_to(repo_root)), "kind": "single-paper-summary",
+        "evidence_ids": evidence_ids, "project": project,
+        "blocking_reasons": blocking, "unsaved_reasons": unsaved, "bytes": _dir_size(run_dir),
+    }
+
+
+def _gc_classify_paper_set(repo_root: Path, registry, run_dir: Path, set_record: dict) -> dict:
+    """A `paper.py summarize-set` index directory (`summary-set.json` at its root, no
+    `config.json` of its own). Per-paper work lives in each constituent paper's own
+    `single-paper-summary` run dir and is classified separately by that run's own entry;
+    this only covers the set's own manifest."""
+    project = set_record.get("project")
+    evidence_ids = set_record.get("included_evidence_ids") or []
+    blocking: list[str] = []
+    unsaved: list[str] = []
+
+    pending = _gc_pending_tasks(run_dir)
+    if pending:
+        blocking.append(f"unfinished task(s): {', '.join(pending)}")
+
+    for eid in evidence_ids:
+        if not _gc_extraction_promoted(repo_root, registry, eid):
+            blocking.append(f"extraction for {eid} not (yet) promoted to the registry")
+
+    if project:
+        dest_dir = repo_root / "projects" / project / "paper-summary-sets"
+        found = False
+        if dest_dir.is_dir():
+            for f in dest_dir.glob("*.json"):
+                try:
+                    found = json.loads(f.read_text(encoding="utf-8")).get("set_id") \
+                        == set_record.get("set_id")
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if found:
+                    break
+        if not found:
+            unsaved.append("set manifest not copied to its project")
+    else:
+        unsaved.append("set has no --project — its manifest exists only in this run")
+
+    return {
+        "run_dir": str(run_dir.relative_to(repo_root)), "kind": "paper-summary-set",
+        "evidence_ids": evidence_ids, "project": project,
+        "blocking_reasons": blocking, "unsaved_reasons": unsaved, "bytes": _dir_size(run_dir),
+    }
+
+
+def cmd_gc_runs(args) -> int:
+    """Delete `runs/<slug>/` directories left behind by the lightweight paper-summary
+    profile once their paper data is safely promoted into the canonical registry — the
+    "common knowledge pool" a run's workspace is otherwise just a redundant copy of.
+
+    Scope is deliberately narrow: only `single-paper-summary`/`summarize-set` run
+    directories are ever considered. A full Stage 0-8 review run holds artifacts with no
+    registry equivalent (the report, PRISMA counts, screening decisions) and is never
+    touched here, regardless of flags — clean those up by hand if a review run is truly
+    done with.
+
+    Every candidate is classified `blocking` (paper data itself would be lost — never
+    deleted, no flag overrides this), `unsaved` (the paper data is safe, but a per-run-only
+    write-up/appraisal that was never copied to a project would be lost), or `safe`
+    (nothing here is not already durable elsewhere). Dry-run by default; `--apply` deletes
+    `safe` candidates, and `--include-unsaved` widens that to `unsaved` ones too.
+    """
+    repo_root = Path(args.repo).expanduser().resolve()
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import registry as _registry
+
+    reg = _registry.Registry(repo_root)
+    runs_dir = repo_root / "runs"
+    all_dirs = sorted(p for p in runs_dir.iterdir() if p.is_dir()) if runs_dir.is_dir() else []
+
+    candidates = []
+    skipped_out_of_scope = 0
+    for run_dir in all_dirs:
+        set_path = run_dir / "summary-set.json"
+        config_path = run_dir / "config.json"
+        if set_path.exists():
+            try:
+                set_record = json.loads(set_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                skipped_out_of_scope += 1
+                continue
+            candidates.append(_gc_classify_paper_set(repo_root, reg, run_dir, set_record))
+        elif config_path.exists():
+            try:
+                config = json.loads(config_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                skipped_out_of_scope += 1
+                continue
+            if config.get("profile") != "single-paper-summary":
+                skipped_out_of_scope += 1
+                continue
+            candidates.append(_gc_classify_single_paper(repo_root, reg, run_dir, config))
+        else:
+            skipped_out_of_scope += 1
+
+    for c in candidates:
+        c["tier"] = ("blocking" if c["blocking_reasons"]
+                    else "unsaved" if c["unsaved_reasons"] else "safe")
+
+    deletable_tiers = {"safe"} | ({"unsaved"} if args.include_unsaved else set())
+    to_delete = [c for c in candidates if c["tier"] in deletable_tiers]
+    if args.limit is not None:
+        to_delete = to_delete[: args.limit]
+
+    deleted: list[str] = []
+    freed_bytes = 0
+    if args.apply:
+        import shutil
+        for c in to_delete:
+            shutil.rmtree(repo_root / c["run_dir"])
+            deleted.append(c["run_dir"])
+            freed_bytes += c["bytes"]
+
+    emit({
+        "schema_version": SCHEMA_VERSION, "status": "ok", "command": "gc-runs",
+        "repo_root": str(repo_root), "applied": bool(args.apply),
+        "include_unsaved": bool(args.include_unsaved),
+        "scanned": len(all_dirs), "skipped_out_of_scope": skipped_out_of_scope,
+        "safe_count": sum(1 for c in candidates if c["tier"] == "safe"),
+        "unsaved_count": sum(1 for c in candidates if c["tier"] == "unsaved"),
+        "blocking_count": sum(1 for c in candidates if c["tier"] == "blocking"),
+        "candidates": candidates, "deleted": deleted, "freed_bytes": freed_bytes,
+    })
+    return 0
+
+
 def cmd_project_list(args) -> int:
     repo_root = Path(args.repo).expanduser().resolve()
     projects_dir = repo_root / "projects"
@@ -499,6 +707,18 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-keep-run", dest="no_keep_run", action="store_true",
                    help="delete the synthetic run directory after promotion")
     s.set_defaults(func=cmd_okf_export)
+
+    s = sub.add_parser("gc-runs", help="delete single-paper-summary/summarize-set run "
+                                       "directories whose paper data is already promoted "
+                                       "into the registry (dry-run by default)")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--apply", action="store_true",
+                   help="actually delete; without it, only a report is printed")
+    s.add_argument("--include-unsaved", dest="include_unsaved", action="store_true",
+                   help="also delete runs whose only issue is a write-up/appraisal never "
+                        "copied to a project (the paper data itself is still safe)")
+    s.add_argument("--limit", type=int, help="cap how many run dirs are deleted in one call")
+    s.set_defaults(func=cmd_gc_runs)
     return p
 
 

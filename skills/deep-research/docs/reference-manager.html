@@ -50,6 +50,7 @@
         <div class="hub-stem"></div>
         <div class="spoke-grid">
           <div class="spoke-card"><strong>Register</strong><p>Add a paper by PMID, DOI, or PDF.</p><code>/deep-research:pool-add</code></div>
+          <div class="spoke-card"><strong>Extract</strong><p>Fetch full text, promote a verified extraction — no appraisal, no summary.</p><code>/deep-research:extract</code></div>
           <div class="spoke-card"><strong>Annotate</strong><p>Tags, star rating, free-text note — your own opinion, kept out of the registry.</p><code>/deep-research:annotate</code></div>
           <div class="spoke-card"><strong>Search</strong><p>Facet, keyword, MeSH, and similarity search in one call.</p><code>/deep-research:search</code></div>
           <div class="spoke-card"><strong>Embed</strong><p>Semantic-similarity index over titles, abstracts, extractions.</p><code>/deep-research:embed</code></div>
@@ -57,6 +58,7 @@
           <div class="spoke-card"><strong>Alerts</strong><p>Saved PubMed searches — see what's new since last run.</p><code>/deep-research:alerts</code></div>
           <div class="spoke-card"><strong>Export</strong><p>Publish a hand-picked set to ReadCube or an OKF wiki bundle.</p><code>/deep-research:export</code> · <code>/deep-research:okf-export</code></div>
           <div class="spoke-card"><strong>Doctor / Reindex</strong><p>Integrity check and index rebuild — housekeeping, not part of the flow.</p><code>/deep-research:doctor</code> · <code>/deep-research:reindex</code></div>
+          <div class="spoke-card"><strong>Missing Full Text</strong><p>Table of papers with no PDF, each with a manual-retrieval link.</p><code>/deep-research:missing-fulltext</code></div>
         </div>
       </div>
 
@@ -240,8 +242,27 @@ python3 scripts/registry.py import-folder --repo ~/research/my-lit-repo --dir ~/
       <p class="lead" style="font-size:13px;">Direct script call: <code>registry.py doctor --repo ~/lit/ [--deep]</code>.</p>
       <p>It exits non-zero only for actual data loss — missing or corrupt assets, dangling attachments — so it is usable from cron. Stale index rows are reported but stay "healthy", because <code>reindex</code> fixes those and nothing is at risk. A missing original cannot be rebuilt from the registry, so that finding means restore-from-backup or re-import, which is your decision, not the script's.</p>
 
+      <h2>Manual-Retrieval Gaps (<code>/deep-research:missing-fulltext</code>)</h2>
+      <p>Every automated acquisition rung can still come up empty — paywalled, no OA copy, institutional access needed. This is the punch list for a human to go finish the job: every registered paper with no PDF stored (<code>asset_status: missing</code>), one row each, with a link straight to the paper.</p>
+      <pre><code>/deep-research:missing-fulltext --repo ~/lit/
+/deep-research:missing-fulltext --repo ~/lit/ --status included   # only papers actually kept</code></pre>
+      <p class="lead" style="font-size:13px;">Direct script call: <code>registry.py missing-fulltext --repo ~/lit/ [--status &lt;s&gt;] [--limit N]</code>.</p>
+      <p>Rendered as a table:</p>
+      <table>
+        <thead><tr><th>Title</th><th>Journal (Year)</th><th>Link</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>A trial of CBT for adolescent depression</td><td>J Test (2024)</td><td><a href="https://doi.org/10.1001/jama.2023.24567">10.1001/jama.2023.24567</a></td><td>included</td></tr>
+          <tr><td>An older cohort study with no DOI</td><td>Another J (2011)</td><td>no DOI/PMID — see <code>evidence_id</code></td><td>screening</td></tr>
+        </tbody>
+      </table>
+      <p>The link prefers <code>doi.org</code>, falls back to PubMed, and falls back again to a plain "nothing to link to" when the record has neither. Once a copy is found by hand, attach it to the <em>same</em> record — this never creates a duplicate:</p>
+      <pre><code>python3 scripts/registry.py add-pdf --repo ~/lit/ --file ~/Downloads/paper.pdf --doi 10.1001/jama.2023.24567</code></pre>
+      <div class="callout">
+        <strong>Coverage, not corruption.</strong> This is a different question from <code>/deep-research:doctor</code>'s <code>missing_files</code>: <code>doctor</code> flags a PDF that <em>used to be there</em> and is now gone — data loss. <code>missing-fulltext</code> flags a paper that never had a PDF attached — a gap in coverage, not a bug. Read-only either way; neither command fetches anything.
+      </div>
+
       <h2 id="okf-knowledge-graph-export">OKF Knowledge-Graph Export (<code>/deep-research:okf-export</code>)</h2>
-      <p>Pick N papers out of the registry by evidence_id and promote them into an existing OKF wiki bundle, reusing <code>okf.py promote</code>'s validator unmodified rather than hand-writing a second concept-emission path. Each evidence_id must already have an extraction on file (run <code>/deep-research:summarize</code> first if not).</p>
+      <p>Pick N papers out of the registry by evidence_id and promote them into an existing OKF wiki bundle, reusing <code>okf.py promote</code>'s validator unmodified rather than hand-writing a second concept-emission path. Each evidence_id must already have an extraction on file — run <code>/deep-research:extract</code> first if not (it fetches full text and promotes the extraction without paying for an appraisal or a narrative summary this export doesn't need).</p>
       <pre><code>/deep-research:okf-export --repo ~/lit/ \
   --evidence-id pmid:38214501 --evidence-id doi:10.1001/jama.2023.24567 \
   --wiki ~/wiki/ --project diagnostics-review</code></pre>
@@ -286,8 +307,9 @@ $ /deep-research:embed similar --repo ~/lit/ --evidence-id pmid:38214501 --k 5
   {"evidence_id": "doi:10.1001/jama.2023.24567", "title": "...", "score": 0.74}
 ]}
 
-$ /deep-research:summarize --repo ~/lit/ --pmid 38214501
+$ /deep-research:extract --repo ~/lit/ --pmid 38214501
 {"status": "ok", ...}   # needed before okf-export: it requires an extraction on disk
+                        # (extract-only — no appraisal, no narrative summary paid for)
 
 $ /deep-research:okf-export --repo ~/lit/ \
     --evidence-id pmid:38214501 --wiki ~/wiki/

@@ -851,6 +851,43 @@ def cmd_list(args) -> int:
     return 0
 
 
+def cmd_missing_fulltext(args) -> int:
+    """Registry records with no PDF/full-text asset stored -- the manual-retrieval punch
+    list. `asset_status` already tracks exactly this per record (set to "available" only
+    by `add-pdf`/`import-folder`/a ladder rung that stores a PDF); this is a read-only
+    report over it, with a doi.org / PubMed URL per record so a human can go get the
+    paper by hand when every automated rung has failed or been skipped."""
+    registry = Registry(args.repo)
+    records = sorted(registry.records.values(), key=lambda r: r.get("evidence_id") or "")
+    records = [r for r in records if r.get("asset_status") != "available"]
+    if args.status:
+        records = [r for r in records if r.get("status") == args.status]
+    if args.limit is not None:
+        records = records[: args.limit]
+
+    results = []
+    for rec in records:
+        doi = _corpus.norm_doi(rec.get("doi"))
+        pmid = rec.get("pmid")
+        results.append({
+            "evidence_id": rec.get("evidence_id"),
+            "title": rec.get("title"),
+            "journal": rec.get("journal"),
+            "publication_date": rec.get("publication_date"),
+            "status": rec.get("status"),
+            "extraction_status": rec.get("extraction_status"),
+            "doi": doi,
+            "pmid": pmid,
+            "pmcid": rec.get("pmcid"),
+            "doi_url": f"https://doi.org/{doi}" if doi else None,
+            "pubmed_url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else None,
+        })
+
+    emit({"schema_version": SCHEMA_VERSION, "status": "ok", "command": "missing-fulltext",
+          "repo": str(registry.repo_root), "count": len(results), "results": results})
+    return 0
+
+
 def extraction_slug(evidence_id: str) -> str:
     """`pmid:12345678` -> `pmid-12345678`; `doi:10.1000/example` -> `doi-10.1000-example`
     (plan "Target Repository Layout" example filenames — literal, not `render.py bib_key`,
@@ -1770,6 +1807,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--repo", required=True)
     s.add_argument("--limit", type=int, default=50)
     s.set_defaults(func=cmd_list)
+
+    s = sub.add_parser("missing-fulltext", help="records with no PDF/full-text asset "
+                                                 "stored, with a doi.org/PubMed URL each")
+    s.add_argument("--repo", required=True)
+    s.add_argument("--status", choices=STATUS_VALUES)
+    s.add_argument("--limit", type=int)
+    s.set_defaults(func=cmd_missing_fulltext)
 
     s = sub.add_parser("pool", help="regenerate data/papers/pool.jsonl from the registry")
     s.add_argument("--repo", required=True)

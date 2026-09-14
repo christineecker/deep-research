@@ -87,15 +87,16 @@
           <text class="sketch-text-sub" x="345" y="124" font-size="9.5" text-anchor="middle">registry · snapshots · refmgr index</text>
 
           <text class="sketch-text-title" x="345" y="168" font-size="14" text-anchor="middle">projects/&lt;slug&gt;/</text>
-          <text class="sketch-text-sub" x="345" y="180" font-size="9.5" text-anchor="middle">protocol · synthesis · manuscript.qmd · refs.bib</text>
+          <text class="sketch-text-sub" x="345" y="180" font-size="9.5" text-anchor="middle">the manuscript itself — durable</text>
 
           <text class="sketch-text-title" x="345" y="226" font-size="14" text-anchor="middle">runs/&lt;slug&gt;/</text>
-          <text class="sketch-text-sub" x="345" y="238" font-size="9.5" text-anchor="middle">same shape as a wiki-backed run</text>
+          <text class="sketch-text-sub" x="345" y="238" font-size="9.5" text-anchor="middle">one execution's scratch state — promote out, then gc</text>
 
           <text class="sketch-text-title" x="345" y="283" font-size="14" text-anchor="middle">templates/</text>
+          <text class="sketch-text-sub" x="345" y="295" font-size="9.5" text-anchor="middle">starter files project create copies from</text>
 
           <text class="sketch-text-title" x="345" y="333" font-size="14" text-anchor="middle">exports/</text>
-          <text class="sketch-text-sub" x="345" y="345" font-size="9.5" text-anchor="middle">wiki · bib · html · docx · pdf</text>
+          <text class="sketch-text-sub" x="345" y="345" font-size="9.5" text-anchor="middle">scaffolded, reserved — nothing writes here yet</text>
 
           <text class="sketch-text-title" x="710" y="46" font-size="14" text-anchor="middle">papers/</text>
           <text class="sketch-text-sub" x="710" y="60" font-size="9.5" text-anchor="middle">registry.jsonl · extractions/ · appraisals/&lt;project&gt;/ · annotations.jsonl</text>
@@ -109,6 +110,20 @@
         <figcaption>Root → top-level directories → <code>data/</code>'s three stores. Files inside each directory are listed in the tree below.</figcaption>
       </figure>
 
+      <h3>projects/, runs/, and exports/ — three different jobs</h3>
+      <p>These three sit at the same level and are easy to lump together as "output," but they hold fundamentally different things: one is the deliverable you're writing, one is scratch state from getting there, and one is a reserved landing spot nothing currently uses.</p>
+      <table>
+        <thead><tr><th></th><th><code>projects/&lt;slug&gt;/</code></th><th><code>runs/&lt;slug&gt;/</code></th><th><code>exports/</code></th></tr></thead>
+        <tbody>
+          <tr><td><strong>What it is</strong></td><td>A manuscript question — the write-up itself</td><td>One execution's working state — a full review, or a lightweight <code>summarize</code>/<code>extract</code> call</td><td>Scaffolded subfolders (<code>wiki</code>, <code>bib</code>, <code>html</code>, <code>docx</code>, <code>pdf</code>) with nothing in them</td></tr>
+          <tr><td><strong>Durable or scratch?</strong></td><td><strong>Durable.</strong> This is what you're producing; nothing else in the repo holds it</td><td><strong>Scratch.</strong> Reusable bits (extractions, appraisals) get promoted out into <code>data/papers/</code>; once that's done the run dir is a redundant copy</td><td><strong>Unused.</strong> Reserved — see below</td></tr>
+          <tr><td><strong>Written by</strong></td><td><code>project create</code> scaffolds it; you and the Stage 7 synthesis step write <code>synthesis.md</code>/<code>manuscript.qmd</code>; <code>paper.py</code> copies a summary here when <code>--project</code> is given</td><td>Every stage script during that one run (<code>corpus.py</code>, <code>fulltext.py</code>, the extract/appraise subagents, <code>assemble.py</code>, <code>verify.py</code>…)</td><td>Nothing today</td></tr>
+          <tr><td><strong>Cleaned up how</strong></td><td>By hand — it's your manuscript, not disposable</td><td><code>/deep-research:gc-runs</code> once its paper data is promoted (lightweight profile only; a full review run is never auto-deleted — see below)</td><td>N/A — nothing accumulates here to clean up</td></tr>
+        </tbody>
+      </table>
+      <p>One paper's worth of registry data (its extraction, its appraisal) can be produced by any number of runs over time — a review, a one-paper summary, an <code>extract</code>-only call — and each promotes into the same <code>data/papers/</code> store. A project, by contrast, is <em>the one write-up for one question</em>: its <code>manuscript.qmd</code> is not derived from anything and is not reproduced by re-running a command. <code>exports/</code> looks like it should be the third leg of that story (rendered deliverables) but isn't yet — every rendering path that exists today (<code>render.py</code>, <code>html_report.py</code>, ReadCube's <code>export</code>, <code>bib-export</code>) writes to a run's own <code>outputs/</code>, or to an explicit <code>--out</code>/<code>--destination</code> path you name, never into this scaffolded folder automatically.</p>
+
+      <h3>Full directory tree</h3>
       <pre><code>&lt;repo&gt;/
   data/
     refmgr/                 # created on first PDF intake or `registry.py reindex`
@@ -129,14 +144,49 @@
       annotations.jsonl     # your tags / star ratings / notes
       embeddings.jsonl      # cached embedding vector per evidence_id
       export_ledger.jsonl   # per-destination fingerprints for `export --incremental`
-  projects/&lt;slug&gt;/          # protocol.md, synthesis.md, manuscript.qmd, refs.bib,
-                            #   corpus.lock.jsonl, figures/, tables/
-  runs/&lt;slug&gt;/              # same shape as a wiki-backed run, rooted here instead
-  templates/
-  exports/{wiki,bib,html,docx,pdf}/</code></pre>
+
+  projects/&lt;slug&gt;/          # `research.py project create` scaffolds this; DURABLE
+    protocol.md             # your question/PICO-PECO framing — hand-written, never overwritten
+    synthesis.md             # cross-paper synthesis prose — Stage 7, or you
+    manuscript.qmd           # the actual manuscript; quarto front matter pre-filled
+    refs.bib                 # "generated by pool.py bib/render.py; do not hand-edit"
+    corpus.lock.jsonl        # touched empty at creation — reserved, nothing populates it yet
+    figures/                 # empty; your figure assets for the manuscript
+    tables/                  # empty; your table assets for the manuscript
+    paper-summaries/&lt;slug&gt;.md      # only if summarize --project copied one here
+    paper-summary-sets/&lt;slug&gt;.json # only if summarize-set --project copied one here
+
+  runs/&lt;slug&gt;/               # ONE execution's state — SCRATCH, gc-runs candidate once promoted
+    config.json               # profile, stage pointer, budgets, connectors — bumped as stages complete
+    taskboard.jsonl            # one append-only record per unit of work; never hand-edited
+    corpus.jsonl                # one record per paper this run touched, every stage's view of it
+    workspace/                   # per-stage working records, reserved shape per subdirectory:
+      search/&lt;query_id&gt;.json      #   full pipeline only
+      screening/&lt;screener&gt;/         #   full pipeline only
+      extractions/&lt;slug&gt;.json        #   both profiles — Stage 5 / paper.py extract
+      appraisals/&lt;slug&gt;.json          #   both profiles — Stage 6 / paper.py appraise
+      summaries/&lt;slug&gt;.json            #   lightweight profile only — the §14 record
+    outputs/
+      report.md                        #   full pipeline
+      digest.md                         #   full pipeline
+      result.json                        #   full pipeline — assemble.py's evidence ledger
+      verification.json                   #   both profiles
+      single-paper-summary.{md,html}        #   lightweight profile only
+
+    # a `summarize-set` also leaves a second, sibling run dir with no config.json at all —
+    # just the set's own manifest, one level up from each constituent paper's own run dir:
+  runs/paper-set-&lt;label&gt;/
+    summary-set.json          # §15 record: included/failed evidence_ids, overview, provenance
+
+  templates/                 # starter files `project create` copies from — durable, static
+  exports/{wiki,bib,html,docx,pdf}/   # scaffolded at init; empty — see above</code></pre>
 
       <div class="callout">
         <strong>Why <code>data/sources/</code> looks like a run directory.</strong> It is one, deliberately. Every write-once/hash/verify function in <code>store.py</code> is a pure function of a run-directory-shaped path, so the global store is just <code>data/sources</code> passed in as that path — zero duplication and zero risk to the audited <a href="evidence-kernel.html">evidence-kernel</a> code. Snapshots are written to <code>snapshots/</code>; global reads fall back to the legacy <code>sources/</code> dirname for repos written before that rename, and writes never use it.
+      </div>
+
+      <div class="callout">
+        <strong><code>runs/</code> detail beyond this page.</strong> The full Stage 0-8 shape (<code>workspace/search/</code>, <code>screening/&lt;screener&gt;/</code>, PRISMA, taskboard mechanics) is documented in full in <a href="pipeline.html">Full pipeline</a>. The lightweight <code>single-paper-summary</code>/<code>paper-summary-set</code> shape — same <code>runs/</code> root, far fewer files — is documented in <a href="paper-summaries.html">Paper summaries</a>. This page only distinguishes the directory's <em>role</em> from its siblings; it does not re-document either shape's stage-by-stage behavior.
       </div>
 
       <h2>Source Of Truth vs. Derived</h2>
