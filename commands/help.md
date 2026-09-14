@@ -6,6 +6,7 @@ Print this cheat sheet directly. Do not read SKILL.md or run any script.
 |---|---|---|
 | `init` | Create a standalone repo (or import from a wiki) | no — this is the prerequisite |
 | `pool-add` | Register papers (bibliographic record only, no reading) | no |
+| `extract` | Fetch full text + produce/promote a verified extraction, one paper or a set — no appraisal, no summary | no |
 | `summarize-set` | Discover/select + read + summarize a bounded set of papers | no |
 | `summarize` | Read + summarize exactly one paper | no |
 | `bib-export` | Export BibTeX from the registry | no |
@@ -28,16 +29,19 @@ For the full Stage 0–8 review pipeline (search → screen → extract → appr
 synthesize → report), use the `deep-research` skill directly (ask for "deep research on
 X" or "a literature review") rather than these commands — they're deliberately narrow.
 
-## `pool-add` vs `summarize-set` — which do I want?
+## `pool-add` vs `extract` vs `summarize-set` — which do I want?
 
 - Want a shelf of papers to search/filter/export later, with no reading done yet? →
   `pool-add`.
+- Want the structured data (extraction) in the registry — for `search --q`, `ask`, or
+  `okf-export` — but not a narrative summary or an appraisal yet? → `extract`.
 - Want actual content — a summary, optionally an appraisal, of a bounded set? →
   `summarize-set`.
-- Not sure which papers would even be picked, and don't want to pay for summaries yet? →
-  `summarize-set --select-only` first, then re-run without it once the set looks right.
-- Already know it's exactly one paper? → `summarize` (same flags as `summarize-set`,
-  minus the discovery/selection machinery).
+- Not sure which papers would even be picked, and don't want to pay for summaries (or
+  extractions) yet? → `summarize-set --select-only` first, then re-run `extract` or
+  `summarize-set` without it once the set looks right.
+- Already know it's exactly one paper? → `summarize --extract-only` (or plain
+  `summarize`) — same flags as `summarize-set`, minus the discovery/selection machinery.
 - Have a *question* rather than a paper set, and the repo has already read the relevant
   papers? → `ask`. It answers from what is on the shelf, with verified citations; it never
   goes to PubMed, so if the shelf is empty the answer is "nothing here", and a full

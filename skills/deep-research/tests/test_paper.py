@@ -172,6 +172,35 @@ class PipelineStagesTest(unittest.TestCase):
             self.assertEqual(payload["status"], "pending_summary")
             self.assertNotIn("appraisal_path=", payload["detail"])
 
+    def test_extract_only_stops_after_extraction_and_promotes(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _init_repo(root)
+            _register(repo)
+            args = paper.build_parser().parse_args([
+                "summarize", "--repo", str(repo), "--evidence-id", "pmid:12345678",
+                "--offline", "--extract-only"])
+
+            payload = paper.summarize_one(repo, args)
+            self.assertEqual(payload["status"], "pending_retrieval")
+            run_dir = Path(payload["run_dir"])
+
+            _mark_fulltext(run_dir, "pmid:12345678")
+            _write_extraction(run_dir, "pmid:12345678")
+            payload = paper.summarize_one(repo, args)
+
+            # completed right after extraction -- no appraisal or summary dispatch, ever
+            self.assertEqual(payload["status"], "completed")
+            self.assertIsNone(payload["summary_path"])
+            self.assertTrue(Path(payload["output_path"]).exists())
+
+            # extraction promoted to the canonical store without a summary existing
+            self.assertTrue((repo / "data" / "papers" / "extractions"
+                            / "pmid-12345678.json").exists())
+            reg = registry_mod.Registry(repo)
+            rec = reg.lookup(evidence_id="pmid:12345678")
+            self.assertEqual(rec["extraction_status"], "extracted")
+
 
 class SummarizeFromPdfTest(unittest.TestCase):
     """Phase 5: `paper.py summarize --pdf` must route through the same shared refmgr

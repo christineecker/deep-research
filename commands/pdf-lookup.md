@@ -13,3 +13,8 @@ Steps:
    ```
 2. Print the script's own output verbatim. If nothing is found, say so plainly — that's
    the answer, not an error.
+
+This is a read-only check — it never fetches anything. If the paper isn't registered
+yet, or is registered but has no extraction (`extraction_status: not_started`), point at
+`/deep-research:pool-add` (register only) or `/deep-research:extract` (fetch full text
+and produce a verified extraction) rather than re-implementing the fetch here.

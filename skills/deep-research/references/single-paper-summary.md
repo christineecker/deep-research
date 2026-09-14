@@ -11,6 +11,7 @@ effect-direction synthesis, no GRADE summary-of-findings table, no meta-analysis
 |---|---|
 | "summarize this paper", "what does this study say", one PMID/DOI/PMCID/PDF | `scripts/paper.py summarize` |
 | "summarize these three papers", a small user-supplied set, or a bounded topic/question scan for candidate papers | `scripts/paper.py summarize-set` |
+| Just get the structured extraction into the registry — no appraisal, no write-up yet | `scripts/paper.py summarize[-set] --extract-only` (`/deep-research:extract`) |
 | "literature review", "systematic review", "what does the evidence say about X" | `SKILL.md` full pipeline — never these profiles |
 
 ## Commands
@@ -28,6 +29,12 @@ python3 scripts/paper.py summarize-set --repo <repo> --bib refs.bib
 python3 scripts/paper.py summarize-set --repo <repo> --folder papers/ --recursive
 python3 scripts/paper.py summarize-set --repo <repo> --question "..."
 python3 scripts/paper.py summarize-set --repo <repo> --topic "..."
+
+# --extract-only: fetch full text + promote a verified extraction, then stop.
+# No appraisal, no summary, no rendered output. Works on both subcommands, so it
+# covers one paper or a bounded set the same way summarize/summarize-set do.
+python3 scripts/paper.py summarize --repo <repo> --pmid <pmid> --extract-only
+python3 scripts/paper.py summarize-set --repo <repo> --pmid 123 --pmid 456 --extract-only
 ```
 
 Full option reference, storage layout, data model, and phased build plan:
@@ -58,6 +65,13 @@ next: `pending_extraction`, `pending_appraisal`, `pending_summary`, or `complete
 same command after the subagent finishes its file picks up where it left off — this mirrors how
 Stage 5/6 already work in the full pipeline (`SKILL.md` "Pipeline"), just for one paper instead of
 a corpus.
+
+`--extract-only` short-circuits this loop: as soon as a verified extraction exists (reused, or
+freshly written by the Stage-5 subagent and re-checked against the snapshot store), it is promoted
+into `data/papers/extractions/` and the command returns `completed` immediately — the appraisal
+and summary branches below are never reached, no `pending_appraisal`/`pending_summary` status is
+ever returned, and no `workspace/summaries/` file is written, `--project`/`--purpose`/`--audience`
+notwithstanding.
 
 ## Workflow (selected-paper)
 

@@ -14,7 +14,9 @@ Parse `$ARGUMENTS` for:
   `researcher`), `--appraise`/`--no-appraise` (appraise ON by default), `--reuse`/
   `--no-reuse` (reuse ON by default — pass `--no-reuse` to force fresh work),
   `--force` (regenerate even if reusable artifacts exist), `--format md|html|both`
-  (default `md`), `--out <path>`, `--offline`.
+  (default `md`), `--out <path>`, `--offline`, `--extract-only` (fetch + extract only,
+  then stop — no appraisal, no summary; prefer `/deep-research:extract` unless this is
+  specifically a PDF, since `summarize-set --extract-only` has no `--pdf` selection).
 
 Steps:
 1. Print, then run:

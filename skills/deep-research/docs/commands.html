@@ -103,7 +103,11 @@ python3 scripts/library.py lookup --wiki &lt;root&gt; (--doi|--pmid|--pmcid|--ti
       <pre><code>/deep-research:summarize --repo &lt;path&gt; --pmid &lt;pmid&gt; --project &lt;slug&gt; --format both
 /deep-research:summarize --repo &lt;path&gt; --pdf paper.pdf --project &lt;slug&gt;
 /deep-research:summarize-set --repo &lt;path&gt; --pmid 123 --pmid 456 --overview
-/deep-research:summarize-set --repo &lt;path&gt; --topic "..." --limit 10 --select-only</code></pre>
+/deep-research:summarize-set --repo &lt;path&gt; --topic "..." --limit 10 --select-only
+
+/deep-research:extract --repo &lt;path&gt; --pmid &lt;pmid&gt;                       # fetch + extract, no summary/appraisal
+/deep-research:extract --repo &lt;path&gt; --pmid 123 --pmid 456 --pmid 789    # same, for a set</code></pre>
+      <p><code>extract</code> is <code>summarize-set --extract-only</code> under the hood — same selection surface (explicit ids, <code>--ids-file</code>, <code>--bib</code>, <code>--folder</code>, or <code>--question</code>/<code>--topic</code> discovery), stopped one stage earlier: it promotes a verified extraction into the registry and never dispatches an appraisal or summary subagent.</p>
       <p>Flags, statuses, and output sections: <a href="paper-summaries.html">Paper summaries</a>.</p>
 
       <h2>Reference Manager</h2>

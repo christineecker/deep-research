@@ -23,7 +23,9 @@ Parse `$ARGUMENTS` for:
   `--audience {researcher,clinician,student,grant-writer,general}` (default
   `researcher`), `--appraise`/`--no-appraise` (appraise ON by default), `--reuse`/
   `--no-reuse` (reuse ON by default — pass `--no-reuse` to force fresh work),
-  `--force`, `--format md|html|both` (default `md`), `--out <path>`, `--offline`.
+  `--force`, `--format md|html|both` (default `md`), `--out <path>`, `--offline`,
+  `--extract-only` (fetch + extract every paper in the set, then stop — no appraisal, no
+  summary; this is what `/deep-research:extract` wraps, prefer that command for this case).
 
 Steps:
 1. Print, then run:

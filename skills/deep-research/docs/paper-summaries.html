@@ -45,6 +45,7 @@
         <tbody>
           <tr><td>"Summarize this paper", "what does this study say" — one PMID/DOI/PMCID/PDF</td><td><code>/deep-research:summarize</code></td></tr>
           <tr><td>"Summarize these three", a small set you supply, or a bounded topic/question scan for candidates</td><td><code>/deep-research:summarize-set</code></td></tr>
+          <tr><td>Just get the structured data in — no write-up, no appraisal yet</td><td><code>/deep-research:extract</code></td></tr>
           <tr><td>"What does the evidence say about X", "literature review", "systematic review"</td><td>The <a href="pipeline.html">full pipeline</a> — never these profiles</td></tr>
           <tr><td>"What do <em>my</em> papers say about X" — answered from what the repo already holds</td><td><a href="reference-manager.html"><code>/deep-research:ask</code></a></td></tr>
         </tbody>
@@ -96,6 +97,26 @@
       </table>
       <div class="callout">
         This is the same loop Stage 5 and Stage 6 already use in the full pipeline, scoped to one paper instead of a corpus. Re-running the command is always safe and always resumes — it is the intended interface, not a retry hack.
+      </div>
+
+      <h2>Extraction Only (<code>/deep-research:extract</code>)</h2>
+      <p>Fetches full text and produces a verified, promoted extraction — one paper or a bounded set — and stops there. No appraisal, no narrative summary, no Markdown/HTML export. It's the same acquisition ladder and the same Stage-5 extraction subagent as above, cut off one stage earlier.</p>
+      <pre><code>/deep-research:extract --repo &lt;repo&gt; --pmid 12345678
+/deep-research:extract --repo &lt;repo&gt; --pmid 123 --pmid 456 --pmid 789
+/deep-research:extract --repo &lt;repo&gt; --folder papers/ --recursive
+/deep-research:extract --repo &lt;repo&gt; --question "does exercise reduce depressive symptoms?" --limit 10</code></pre>
+      <div class="flow">
+        <div class="flow-step"><span class="step-no">1</span><strong>Register</strong><p>same as summarize — reused if already registered</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><span class="step-no">2</span><strong>Acquire full text</strong><p>the same acquisition ladder</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><span class="step-no">3</span><strong>Extract</strong><p>Stage-5 subagent, span-verified</p></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><span class="step-no">STOP</span><strong>Promote &amp; done</strong><p><code>extraction_status: extracted</code> — no appraisal, no summary</p></div>
+      </div>
+      <p>Use it when the only goal right now is a paper's <code>data/papers/extractions/</code> record — feeding <a href="reference-manager.html#search"><code>search --q</code></a>, <a href="reference-manager.html#asking"><code>ask</code></a>, or a later <a href="reference-manager.html"><code>okf-export</code></a> — and nothing downstream needs an appraisal or a reader-facing write-up yet. Run <code>/deep-research:summarize</code> or <code>summarize-set</code> afterward whenever that changes: reuse picks the extraction straight back up, nothing is redone.</p>
+      <div class="callout">
+        <strong>Narrower than <code>summarize</code>, wider than <code>pool-add</code>.</strong> <code>/deep-research:pool-add</code> never touches full text — bibliographic metadata only. <code>/deep-research:extract</code> fetches and structures the paper's content but writes no narrative and no judgement. <code>/deep-research:summarize</code>/<code>summarize-set</code> do all of it. Same registry record either way — each command just carries it one stage further.
       </div>
 
       <h2>What A Summary Contains</h2>
@@ -180,7 +201,7 @@ python3 scripts/verify.py paper-summary-set \
         <li>Because appraisal is <a href="architecture.html">project-scoped</a>, an appraisal reused across projects is a deliberate choice you make with <code>--project</code>, not an accident.</li>
       </ul>
 
-      <footer class="footer">Slash commands: <code>commands/summarize.md</code>, <code>commands/summarize-set.md</code>. Source manual: <code>references/single-paper-summary.md</code>. Record contracts: <code>references/schema/14-single-paper-summary.md</code>, <code>references/schema/15-paper-summary-set.md</code>. Templates: <code>templates/single-paper-summary.md</code>, <code>templates/paper-summary-set.md</code>.</footer>
+      <footer class="footer">Slash commands: <code>commands/summarize.md</code>, <code>commands/summarize-set.md</code>, <code>commands/extract.md</code>. Source manual: <code>references/single-paper-summary.md</code>. Record contracts: <code>references/schema/14-single-paper-summary.md</code>, <code>references/schema/15-paper-summary-set.md</code>. Templates: <code>templates/single-paper-summary.md</code>, <code>templates/paper-summary-set.md</code>.</footer>
     </main>
   </div>
 </body>

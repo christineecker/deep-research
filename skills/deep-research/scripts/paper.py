@@ -331,6 +331,15 @@ def summarize_one(repo_root: Path, args, *, evidence_hint: dict | None = None) -
                    f"output workspace/extractions/{_ps.evidence_slug(evidence_id)}.json")
 
     source_basis = extraction.get("evidence_basis", "fulltext")
+
+    if args.extract_only:
+        if not args.force:
+            _promote(repo_root, run_dir, evidence_id, args.project)
+        return _status_payload(
+            run_dir, evidence_id, "completed", detail="extraction only — no appraisal, no summary",
+            output_path=str(run_dir / "workspace" / "extractions"
+                            / f"{_ps.evidence_slug(evidence_id)}.json"))
+
     appraisal = loaded_appraisal(run_dir, evidence_id)
     appraisal_path = None
     appraisal_skipped_reason = None
@@ -597,7 +606,7 @@ def cmd_summarize_set(args) -> int:
             continue
         if payload["status"] == "completed":
             included.append(payload["evidence_id"])
-            summary_paths.append(payload["summary_path"])
+            summary_paths.append(payload["summary_path"] or payload["output_path"])
         else:
             stage = {"pending_retrieval": "retrieve", "pending_extraction": "extract",
                      "pending_appraisal": "appraise", "pending_summary": "assemble",
@@ -658,6 +667,9 @@ def add_common_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--no-reuse", dest="reuse", action="store_false")
     p.add_argument("--force", action="store_true",
                    help="regenerate extraction/summary even if reusable artifacts exist")
+    p.add_argument("--extract-only", action="store_true",
+                   help="fetch full text and produce/promote a verified extraction; "
+                        "stop there — no appraisal, no summary, no --purpose/--audience effect")
     p.add_argument("--format", choices=("md", "html", "both"), default="md")
     p.add_argument("--out")
     p.add_argument("--offline", action="store_true",
