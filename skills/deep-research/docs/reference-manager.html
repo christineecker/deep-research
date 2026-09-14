@@ -61,8 +61,10 @@
       </div>
 
       <h2>Using It As A Reference Manager</h2>
-      <p>Day-to-day use is five commands, in this order. Everything below expands on one step.</p>
+      <p>Day-to-day use is six commands, in this order. Everything below expands on one step.</p>
       <div class="flow">
+        <div class="flow-step"><span class="step-no">0 · CREATE</span><strong>Start the repo</strong><code>/deep-research:init</code><p>Once, per library.</p></div>
+        <div class="flow-arrow">→</div>
         <div class="flow-step"><span class="step-no">1 · REGISTER</span><strong>Add the paper</strong><code>/deep-research:pool-add</code><p>PMID, DOI query, or a PDF via the script fallback.</p></div>
         <div class="flow-arrow">→</div>
         <div class="flow-step"><span class="step-no">2 · ANNOTATE</span><strong>Tag, rate, note</strong><code>/deep-research:annotate</code><p>See <a href="#annotations">Annotations</a>.</p></div>
@@ -71,7 +73,7 @@
         <div class="flow-arrow">→</div>
         <div class="flow-step"><span class="step-no">4 · ASK</span><strong>Ask instead of re-reading</strong><code>/deep-research:ask</code><p>See <a href="#asking">Asking the library</a>.</p></div>
         <div class="flow-arrow">→</div>
-        <div class="flow-step"><span class="step-no">5 · EXPORT</span><strong>Ship a hand-picked set</strong><code>/deep-research:export</code><p><a href="readcube-export.html">ReadCube</a> or <code>okf-export</code>.</p></div>
+        <div class="flow-step"><span class="step-no">5 · EXPORT</span><strong>Ship a hand-picked set</strong><code>/deep-research:export</code><p>See <a href="#build-a-repo">worked example</a>.</p></div>
       </div>
       <p>Two housekeeping commands run alongside, not in the flow: <code>/deep-research:reindex</code> rebuilds the derived indexes from <code>registry.jsonl</code> after a bulk import or a corrupt database, and <code>/deep-research:doctor</code> checks the asset store for missing or corrupt files. Neither is required for normal use.</p>
       <pre><code># register, then tag/rate for later retrieval
@@ -85,6 +87,64 @@
 # ask the library a question instead of re-reading everything
 /deep-research:ask --repo ~/lit/ "does exercise reduce depressive symptoms in adolescents?"</code></pre>
       <p class="lead" style="font-size:14px;margin-top:6px;">Every command above has an equivalent direct script call (<code>registry.py</code>, <code>annotations.py</code>, <code>ask.py</code>, …) — the slash command is the one to reach for; the script underneath is documented at each section below and in full in <a href="commands.html">Command reference</a>.</p>
+
+      <h2 id="build-a-repo">Worked Example: Build A Publication Repo, Then Export To ReadCube</h2>
+      <p>Start to finish: a fresh repo, papers added three different ways, and a bundle ReadCube can import. Nothing here needs a full review run.</p>
+
+      <h3>1. Create the repo</h3>
+      <p>One command, once, per library. This is the prerequisite for every other command on this page.</p>
+      <pre><code>/deep-research:init ~/research/my-lit-repo</code></pre>
+      <pre><code>{
+  "status": "ok",
+  "command": "init",
+  "repo_root": "/Users/you/research/my-lit-repo",
+  "created_dirs": ["data/papers", "data/sources/assets", "data/sources/snapshots", "runs", "projects", "exports/wiki", "exports/bib"]
+}</code></pre>
+      <p><code>--repo ~/research/my-lit-repo</code> is what every other command on this page takes from here on. Already have a wiki-manager wiki with papers in it? <code>/deep-research:init ~/research/my-lit-repo --from-wiki ~/wiki/</code> seeds the new repo's registry from it instead of starting empty.</p>
+
+      <h3>2. Add papers</h3>
+      <p>All intake paths converge on the same registry record — it does not matter which one you use, and duplicates merge by identifier or by PDF sha256 rather than double-storing.</p>
+      <pre><code># one paper by PMID
+/deep-research:pool-add --repo ~/research/my-lit-repo --pmid 38214501
+
+# a PubMed search, first 15 hits, human studies only
+/deep-research:pool-add --repo ~/research/my-lit-repo \
+  --query "CBT AND adolescent depression" --n 15 --human-only
+
+# explicit list of PMIDs in one call
+/deep-research:pool-add --repo ~/research/my-lit-repo --pmid 38214501,39012233,31234567</code></pre>
+      <p><code>pool-add</code> covers PMIDs and bounded PubMed queries. A DOI-only add, a PDF you already have, a bulk <code>.bib</code> file, or a whole folder of PDFs have no slash-command wrapper yet — call the registry script directly for those:</p>
+      <pre><code>python3 scripts/registry.py add         --repo ~/research/my-lit-repo --doi 10.1001/jama.2023.24567
+python3 scripts/registry.py add-pdf     --repo ~/research/my-lit-repo --file ~/Downloads/smith2024.pdf
+python3 scripts/registry.py import-bib  --repo ~/research/my-lit-repo --file refs.bib
+python3 scripts/registry.py import-folder --repo ~/research/my-lit-repo --dir ~/Downloads/papers/ --recursive</code></pre>
+      <p>Check whether a paper is already in before re-fetching it, and confirm what landed:</p>
+      <pre><code>/deep-research:pdf-lookup --repo ~/research/my-lit-repo --doi 10.1001/jama.2023.24567
+/deep-research:search     --repo ~/research/my-lit-repo --limit 20</code></pre>
+
+      <h3>3. (Optional) Tag and rate as you go</h3>
+      <pre><code>/deep-research:annotate tag  --repo ~/research/my-lit-repo --evidence-id pmid:38214501 --add diagnostics
+/deep-research:annotate rate --repo ~/research/my-lit-repo --evidence-id pmid:38214501 --stars 5</code></pre>
+
+      <h3>4. Export to ReadCube</h3>
+      <p>Publishes a self-contained local bundle — RIS bibliography, primary PDFs, manifest, import report — that the ReadCube desktop app imports. This never touches wiki state and is separate from the OKF export below.</p>
+      <pre><code># everything registered, blocking if any record has no resolvable PDF
+/deep-research:export --repo ~/research/my-lit-repo \
+  --all --destination ~/Desktop/readcube-import --require-pdfs
+
+# just the papers you tagged, with a BibTeX file alongside the RIS
+/deep-research:export --repo ~/research/my-lit-repo \
+  --evidence-id pmid:38214501 --evidence-id pmid:39012233 \
+  --destination ~/Desktop/readcube-import --bib
+
+# re-run later — only publishes what changed since the last successful export
+/deep-research:export --repo ~/research/my-lit-repo \
+  --all --destination ~/Desktop/readcube-import --incremental</code></pre>
+      <p>The bundle lands at <code>&lt;destination&gt;/&lt;batch-name&gt;-&lt;unique-id&gt;/</code>: <code>references.ris</code>, <code>PDFs/</code>, <code>manifest.json</code>, and a <code>README.md</code> that walks through the actual ReadCube import — that last step is manual, deep-research never confirms the import itself. Full flags, bundle layout, and the <code>refmgr</code>-backed alternative source: <a href="readcube-export.html">ReadCube export</a>.</p>
+
+      <div class="callout">
+        <strong>Not the same as the OKF export.</strong> <code>/deep-research:export</code> above ships to the ReadCube desktop app — a local folder, no wiki involved. <code>/deep-research:okf-export</code> (<a href="#okf-knowledge-graph-export">below</a>) instead promotes hand-picked papers into an OKF wiki knowledge-graph bundle, and requires each paper to already have an extraction on file. Pick the one that matches where the papers need to end up.
+      </div>
 
       <h2>What's New Vs. What Already Existed</h2>
       <table>
@@ -180,7 +240,7 @@
       <p class="lead" style="font-size:13px;">Direct script call: <code>registry.py doctor --repo ~/lit/ [--deep]</code>.</p>
       <p>It exits non-zero only for actual data loss — missing or corrupt assets, dangling attachments — so it is usable from cron. Stale index rows are reported but stay "healthy", because <code>reindex</code> fixes those and nothing is at risk. A missing original cannot be rebuilt from the registry, so that finding means restore-from-backup or re-import, which is your decision, not the script's.</p>
 
-      <h2>OKF Knowledge-Graph Export (<code>/deep-research:okf-export</code>)</h2>
+      <h2 id="okf-knowledge-graph-export">OKF Knowledge-Graph Export (<code>/deep-research:okf-export</code>)</h2>
       <p>Pick N papers out of the registry by evidence_id and promote them into an existing OKF wiki bundle, reusing <code>okf.py promote</code>'s validator unmodified rather than hand-writing a second concept-emission path. Each evidence_id must already have an extraction on file (run <code>/deep-research:summarize</code> first if not).</p>
       <pre><code>/deep-research:okf-export --repo ~/lit/ \
   --evidence-id pmid:38214501 --evidence-id doi:10.1001/jama.2023.24567 \
