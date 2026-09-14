@@ -24,7 +24,7 @@ This repo is a Claude Code plugin.
   ```
 - **From a marketplace**:
   ```
-  /plugin marketplace add https://forgejo.sphache.synology.me/sphache/deep-research.git
+  /plugin marketplace add https://github.com/christineecker/deep-research.git
   /plugin install deep-research@deep-research
   ```
   (this repo is its own marketplace — `.claude-plugin/marketplace.json`)
