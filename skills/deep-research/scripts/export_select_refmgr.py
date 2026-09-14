@@ -112,15 +112,14 @@ def paper_to_export_record(service: "ReferenceManagerService", paper_id: str) ->
             record[field] = metadata[field]
 
     # Identifiers: `identifiers` table has UNIQUE(scheme, value) but does not prevent
-    # multiple DIFFERENT values for the same scheme on one paper. Simplification: take the
-    # first one per scheme, ordered deterministically by `created_at` (`list_for_paper`
-    # already orders by `created_at`).
-    seen_schemes: set[str] = set()
-    for identifier in service.identifiers.list_for_paper(paper_id):
-        scheme = identifier["scheme"]
-        if scheme in ("doi", "pmid", "pmcid") and scheme not in seen_schemes:
+    # multiple DIFFERENT values for the same scheme on one paper (a preprint DOI
+    # alongside a published one, say). `primary_for_scheme` is the one place that
+    # policy is decided (refmgr/repositories/identifiers.py) -- export uses it rather
+    # than picking its own "first by created_at" here, so the two never disagree.
+    for scheme in ("doi", "pmid", "pmcid"):
+        identifier = service.identifiers.primary_for_scheme(paper_id, scheme)
+        if identifier is not None:
             record[scheme] = identifier["value"]
-            seen_schemes.add(scheme)
 
     return record
 

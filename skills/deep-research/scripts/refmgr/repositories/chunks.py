@@ -41,6 +41,13 @@ BOUNDARY_SEARCH = 300
 
 MAX_LIMIT = 200
 
+#: Bumped whenever `split_text`'s behavior changes (size/overlap/boundary logic) so a
+#: row indexed under an earlier version is no longer reported as covering its source --
+#: see migrations/0006_chunk_version.sql. `snapshot_content_hash` alone only tells you
+#: the *text* is unchanged; it says nothing about whether the *splitting* of that text
+#: still matches what current code would produce.
+CHUNKER_VERSION = 1
+
 _BOUNDARY_RE = re.compile(r"\n\n|(?<=[.!?])\s")
 
 
@@ -105,14 +112,15 @@ class ChunkRepository:
     # -- indexing --------------------------------------------------------
 
     def index_source(self, paper_id: str, source_id: str, text: str,
-                     content_hash: str) -> dict:
+                     content_hash: str, *, chunker_version: int = CHUNKER_VERSION) -> dict:
         """(Re)index one snapshot's text for one paper.
 
         Returns `{"indexed": n, "skipped": bool}` — `skipped` is True when rows for
-        this `(paper_id, source_id)` already carry `content_hash`, i.e. the snapshot
-        has not changed since the last pass.
+        this `(paper_id, source_id)` already carry `content_hash` at `chunker_version`,
+        i.e. neither the snapshot's text nor the splitting logic that produced these
+        rows has changed since the last pass.
         """
-        if self.is_current(paper_id, source_id, content_hash):
+        if self.is_current(paper_id, source_id, content_hash, chunker_version=chunker_version):
             return {"indexed": 0, "skipped": True}
 
         ranges = split_text(text)
@@ -123,9 +131,10 @@ class ChunkRepository:
                 chunk_id = identity.new_id()
                 self.conn.execute(
                     "INSERT INTO chunks (id, paper_id, source_id, snapshot_content_hash, "
-                    "start_char, end_char, text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "start_char, end_char, text, created_at, chunker_version) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (chunk_id, paper_id, source_id, content_hash, start, end,
-                     text[start:end], now),
+                     text[start:end], now, chunker_version),
                 )
                 self.conn.execute(
                     "INSERT INTO chunks_fts (chunk_id, paper_id, text) VALUES (?, ?, ?)",
@@ -133,13 +142,31 @@ class ChunkRepository:
                 )
         return {"indexed": len(ranges), "skipped": False}
 
-    def is_current(self, paper_id: str, source_id: str, content_hash: str) -> bool:
+    def is_current(self, paper_id: str, source_id: str, content_hash: str, *,
+                   chunker_version: int = CHUNKER_VERSION) -> bool:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM chunks WHERE paper_id = ? AND source_id = ? "
-            "AND snapshot_content_hash = ?",
-            (paper_id, source_id, content_hash),
+            "AND snapshot_content_hash = ? AND chunker_version = ?",
+            (paper_id, source_id, content_hash, chunker_version),
         ).fetchone()
         return row["c"] > 0
+
+    def indexed_source_ids(self, paper_id: str, *,
+                           chunker_version: int = CHUNKER_VERSION) -> set:
+        """Source ids for `paper_id` currently covered at `chunker_version`.
+
+        Existence-only, no snapshot bytes read: `source_id` is itself derived from
+        `sha256(url + text)` (store.py `compute_source_id`), so a fixed source_id's
+        content can never change out from under a matching row -- the only staleness
+        axis this cannot see from SQL alone is the chunker version, which is why that
+        is a query parameter here rather than something the caller re-derives.
+        """
+        rows = self.conn.execute(
+            "SELECT DISTINCT source_id FROM chunks WHERE paper_id = ? "
+            "AND chunker_version = ?",
+            (paper_id, chunker_version),
+        ).fetchall()
+        return {row["source_id"] for row in rows}
 
     def remove_source(self, paper_id: str, source_id: str) -> None:
         with db.transaction(self.conn):
@@ -156,6 +183,61 @@ class ChunkRepository:
             "DELETE FROM chunks WHERE paper_id = ? AND source_id = ?",
             (paper_id, source_id),
         )
+
+    def reassign_paper(self, old_paper_id: str, new_paper_id: str) -> list[str]:
+        """Move every chunk (and its `chunks_fts` row) from one paper to another.
+
+        Used by merge/revert: a chunk row's `(source_id, start_char, end_char)`
+        span stays correct verbatim across a paper-identity change, so moving
+        ownership is a pure column update, never a re-split or re-verification.
+        """
+        with db.transaction(self.conn):
+            return self._reassign_paper_locked(old_paper_id, new_paper_id)
+
+    def _reassign_paper_locked(self, old_paper_id: str, new_paper_id: str) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT id FROM chunks WHERE paper_id = ?", (old_paper_id,)
+        ).fetchall()
+        ids = [row["id"] for row in rows]
+        if ids:
+            self.conn.execute(
+                "UPDATE chunks SET paper_id = ? WHERE paper_id = ?",
+                (new_paper_id, old_paper_id),
+            )
+            self.conn.execute(
+                "UPDATE chunks_fts SET paper_id = ? WHERE paper_id = ?",
+                (new_paper_id, old_paper_id),
+            )
+        return ids
+
+    def reassign_ids(self, chunk_ids: list[str], new_paper_id: str) -> None:
+        """Move specific chunk rows (by id) to `new_paper_id`, regardless of
+        their current owner. Used by merge revert, where only the exact set
+        of rows a prior merge moved should move back -- never every chunk
+        the current owner happens to hold."""
+        with db.transaction(self.conn):
+            self._reassign_ids_locked(chunk_ids, new_paper_id)
+
+    def _reassign_ids_locked(self, chunk_ids: list[str], new_paper_id: str) -> None:
+        for chunk_id in chunk_ids:
+            self.conn.execute(
+                "UPDATE chunks SET paper_id = ? WHERE id = ?", (new_paper_id, chunk_id)
+            )
+            self.conn.execute(
+                "UPDATE chunks_fts SET paper_id = ? WHERE chunk_id = ?",
+                (new_paper_id, chunk_id),
+            )
+
+    def current_owners(self, chunk_ids: list[str]) -> dict:
+        """`{chunk_id: paper_id}` for rows that still exist among `chunk_ids`."""
+        if not chunk_ids:
+            return {}
+        placeholders = ",".join("?" * len(chunk_ids))
+        rows = self.conn.execute(
+            f"SELECT id, paper_id FROM chunks WHERE id IN ({placeholders})",
+            chunk_ids,
+        ).fetchall()
+        return {row["id"]: row["paper_id"] for row in rows}
 
     def remove_paper(self, paper_id: str) -> None:
         with db.transaction(self.conn):

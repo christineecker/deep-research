@@ -184,6 +184,130 @@ class BrokenLibraryTest(unittest.TestCase):
             self.assertTrue(any("safe to keep" in line for line in report["advice"]))
 
 
+class HardeningPackage6ChecksTest(unittest.TestCase):
+    def test_healthy_library_reports_sqlite_integrity_ok(self):
+        with TemporaryDirectory() as tmp:
+            repo, _ = _repo_with_attachment(Path(tmp))
+            report, code = _doctor(repo)
+            self.assertEqual(code, 0)
+            self.assertTrue(report["integrity"]["integrity_ok"])
+            self.assertEqual(report["integrity"]["foreign_key_violations"], [])
+            self.assertEqual(report["asset_check_mode"], "shallow")
+            deep_report, _ = _doctor(repo, "--deep")
+            self.assertEqual(deep_report["asset_check_mode"], "deep")
+
+    def test_hard_deleted_paper_is_caught_by_foreign_key_check(self):
+        with TemporaryDirectory() as tmp:
+            repo, _ = _repo_with_attachment(Path(tmp))
+            conn = _conn(repo)
+            with conn:
+                conn.execute("DELETE FROM papers")
+            conn.close()
+
+            report, code = _doctor(repo)
+            self.assertEqual(code, 1)
+            self.assertFalse(report["healthy"])
+            self.assertGreater(len(report["integrity"]["foreign_key_violations"]), 0)
+            self.assertIn("integrity.foreign_key_violations", report["problems"])
+
+    def test_figure_pointing_at_wrong_owner_attachment_is_caught(self):
+        with TemporaryDirectory() as tmp:
+            repo, _ = _repo_with_attachment(Path(tmp))
+            service = ReferenceManagerService(repo / "data" / "refmgr")
+            try:
+                paper_id = service.papers.list()[0]["id"]
+                other_paper_id = service.add_paper(title="Other paper", paper_type="article")
+                attachment_id = service.attachments.list_for_paper(paper_id)[0]["id"]
+                asset_sha256 = service.attachments.list_for_paper(paper_id)[0]["asset_sha256"]
+                figure_attachment_id = service.attachments.link(
+                    other_paper_id, asset_sha256, role="figure")
+                figure_id = service.figures.record(
+                    paper_id=other_paper_id, source_attachment_id=attachment_id,
+                    figure_attachment_id=figure_attachment_id, asset_sha256=asset_sha256,
+                    kind="figure", extractor="test")
+            finally:
+                service.close()
+
+            report, code = _doctor(repo)
+            self.assertEqual(code, 1)
+            wrong = report["figure_ownership"]["figures_with_wrong_source_owner"]
+            self.assertEqual([f["figure_id"] for f in wrong], [figure_id])
+            self.assertIn("figure_ownership.figures_with_wrong_source_owner", report["problems"])
+
+    def test_duplicate_primary_identifiers_for_same_scheme_are_caught(self):
+        with TemporaryDirectory() as tmp:
+            repo, _ = _repo_with_attachment(Path(tmp))
+            service = ReferenceManagerService(repo / "data" / "refmgr")
+            try:
+                paper_id = service.papers.list()[0]["id"]
+                service.identifiers.add(paper_id, "doi", "10.1000/first")
+                service.identifiers.add(paper_id, "doi", "10.1000/second")
+                # Force both to be flagged primary -- a state normal code never
+                # produces (add()/normalize_primaries prevent it), so this
+                # simulates a direct/out-of-band edit doctor should still catch.
+                service.conn.execute(
+                    "UPDATE identifiers SET is_primary = 1 WHERE paper_id = ? "
+                    "AND scheme = 'doi'", (paper_id,))
+            finally:
+                service.close()
+
+            report, code = _doctor(repo)
+            self.assertEqual(code, 1)
+            dupes = report["identifiers"]["duplicate_primary_schemes"]
+            self.assertEqual(len(dupes), 1)
+            self.assertEqual(dupes[0]["paper_id"], paper_id)
+            self.assertEqual(dupes[0]["scheme"], "doi")
+            self.assertIn("identifiers.duplicate_primary_schemes", report["problems"])
+
+    def test_stale_chunker_version_is_reported_but_not_fatal(self):
+        with TemporaryDirectory() as tmp:
+            repo, _ = _repo_with_attachment(Path(tmp))
+            service = ReferenceManagerService(repo / "data" / "refmgr")
+            try:
+                paper_id = service.papers.list()[0]["id"]
+                service.chunks.index_source(paper_id, "src-1", "Body text.", "sha256:x")
+                service.conn.execute("UPDATE chunks SET chunker_version = 0")
+            finally:
+                service.close()
+
+            report, code = _doctor(repo)
+            self.assertEqual(code, 0)
+            self.assertTrue(report["healthy"])
+            self.assertEqual(report["chunk_staleness"]["chunks_at_stale_version"], 1)
+            self.assertEqual(report["chunk_staleness"]["papers_with_stale_chunks"], 1)
+            self.assertTrue(any("chunker version" in line for line in report["advice"]))
+
+    def test_untracked_asset_file_is_reported_but_not_fatal(self):
+        with TemporaryDirectory() as tmp:
+            repo, _ = _repo_with_attachment(Path(tmp))
+            stray_dir = repo / "data" / "refmgr" / "assets" / "sha256" / "ab"
+            stray_dir.mkdir(parents=True, exist_ok=True)
+            stray_file = stray_dir / ("0" * 64 + ".pdf")
+            stray_file.write_bytes(b"leftover from an aborted stage_and_commit")
+
+            report, code = _doctor(repo)
+            self.assertEqual(code, 0)
+            self.assertTrue(report["healthy"])
+            self.assertEqual(len(report["untracked_files"]), 1)
+            self.assertTrue(any("no matching database row" in line for line in report["advice"]))
+
+    def test_identifiers_on_soft_deleted_paper_are_informational_only(self):
+        with TemporaryDirectory() as tmp:
+            repo, _ = _repo_with_attachment(Path(tmp))
+            service = ReferenceManagerService(repo / "data" / "refmgr")
+            try:
+                paper_id = service.papers.list()[0]["id"]
+                service.papers.soft_delete(paper_id)
+            finally:
+                service.close()
+
+            report, code = _doctor(repo)
+            self.assertEqual(code, 0)
+            self.assertTrue(report["healthy"])
+            self.assertEqual(len(report["identifiers"]["identifiers_on_deleted_papers"]), 1)
+            self.assertNotIn("identifiers.identifiers_on_deleted_papers", report["problems"])
+
+
 class DoctorIsReadOnlyTest(unittest.TestCase):
     def test_running_doctor_changes_nothing_on_disk(self):
         with TemporaryDirectory() as tmp:

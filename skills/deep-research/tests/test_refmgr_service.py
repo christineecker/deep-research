@@ -166,6 +166,92 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(len(papers), 1)
         self.assertEqual(papers[0]["title"], "Findable")
 
+    def test_add_paper_failure_partway_through_leaves_no_partial_paper(self):
+        # Regression: add_paper used to create the paper and attach each
+        # identifier in separate transactions. A failure attaching the
+        # second identifier used to leave a paper row committed with only
+        # the first identifier attached (or none). The whole sequence --
+        # paper create, every identifier attach, and the reindex -- must
+        # now be one transaction: a failure partway through must roll back
+        # everything, including the paper row itself.
+        original_add_locked = self.service.identifiers._add_locked
+        calls = {"n": 0}
+
+        def flaky_add_locked(paper_id, scheme, normalized, is_primary=False):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("simulated failure attaching second identifier")
+            return original_add_locked(paper_id, scheme, normalized, is_primary=is_primary)
+
+        self.service.identifiers._add_locked = flaky_add_locked
+        try:
+            with self.assertRaises(RuntimeError):
+                self.service.add_paper(
+                    title="Should Not Persist",
+                    paper_type="article",
+                    identifiers=[("doi", "10.1000/partial-a"), ("pmid", "999999")],
+                )
+        finally:
+            self.service.identifiers._add_locked = original_add_locked
+
+        papers = self.service.papers.list(limit=100)
+        self.assertEqual(papers, [])
+        self.assertIsNone(
+            self.service.identifiers.find_paper_by_identifier("doi", "10.1000/partial-a")
+        )
+
+    def test_reconcile_identifiers_attaches_new_enrichment(self):
+        paper_id = self.service.add_paper(
+            title="A Study", paper_type="article", identifiers=[("pmid", "555555")]
+        )
+        result = self.service.reconcile_identifiers(paper_id, [("doi", "10.1000/enriched")])
+        self.assertEqual(len(result["attached"]), 1)
+
+        values = {
+            (row["scheme"], row["value"])
+            for row in self.service.identifiers.list_for_paper(paper_id)
+        }
+        self.assertEqual(values, {("pmid", "555555"), ("doi", "10.1000/enriched")})
+        # Reconciliation reindexes -- the new identifier is searchable without a
+        # separate manual reindex call.
+        result = self.service.search.search("10.1000/enriched")
+        self.assertIn(paper_id, [r["paper_id"] for r in result["results"]])
+
+    def test_reconcile_identifiers_repeated_call_is_idempotent(self):
+        paper_id = self.service.add_paper(
+            title="A Study", paper_type="article", identifiers=[("pmid", "555555")]
+        )
+        self.service.reconcile_identifiers(paper_id, [("doi", "10.1000/enriched")])
+        second = self.service.reconcile_identifiers(paper_id, [("doi", "10.1000/enriched")])
+        self.assertEqual(second["attached"], [])
+        rows = self.service.identifiers.list_for_paper(paper_id)
+        self.assertEqual(len(rows), 2)
+
+    def test_reconcile_identifiers_conflict_leaves_state_untouched_and_reports_both_ids(self):
+        paper_a = self.service.add_paper(
+            title="Paper A", paper_type="article", identifiers=[("doi", "10.1000/taken")]
+        )
+        paper_b = self.service.add_paper(
+            title="Paper B", paper_type="article", identifiers=[("pmid", "111111")]
+        )
+        before = self.service.identifiers.list_for_paper(paper_b)
+
+        with self.assertRaises(IdentifierConflictError) as ctx:
+            self.service.reconcile_identifiers(
+                paper_b, [("pmcid", "PMC999"), ("doi", "10.1000/taken")]
+            )
+        err = ctx.exception
+        self.assertEqual(err.existing_paper_id, paper_a)
+        self.assertEqual(err.new_paper_id, paper_b)
+
+        # The non-conflicting identifier in the same batch (pmcid) must NOT have
+        # been attached either -- the whole call is all-or-nothing.
+        after = self.service.identifiers.list_for_paper(paper_b)
+        self.assertEqual(before, after)
+        self.assertIsNone(
+            self.service.identifiers.find_paper_by_identifier("pmcid", "PMC999")
+        )
+
     def test_interrupted_import_corruption_is_detectable(self):
         paper_id = self.service.add_paper(title="Interrupted", paper_type="article")
         src = self.tmp / "supplement.pdf"

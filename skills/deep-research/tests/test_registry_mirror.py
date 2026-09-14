@@ -146,6 +146,122 @@ class MirrorTest(unittest.TestCase):
                     reg.commit()
             self.assertEqual(len(_papers(repo)), 1)
 
+    def test_enriching_a_pmid_only_record_with_a_doi_reconciles_onto_the_same_paper(self):
+        with TemporaryDirectory() as tmp:
+            repo = _init_repo(Path(tmp))
+            reg = registry.Registry(repo)
+            with reg.locked():
+                reg.register({"pmid": "1", "title": "Exercise for depression"})
+                reg.commit()
+            first_paper_id = registry.Registry(repo).records["pmid:1"]["refmgr_paper_id"]
+
+            # Re-register the same record, now with a DOI -- an enrichment pass,
+            # exactly what a later metadata lookup would produce.
+            reg = registry.Registry(repo)
+            with reg.locked():
+                reg.register({"pmid": "1", "title": "Exercise for depression",
+                              "doi": "10.1000/enriched"})
+                report = reg.commit()
+
+            self.assertEqual(report["errors"], [])
+            # Still one paper -- the existing refmgr_paper_id was reused, not
+            # bypassed past reconciliation.
+            papers = _papers(repo)
+            self.assertEqual(len(papers), 1)
+            self.assertEqual(papers[0]["id"], first_paper_id)
+
+            conn = sqlite3.connect(repo / "data" / "refmgr" / "library.sqlite3")
+            try:
+                rows = conn.execute(
+                    "SELECT scheme, value FROM identifiers WHERE paper_id = ?",
+                    (first_paper_id,),
+                ).fetchall()
+            finally:
+                conn.close()
+            self.assertEqual(set(rows), {("pmid", "1"), ("doi", "10.1000/enriched")})
+
+            # Repeating the same enrichment is idempotent -- no duplicate rows.
+            reg = registry.Registry(repo)
+            with reg.locked():
+                reg.register({"pmid": "1", "title": "Exercise for depression",
+                              "doi": "10.1000/enriched"})
+                reg.commit()
+            conn = sqlite3.connect(repo / "data" / "refmgr" / "library.sqlite3")
+            try:
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM identifiers WHERE paper_id = ?",
+                    (first_paper_id,),
+                ).fetchone()[0]
+            finally:
+                conn.close()
+            self.assertEqual(count, 2)
+
+    def test_conflicting_enrichment_leaves_sqlite_state_intact_and_reports_both_ids(self):
+        with TemporaryDirectory() as tmp:
+            repo = _init_repo(Path(tmp))
+            reg = registry.Registry(repo)
+            with reg.locked():
+                reg.register({"pmid": "1", "title": "Paper one",
+                              "doi": "10.1000/already-taken"})
+                reg.register({"pmid": "2", "title": "Paper two"})
+                reg.commit()
+
+            paper_one_id = registry.Registry(repo).records["pmid:1"]["refmgr_paper_id"]
+            paper_two_id = registry.Registry(repo).records["pmid:2"]["refmgr_paper_id"]
+
+            # pmid:2 is (incorrectly) enriched with pmid:1's DOI -- a genuine conflict.
+            reg = registry.Registry(repo)
+            with reg.locked():
+                reg.register({"pmid": "2", "title": "Paper two",
+                              "doi": "10.1000/already-taken"})
+                report = reg.commit()
+
+            self.assertEqual(len(report["errors"]), 1)
+            error = report["errors"][0]
+            self.assertEqual(error["kind"], "identifier_conflict")
+            self.assertEqual(error["evidence_id"], "pmid:2")
+            self.assertEqual(error["scheme"], "doi")
+            self.assertEqual(error["existing_paper_id"], paper_one_id)
+            self.assertEqual(error["conflicting_paper_id"], paper_two_id)
+
+            # pmid:2's refmgr identifiers are untouched -- still just its own pmid.
+            conn = sqlite3.connect(repo / "data" / "refmgr" / "library.sqlite3")
+            try:
+                rows = conn.execute(
+                    "SELECT scheme, value FROM identifiers WHERE paper_id = ?",
+                    (paper_two_id,),
+                ).fetchall()
+            finally:
+                conn.close()
+            self.assertEqual(set(rows), {("pmid", "2")})
+
+    def test_export_uses_primary_identifier_per_scheme(self):
+        with TemporaryDirectory() as tmp:
+            repo = _init_repo(Path(tmp))
+            reg = registry.Registry(repo)
+            with reg.locked():
+                reg.register({"pmid": "1", "title": "T1", "doi": "10.1000/preprint"})
+                reg.commit()
+            paper_id = registry.Registry(repo).records["pmid:1"]["refmgr_paper_id"]
+
+            export_select_refmgr = load_script("export_select_refmgr.py")
+            from refmgr.service import ReferenceManagerService
+            service = ReferenceManagerService(repo / "data" / "refmgr")
+            try:
+                record = export_select_refmgr.paper_to_export_record(service, paper_id)
+                self.assertEqual(record["doi"], "10.1000/preprint")
+
+                # Promote a second DOI (a published version) to primary; export
+                # must follow, using the same policy refmgr itself tracks.
+                published_id = service.identifiers.add(
+                    paper_id, "doi", "10.1000/published"
+                )
+                service.identifiers.set_primary(paper_id, published_id)
+                record = export_select_refmgr.paper_to_export_record(service, paper_id)
+                self.assertEqual(record["doi"], "10.1000/published")
+            finally:
+                service.close()
+
     def test_commit_with_mirror_disabled_writes_the_registry_only(self):
         with TemporaryDirectory() as tmp:
             repo = _init_repo(Path(tmp))
@@ -206,6 +322,118 @@ class ReindexTest(unittest.TestCase):
             payload = json.loads(run_py(["scripts/registry.py", "reindex", "--repo",
                                          str(repo), "--chunks-only"]).stdout)
             self.assertEqual(payload["chunks"]["no_paper_id"], 0)
+
+
+def _seed_fulltext_custom(repo: Path, reg, evidence_id: str, *, body: str,
+                          claim: str) -> str:
+    """Like `_seed_fulltext`, but with caller-chosen body/claim text so a test can put
+    a term ONLY in the snapshot body (never in the always-scanned claim text) to
+    isolate metadata/claim matching from chunk-index-only matching."""
+    result = store.global_write_snapshot_result(
+        repo, url=f"https://example.org/{evidence_id}", text=body, title="Snap",
+        access="full_text", origin="web", paper=None, event_type="fetch", fresh=True,
+        actor="test")
+    source_id = result["source_id"]
+    path = repo / "data" / "papers" / "extractions" / f"{registry.extraction_slug(evidence_id)}.json"
+    write_json(path, {
+        "evidence_id": evidence_id,
+        "spans": [{"claim": claim, "evidence_id": evidence_id,
+                   "source_id": source_id, "start": 0, "end": 10, "access": "full_text"}],
+    })
+    with reg.locked():
+        reg.set_extraction(evidence_id, str(path.relative_to(repo)))
+        reg.commit()
+    return source_id
+
+
+class SearchCoverageCorrectnessTest(unittest.TestCase):
+    """Regression coverage for hardening-plan package 2: a nonzero global chunk
+    count must never stand in for one specific paper's own coverage, and AND terms
+    must match across the union of metadata and body text, never only one or the
+    other."""
+
+    def _search(self, repo: Path, query: str) -> dict:
+        result = run_py(["scripts/registry.py", "search", "--repo", str(repo),
+                         "--q", query])
+        assert result.returncode in (0, 1), result.stderr
+        return json.loads(result.stdout)
+
+    def test_indexing_one_paper_does_not_suppress_results_for_an_unindexed_one(self):
+        with TemporaryDirectory() as tmp:
+            repo = _init_repo(Path(tmp))
+            reg = registry.Registry(repo)
+            with reg.locked():
+                reg.register({"pmid": "1", "title": "Paper one"})
+                reg.commit()
+            _seed_fulltext_custom(
+                repo, registry.Registry(repo), "pmid:1",
+                body="Background. " + "Filler. " * 40 + "Discussion of alpha findings.",
+                claim="unrelated claim text",
+            )
+            # Reindex now, while pmid:2 does not exist yet -- only pmid:1 gets chunked.
+            run_py(["scripts/registry.py", "reindex", "--repo", str(repo)])
+
+            reg = registry.Registry(repo)
+            with reg.locked():
+                reg.register({"pmid": "2", "title": "Paper two"})
+                reg.commit()
+            _seed_fulltext_custom(
+                repo, registry.Registry(repo), "pmid:2",
+                body="Background. " + "Filler. " * 40 + "Discussion of gammawombat findings.",
+                claim="a second unrelated claim",
+            )
+            # pmid:2 is registered and has full text, but was never (re)indexed --
+            # the chunk table now has rows for pmid:1 only, so the global count is
+            # nonzero. A term unique to pmid:2's body must still be found.
+            payload = self._search(repo, "gammawombat")
+            self.assertEqual([r["evidence_id"] for r in payload["results"]], ["pmid:2"])
+
+    def test_and_terms_match_across_title_and_indexed_body(self):
+        with TemporaryDirectory() as tmp:
+            repo = _init_repo(Path(tmp))
+            reg = registry.Registry(repo)
+            with reg.locked():
+                reg.register({"pmid": "1", "title": "Kestrelfinch therapy trial"})
+                reg.commit()
+            _seed_fulltext_custom(
+                repo, registry.Registry(repo), "pmid:1",
+                body="Background. " + "Filler. " * 40
+                    + "Results show a marked wombatolin response.",
+                claim="unrelated claim text",
+            )
+            run_py(["scripts/registry.py", "reindex", "--repo", str(repo)])
+
+            # "kestrelfinch" is only in the title (metadata); "wombatolin" is only in
+            # the chunk-indexed body. Neither term alone is in both places, so this
+            # only matches if AND is evaluated over their union.
+            payload = self._search(repo, "kestrelfinch wombatolin")
+            self.assertEqual([r["evidence_id"] for r in payload["results"]], ["pmid:1"])
+
+    def test_stale_chunker_version_falls_back_to_scanning_that_source(self):
+        with TemporaryDirectory() as tmp:
+            repo = _init_repo(Path(tmp))
+            reg = registry.Registry(repo)
+            with reg.locked():
+                reg.register({"pmid": "1", "title": "Exercise for depression"})
+                reg.commit()
+            _seed_fulltext(repo, registry.Registry(repo), "pmid:1")
+            run_py(["scripts/registry.py", "reindex", "--repo", str(repo)])
+
+            # Simulate a chunker upgrade: the indexed rows were produced by an
+            # older splitting version than what search now expects.
+            db_path = repo / "data" / "refmgr" / "library.sqlite3"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute("UPDATE chunks SET chunker_version = 0")
+                conn.commit()
+            finally:
+                conn.close()
+
+            # Coverage no longer holds at the current chunker version, so the
+            # record's own body must be scanned directly instead of silently
+            # relying on stale rows -- the result must not disappear.
+            payload = self._search(repo, "zebra biomarker")
+            self.assertEqual([r["evidence_id"] for r in payload["results"]], ["pmid:1"])
 
 
 class SearchThroughTheChunkIndexTest(unittest.TestCase):

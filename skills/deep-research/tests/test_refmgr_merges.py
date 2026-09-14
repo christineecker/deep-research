@@ -8,10 +8,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from refmgr import db
 from refmgr.repositories.attachments import AttachmentRepository
+from refmgr.repositories.chunks import ChunkRepository
+from refmgr.repositories.figures import FigureRepository
 from refmgr.repositories.identifiers import IdentifierRepository
-from refmgr.repositories.merges import MergeService
+from refmgr.repositories.merges import (
+    DeletedSurvivorError,
+    InterveningChangeError,
+    MergeService,
+    SelfMergeError,
+)
 from refmgr.repositories.organization import OrganizationRepository
 from refmgr.repositories.papers import PaperRepository
+from refmgr.repositories.search import SearchRepository
+from refmgr.repositories.terms import TermRepository
 
 
 class MergesTestBase(unittest.TestCase):
@@ -23,6 +32,10 @@ class MergesTestBase(unittest.TestCase):
         self.identifiers = IdentifierRepository(self.conn)
         self.attachments = AttachmentRepository(self.conn)
         self.organization = OrganizationRepository(self.conn)
+        self.chunks = ChunkRepository(self.conn)
+        self.terms = TermRepository(self.conn)
+        self.figures = FigureRepository(self.conn)
+        self.search = SearchRepository(self.conn)
         self.merges = MergeService(self.conn)
 
     def _add_asset(self, sha256: str) -> None:
@@ -147,6 +160,119 @@ class ExecuteMergeTest(MergesTestBase):
 
         with self.assertRaises(KeyError):
             self.merges.execute_merge("does-not-exist", self.absorbed)
+
+    def test_execute_rejects_self_merge(self):
+        with self.assertRaises(SelfMergeError):
+            self.merges.execute_merge(self.survivor, self.survivor)
+        # Nothing touched -- survivor is still alive with its own identifier.
+        self.assertIsNotNone(self.papers.get(self.survivor))
+        self.assertEqual(len(self.identifiers.list_for_paper(self.survivor)), 1)
+
+    def test_execute_rejects_deleted_survivor(self):
+        self.papers.soft_delete(self.survivor)
+        with self.assertRaises(DeletedSurvivorError):
+            self.merges.execute_merge(self.survivor, self.absorbed)
+        # Absorbed is untouched -- still alive, still owns its identifier.
+        self.assertIsNotNone(self.papers.get(self.absorbed))
+        self.assertEqual(len(self.identifiers.list_for_paper(self.absorbed)), 1)
+
+
+class MergeDependentRecordsTest(MergesTestBase):
+    def setUp(self):
+        super().setUp()
+        self.survivor = self.papers.create("Survivor Paper", "article")
+        self.absorbed = self.papers.create("Absorbed Paper", "article")
+        self.identifiers.add(self.survivor, "pmid", "1111")
+
+        self._add_asset("d" * 64)
+        self.pdf_attachment = self.attachments.link(
+            self.absorbed, "d" * 64, role="pdf", original_filename="absorbed.pdf"
+        )
+
+        self.chunks.index_source(
+            self.absorbed, "src-1", "The absorbed paper discusses zebrafish regeneration.",
+            "hash-1",
+        )
+        self.terms.set_terms(self.absorbed, [("mesh", "Zebrafish")])
+        self._add_asset("e" * 64)
+        figure_attachment = self.attachments.link(
+            self.absorbed, "e" * 64, role="figure", original_filename="fig1.png"
+        )
+        self.figure_id = self.figures.record(
+            paper_id=self.absorbed,
+            source_attachment_id=self.pdf_attachment,
+            figure_attachment_id=figure_attachment,
+            asset_sha256="e" * 64,
+            kind="figure",
+            extractor="test",
+            caption="Zebrafish regeneration over time",
+        )
+
+    def test_merge_reassigns_chunks_terms_figures_and_reindexes_fts(self):
+        merge_id = self.merges.execute_merge(self.survivor, self.absorbed)
+        self.assertTrue(merge_id)
+
+        # Chunks moved, still findable under survivor -- not silently lost.
+        chunk_hit = self.chunks.search("zebrafish")
+        self.assertTrue(chunk_hit)
+        self.assertEqual({h["paper_id"] for h in chunk_hit}, {self.survivor})
+
+        # Terms moved.
+        self.assertEqual(self.terms.for_paper(self.absorbed), {})
+        self.assertEqual(self.terms.for_paper(self.survivor), {"mesh": ["Zebrafish"]})
+
+        # Figures moved, and their captions are searchable under survivor.
+        figures = self.figures.list_for_paper(self.survivor)
+        self.assertEqual([f["id"] for f in figures], [self.figure_id])
+        self.assertEqual(self.figures.list_for_paper(self.absorbed), [])
+        figure_hit = self.figures.search("zebrafish")
+        self.assertEqual({h["paper_id"] for h in figure_hit}, {self.survivor})
+
+        # Metadata FTS: survivor's row reflects the merged identifiers;
+        # absorbed's row is gone (it's soft-deleted).
+        result = self.search.search("1111")
+        self.assertIn(self.survivor, [r["paper_id"] for r in result["results"]])
+        coverage = self.search.coverage()
+        self.assertEqual(coverage["stale_or_missing"], 0)
+
+    def test_reindex_after_merge_does_not_resurrect_duplicate(self):
+        self.merges.execute_merge(self.survivor, self.absorbed)
+        self.search.rebuild()
+        self.chunks.remove_paper(self.absorbed)  # no-op: absorbed owns nothing now
+        chunk_hit = self.chunks.search("zebrafish")
+        self.assertEqual({h["paper_id"] for h in chunk_hit}, {self.survivor})
+
+    def test_revert_moves_chunks_terms_figures_back(self):
+        merge_id = self.merges.execute_merge(self.survivor, self.absorbed)
+        self.merges.revert_merge(merge_id)
+
+        self.assertEqual(self.terms.for_paper(self.survivor), {})
+        self.assertEqual(self.terms.for_paper(self.absorbed), {"mesh": ["Zebrafish"]})
+
+        chunk_hit = self.chunks.search("zebrafish")
+        self.assertEqual({h["paper_id"] for h in chunk_hit}, {self.absorbed})
+
+        self.assertEqual(self.figures.list_for_paper(self.survivor), [])
+        figures = self.figures.list_for_paper(self.absorbed)
+        self.assertEqual([f["id"] for f in figures], [self.figure_id])
+
+    def test_revert_refuses_when_a_later_merge_moved_the_same_chunk(self):
+        merge_id = self.merges.execute_merge(self.survivor, self.absorbed)
+
+        # A second, unrelated survivor absorbs the first survivor -- which
+        # now owns the chunk this test's merge moved onto it.
+        third = self.papers.create("Third Paper", "article")
+        self.merges.execute_merge(third, self.survivor)
+
+        with self.assertRaises(InterveningChangeError):
+            self.merges.revert_merge(merge_id)
+
+        # Refused cleanly: the original merge is still recorded as not
+        # reverted, and nothing was partially moved.
+        row = self.conn.execute(
+            "SELECT reverted_at FROM merges WHERE id = ?", (merge_id,)
+        ).fetchone()
+        self.assertIsNone(row["reverted_at"])
 
 
 class RevertMergeTest(MergesTestBase):

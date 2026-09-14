@@ -127,6 +127,50 @@ class RefmgrAssetsAttachmentsTest(unittest.TestCase):
         with self.assertRaises(AssetCorruptionError):
             self.assets.stage_and_commit(source2)
 
+    def test_stage_and_commit_dedup_detects_same_size_corruption(self):
+        # Regression: reuse used to trust a matching byte_size as proof of
+        # matching bytes. Flip a byte without changing length so the size
+        # check alone would pass, and the reuse must still be rejected.
+        content = b"original content, same length!!"
+        source = self._write_source_file("orig.pdf", content)
+        digest = self.assets.stage_and_commit(source)
+
+        row = self.assets.get(digest)
+        final_path = self.tmp / row["storage_path"]
+        corrupted = bytearray(content)
+        corrupted[0] ^= 0xFF
+        self.assertEqual(len(corrupted), len(content))
+        final_path.write_bytes(bytes(corrupted))
+
+        source2 = self._write_source_file("orig2.pdf", content)
+        with self.assertRaises(AssetCorruptionError):
+            self.assets.stage_and_commit(source2)
+
+    def test_stage_and_commit_missing_stored_file_fails_visibly(self):
+        content = b"will be deleted from disk"
+        source = self._write_source_file("gone.pdf", content)
+        digest = self.assets.stage_and_commit(source)
+
+        row = self.assets.get(digest)
+        (self.tmp / row["storage_path"]).unlink()
+
+        source2 = self._write_source_file("gone2.pdf", content)
+        with self.assertRaises(AssetCorruptionError):
+            self.assets.stage_and_commit(source2)
+
+    def test_stage_and_commit_reuses_asset_across_different_extensions(self):
+        content = b"same bytes, different extension on reimport"
+        source_pdf = self._write_source_file("original.pdf", content)
+        digest_1 = self.assets.stage_and_commit(source_pdf)
+
+        source_txt = self._write_source_file("renamed.txt", content)
+        digest_2 = self.assets.stage_and_commit(source_txt)
+
+        self.assertEqual(digest_1, digest_2)
+        asset_dir = self.tmp / "assets" / "sha256" / digest_1[:2]
+        files = list(asset_dir.glob(f"{digest_1}*"))
+        self.assertEqual(len(files), 1, f"expected exactly one stored file, found {files}")
+
     # -- AttachmentRepository -------------------------------------------
 
     def test_linking_two_attachments_preserves_both(self):

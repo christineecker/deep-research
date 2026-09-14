@@ -314,6 +314,76 @@ class RebuildCoverageTest(SearchRepositoryTestBase):
         self.assertEqual(coverage_rebuilt["stale_or_missing"], 0)
         self.assertIn(another_pid, {r["paper_id"] for r in self.search.search()["results"][:10]})
 
+    def test_rebuild_batches_the_delete_and_isolates_per_paper_insert_failures(self):
+        # Regression for the batched rebuild() (hardening plan package 8): a single
+        # bad paper's failed INSERT must not stop the rest of its batch from
+        # indexing, and must not raise out of rebuild() entirely.
+        good_before = self._insert_paper("Good paper before")
+        bad_id = "bad" + uuid.uuid4().hex[3:]
+        self.conn.execute(
+            "INSERT INTO papers (id, title, paper_type, metadata_json, provenance, "
+            "created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (bad_id, "Bad paper", "journal-article", '{"abstract": "fine at first"}',
+             None, _now(), _now(), None),
+        )
+        self.conn.commit()
+        good_after = self._insert_paper("Good paper after")
+
+        first = self.search.rebuild(None, batch_size=10)
+        self.assertEqual(first["errors"], [])
+        self.assertEqual(first["indexed"], 3)
+        coverage = self.search.coverage()
+        self.assertEqual(coverage["stale_or_missing"], 0)
+
+        # Corrupt the bad paper's metadata directly (bypassing PaperRepository,
+        # which would never write invalid JSON) so a rebuild hits a real failure
+        # partway through -- same batch as two papers that must still succeed.
+        self.conn.execute(
+            "UPDATE papers SET metadata_json = 'not valid json' WHERE id = ?", (bad_id,)
+        )
+        self.conn.commit()
+
+        second = self.search.rebuild(None, batch_size=10)
+        self.assertEqual(len(second["errors"]), 1)
+        self.assertEqual(second["errors"][0]["paper_id"], bad_id)
+        self.assertEqual(second["indexed"], 2)  # the two good papers, same batch
+
+        # The bad paper ends this rebuild unindexed -- its batch's delete already
+        # ran (in bulk, before any insert was attempted) and its own insert then
+        # failed; that is the correct outcome for a rebuild (derive current state,
+        # not preserve stale content for an unindexable paper), and it is reported
+        # in `errors`/`coverage`, not silently swallowed.
+        rows = self.conn.execute(
+            "SELECT paper_id FROM papers_fts WHERE paper_id = ?", (bad_id,)
+        ).fetchall()
+        self.assertEqual(rows, [])
+        self.assertEqual(self.search.coverage()["stale_or_missing"], 1)
+
+        # The good papers in the same batch are still correctly indexed.
+        good_ids = {r["paper_id"] for r in self.search.search()["results"][:10]}
+        self.assertIn(good_before, good_ids)
+        self.assertIn(good_after, good_ids)
+
+    def test_rebuild_delete_scales_with_one_scan_per_batch_not_per_paper(self):
+        # A more direct regression than timing: the whole batch's rows are gone
+        # after ONE bulk DELETE, not needing a per-paper pass, which is what makes
+        # rebuild's delete work O(n) instead of O(n^2) (package 8 finding: an
+        # UNINDEXED FTS5 column forces a full-table SCAN per individual delete).
+        ids = [self._insert_paper(f"Paper {i}") for i in range(40)]
+        self.search.rebuild(ids, batch_size=40)
+        self.assertEqual(self.search.coverage()["indexed_papers"], 40)
+
+        plan = [
+            dict(row) for row in self.conn.execute(
+                "EXPLAIN QUERY PLAN DELETE FROM papers_fts WHERE paper_id IN "
+                "(" + ",".join("?" * len(ids)) + ")", ids
+            ).fetchall()
+        ]
+        self.assertTrue(
+            any("SCAN papers_fts" in row["detail"] for row in plan),
+            "a batched IN(...) delete still does one scan -- but only ONE, not one per id",
+        )
+
     def test_rebuild_nonexistent_id_is_a_clean_noop(self):
         result = self.search.rebuild(["does-not-exist"])
         # A nonexistent id removing a nonexistent fts row is a legitimate

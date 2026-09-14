@@ -64,12 +64,20 @@ class SearchRepository:
             self._reindex_paper_locked(paper_id)
 
     def _reindex_paper_locked(self, paper_id: str) -> None:
-        row = self.conn.execute(
-            "SELECT * FROM papers WHERE id = ?", (paper_id,)
-        ).fetchone()
         # Always clear any existing row(s) first -- covers both the
         # re-index case and the deleted/missing case below.
         self.conn.execute("DELETE FROM papers_fts WHERE paper_id = ?", (paper_id,))
+        self._insert_papers_fts_row_locked(paper_id)
+
+    def _insert_papers_fts_row_locked(self, paper_id: str) -> None:
+        """Insert this paper's current `papers_fts` row. Assumes any previous row
+        for it is already gone -- callers own clearing it first (`_reindex_paper_locked`
+        does so per-paper; `rebuild` clears a whole batch in one statement instead, see
+        below), so this never needs to check or delete anything itself.
+        """
+        row = self.conn.execute(
+            "SELECT * FROM papers WHERE id = ?", (paper_id,)
+        ).fetchone()
         if row is None or row["deleted_at"] is not None:
             return
 
@@ -101,7 +109,35 @@ class SearchRepository:
         with db.transaction(self.conn):
             self.conn.execute("DELETE FROM papers_fts WHERE paper_id = ?", (paper_id,))
 
-    def rebuild(self, paper_ids: list[str] | None = None) -> dict:
+    def rebuild(self, paper_ids: list[str] | None = None, *, batch_size: int = 500) -> dict:
+        """Rebuild `papers_fts` for `paper_ids` (or every live paper).
+
+        Measured (hardening plan package 8) doing this the naive way -- one
+        `reindex_paper()` call per paper -- is quadratic in the number of papers, not
+        linear: `papers_fts.paper_id` is an FTS5 UNINDEXED column (see
+        migrations/0002_search.sql), so `DELETE FROM papers_fts WHERE paper_id = ?`
+        has no index to use and does a full scan of the table (`EXPLAIN QUERY PLAN`
+        confirms `SCAN papers_fts VIRTUAL TABLE`) -- one such scan per paper, over a
+        table that itself has (up to) as many rows, is O(n^2). At 10k synthetic papers
+        that was tens of seconds; at 100k it stopped being a "wait a bit" cost.
+
+        The fix batches the delete: for each `batch_size`-paper chunk, ONE
+        `DELETE ... WHERE paper_id IN (...)` clears every row in that chunk in a
+        single scan, then each paper's row is inserted individually (insert has no
+        such cost -- it is not a scan). That turns the whole rebuild's delete work
+        from O(n * table_size) into O(n) total. Batching the surrounding
+        `BEGIN IMMEDIATE`/`COMMIT` into `batch_size`-paper transactions (rather than
+        one per paper) is a smaller, secondary win on top of that.
+
+        Per-paper fault isolation is preserved with a `SAVEPOINT` around each
+        paper's INSERT: one bad paper's `ROLLBACK TO SAVEPOINT` undoes only its own
+        failed insert attempt, while the rest of the batch's inserts still commit
+        together. Note the batch-wide delete already ran unconditionally before any
+        insert is attempted, so a paper whose insert then fails ends this call
+        UNINDEXED (reported in `errors`), not left with its previous stale row --
+        appropriate for a REBUILD, whose whole point is deriving current index state,
+        not preserving old content for a paper that turned out to be unindexable.
+        """
         if paper_ids is None:
             rows = self.conn.execute(
                 "SELECT id FROM papers WHERE deleted_at IS NULL"
@@ -112,14 +148,25 @@ class SearchRepository:
 
         indexed = 0
         errors: list[dict] = []
-        for paper_id in ids:
-            try:
-                # A nonexistent/already-deleted id just removes a (possibly
-                # nonexistent) fts row -- a legitimate no-op, not an error.
-                self.reindex_paper(paper_id)
-                indexed += 1
-            except Exception as exc:  # defensive: one bad paper must not abort the rest
-                errors.append({"paper_id": paper_id, "error": str(exc)})
+        for start in range(0, len(ids), max(1, batch_size)):
+            batch = ids[start:start + max(1, batch_size)]
+            with db.transaction(self.conn):
+                placeholders = ",".join("?" * len(batch))
+                self.conn.execute(
+                    f"DELETE FROM papers_fts WHERE paper_id IN ({placeholders})", batch
+                )
+                for paper_id in batch:
+                    self.conn.execute("SAVEPOINT reindex_one")
+                    try:
+                        # A nonexistent/already-deleted id inserting nothing is a
+                        # legitimate no-op, not an error.
+                        self._insert_papers_fts_row_locked(paper_id)
+                        self.conn.execute("RELEASE SAVEPOINT reindex_one")
+                        indexed += 1
+                    except Exception as exc:  # one bad paper must not abort the batch
+                        self.conn.execute("ROLLBACK TO SAVEPOINT reindex_one")
+                        self.conn.execute("RELEASE SAVEPOINT reindex_one")
+                        errors.append({"paper_id": paper_id, "error": str(exc)})
         return {"indexed": indexed, "errors": errors}
 
     def coverage(self) -> dict:

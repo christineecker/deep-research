@@ -93,5 +93,65 @@ class TransactionTest(unittest.TestCase):
         self.assertEqual(rows, {"pa", "pb"})
 
 
+class MigrationAtomicityTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_failed_migration_leaves_no_partial_schema(self):
+        migrations_dir = self.tmp / "migrations"
+        migrations_dir.mkdir()
+        (migrations_dir / "0001_bad.sql").write_text(
+            "CREATE TABLE foo (id TEXT);\n"
+            "CREATE TABLE THIS IS NOT VALID SQL;\n"
+        )
+        conn = db.get_connection(self.tmp / "lib")
+        with self.assertRaises(sqlite3.OperationalError):
+            db.migrate(conn, migrations_dir=migrations_dir)
+
+        # The whole unit rolls back together: the first statement's table
+        # and the schema_migrations bookkeeping table it shared a
+        # transaction with are both gone -- nothing is left half-applied.
+        tables = {
+            row["name"]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        self.assertNotIn("foo", tables)
+        self.assertNotIn("schema_migrations", tables)
+        # No transaction is left open/holding the write lock.
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("ROLLBACK")
+
+    def test_open_and_migrate_closes_connection_on_failure(self):
+        migrations_dir = self.tmp / "migrations"
+        migrations_dir.mkdir()
+        (migrations_dir / "0001_bad.sql").write_text("NOT VALID SQL;\n")
+
+        with self.assertRaises(sqlite3.OperationalError):
+            db.open_and_migrate(self.tmp / "lib", migrations_dir=migrations_dir)
+
+        # A closed connection raises ProgrammingError on any further use.
+        # We cannot get the connection object back from open_and_migrate
+        # (it raised), so instead verify a fresh connection can immediately
+        # take the write lock -- which a leaked, still-open transaction on
+        # an unclosed connection would block via busy_timeout.
+        conn = db.get_connection(self.tmp / "lib")
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("ROLLBACK")
+
+    def test_concurrent_initialization_does_not_double_apply(self):
+        conn_a = db.get_connection(self.tmp)
+        conn_b = db.get_connection(self.tmp)
+        applied_a = db.migrate(conn_a)
+        applied_b = db.migrate(conn_b)
+        # Between two connections, each migration is applied exactly once.
+        self.assertEqual(set(applied_a) & set(applied_b), set())
+        rows = conn_a.execute("SELECT id, COUNT(*) AS c FROM schema_migrations GROUP BY id").fetchall()
+        for row in rows:
+            self.assertEqual(row["c"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

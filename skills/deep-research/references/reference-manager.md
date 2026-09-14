@@ -15,7 +15,8 @@ reads/writes the same `data/papers/registry.jsonl` and its neighbors described i
 | Index | `registry.py reindex` | `data/refmgr/library.sqlite3` (`papers_fts`, `chunks_fts`, `paper_terms`) | Rebuilds every derived index from the registry and the snapshot store |
 | Facets | `registry.py facets` | `paper_terms` | What MeSH headings / keywords / article types / authors the library actually holds, with counts |
 | Figures | `registry.py figures` | `figures` + `figures_fts`, images as role=`figure` attachments | Crops captioned figures out of stored PDFs, and searches those captions |
-| Health | `registry.py doctor` | none — read-only | Missing or corrupt assets, dangling attachments, stale index rows, figures that lost their source |
+| Health | `registry.py doctor` | none — read-only | Missing or corrupt assets, dangling attachments, stale index rows, figures that lost their source, SQLite integrity, figure-ownership and identifier-primary consistency, untracked asset files |
+| Backup/restore | `backup.py` | writes a versioned copy under a destination you name | Consistent, checksummed backup of the registry/refmgr/snapshot stores; restore into a fresh directory with a deep integrity pass |
 | Ask | `ask.py retrieve` | none new | Hybrid retrieval over the indexes, every hit re-verified as a span; the answering command writes prose from the result |
 | Alerts | `alerts.py` | refmgr's `saved_searches` table | Saved PubMed queries, re-run on demand to report (or register) what the repo has not seen |
 | Annotations | `annotations.py` | `data/papers/annotations.jsonl` | Personal tags/star-rating/note per `evidence_id`, kept separate from the registry and from project-scoped appraisal |
@@ -74,6 +75,18 @@ Captions are indexed in `figures_fts`, not `chunks_fts`. A chunk row is a verifi
 claim span into a snapshot (`store.verify_span`); a caption read out of PDF layout
 has no such offsets, so filing it as a chunk would put unverifiable rows into an index
 whose contract is that its rows verify.
+
+**Backfill is restartable, not just skip-if-any-row-exists.** Progress is tracked in
+refmgr's `figure_extraction_state` table, one row per PDF attachment, keyed on
+`(source asset hash, extractor, dpi, max_figures)` together. A rerun only skips a PDF
+whose LAST completed attempt matches that exact configuration; anything else — never
+attempted, an interrupted attempt (killed mid-run, so no completion was ever recorded),
+a prior failure, or a changed `--dpi`/extractor version — is retried automatically, with
+no flag needed. A PDF with genuinely zero figures records that explicitly and is never
+re-scanned for it. Extraction stages every crop's bytes and attachment link first (both
+idempotent) and only then swaps the `figures` rows for that PDF in one transaction, so a
+failure partway through a `--replace` rerun leaves the previous figures completely
+intact rather than a mix of old and new, or none at all.
 
 ## Search (`registry.py search`)
 
@@ -216,22 +229,66 @@ python3 scripts/registry.py doctor --repo <path> [--deep]
 Read-only. Content-addressed storage fails quietly — a PDF deleted out from under the
 database stays invisible until an export or a reader tries to open it — so this looks for
 that on purpose: missing asset files, assets whose bytes no longer hash to their name,
-attachments pointing at absent assets or papers, orphan assets, and stale/orphaned index
-rows.
+attachments pointing at absent assets or papers, orphan assets, stale/orphaned index rows,
+SQLite structural integrity (`PRAGMA integrity_check`/`foreign_key_check`), figure rows
+whose source PDF or crop belongs to a different paper than the figure claims (a sign of an
+incompletely-applied merge), more than one identifier flagged primary for the same
+paper/scheme, chunk rows built by an earlier chunker version, and asset files on disk with
+no matching database row.
 
-Two distinctions the output depends on:
+Three distinctions the output depends on:
 
-- **Exit code 1 means data loss, not staleness.** Missing files, corrupt assets and
-  dangling attachments make the report unhealthy; un-indexed papers and orphan index rows
-  do not, because `registry.py reindex` fixes those and nothing is at risk. A library with
-  no PDFs attached yet is healthy.
+- **Exit code 1 means data loss or corruption, not staleness.** Missing files, corrupt
+  assets, dangling attachments, SQLite integrity/foreign-key failures, and
+  figure-ownership/duplicate-primary inconsistencies make the report unhealthy;
+  un-indexed papers, orphan index rows, stale-chunker-version rows, identifiers left on a
+  plainly-deleted (not merged) paper, and untracked asset files do not, because either
+  `registry.py reindex` fixes them (nothing at risk) or they are inert leftovers you can
+  clean up on your own schedule. A library with no PDFs attached yet is healthy.
 - **`--deep` re-hashes every asset**; the default trusts a matching file size and only
   hashes what already looks wrong. A shallow clean result means "nothing obviously wrong",
   not "every byte verified" — which is the trade that makes it cheap enough to run often.
+  `asset_check_mode` in the report always says which one ran.
+- **Every check here is read-only.** Nothing doctor finds is auto-repaired; it reports,
+  and you decide, including for findings a plain `reindex` cannot fix.
 
 Nothing here repairs anything. A missing or corrupt original cannot be rebuilt from the
 registry (originals are immutable by design), so the response is a restore or a
 re-import, and that is the user's call, not the script's.
+
+## Backup and restore (`backup.py`)
+
+```bash
+python3 scripts/backup.py create  --repo <path> --out <backup-dir> [--timeout SECONDS]
+python3 scripts/backup.py verify  --backup <backup-dir>
+python3 scripts/backup.py restore --backup <backup-dir> --dest <fresh-dir> [--no-deep-doctor]
+```
+
+`create` copies `data/papers/` (registry, pool, annotations, embeddings, export ledger,
+extractions, appraisals — whatever exists), `data/refmgr/` (the SQLite library via
+SQLite's own online backup API, plus the asset store), and `data/sources/` (snapshots,
+assets, event log) into a fresh directory, alongside a `backup_manifest.json` naming every
+included root, every excluded one (`runs/`, `projects/`, `templates/`, `exports/` —
+in-flight pipeline output, not the reference-manager library), and a sha256 + byte count
+for every file. `runs`/`projects`/etc. are never covered by any backup command; keep those
+under your own version control or backup policy if you need them.
+
+**Consistency**: `create` holds every advisory lock a mutating command in this repo takes
+against the registry/annotations/embeddings/export-ledger stores for the whole copy
+window, so a concurrent mutating command cannot leave the backup with a
+`registry.jsonl` that references a refmgr paper the backed-up database never saw (or vice
+versa). If another process is already holding one of those locks, `create` waits up to
+`--timeout` seconds (default 30) and then refuses explicitly rather than hanging —
+pass a larger timeout, or run during a quiet window, for a library under heavy write load.
+
+**Verification is checksum-first.** `verify` (and `restore`, before it touches anything)
+re-hashes every file the manifest names and refuses outright — no partial restore — if
+anything is missing, wrong-sized, or hash-mismatched. `restore` writes only into a fresh,
+empty destination directory; it will not overwrite an existing one, so it can never touch
+an active library by accident. After copying, it runs the same deep `doctor` pass over the
+restored library and reports `papers_restored`, so a restore's result tells you both "the
+bytes matched what was backed up" and "the restored library is internally sound" without
+you having to run `doctor` separately.
 
 ## Saved searches and alerts (`alerts.py`)
 

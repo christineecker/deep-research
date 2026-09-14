@@ -116,15 +116,23 @@ def _refmgr_paper_id(service, rec: dict, raw: dict, title: str) -> str:
 
     The registry record's own `refmgr_paper_id` is the durable idempotency
     key across repeated CLI calls -- once linked, later calls reuse it
-    directly rather than re-deriving identifiers, since a registry record
-    with no pmid/doi/pmcid (title-only) has nothing refmgr can match on.
+    directly rather than re-deriving it, since a registry record with no
+    pmid/doi/pmcid (title-only) has nothing refmgr can match on. But reuse
+    is not a shortcut past reconciliation: `raw` may carry an identifier
+    added since the paper was first linked (a PMID-only record later
+    enriched with a DOI, say), and every relevant call must attach it --
+    `reconcile_identifiers` runs on every pass, existing link or not, so an
+    enrichment is never silently dropped just because the paper already
+    exists (hardening plan package 3).
     """
+    identifiers = _refmgr_identifiers(raw)
     existing = rec.get("refmgr_paper_id")
     if existing and service.papers.get(existing) is not None:
+        service.reconcile_identifiers(existing, identifiers)
         return existing
     return service.add_paper(
         title=title, paper_type="article",
-        identifiers=_refmgr_identifiers(raw),
+        identifiers=identifiers,
     )
 
 
@@ -171,14 +179,22 @@ def extract_figures_for_attachment(service, paper_id: str, attachment_id: str, *
     store rather than the original file, which may have been moved or deleted after
     import — the stored bytes are the checksummed copy.
 
-    Returns `{"figures": n, "skipped": bool, ...}`. `skipped` is True when this
-    attachment already has figure rows and `replace` was not requested, which makes
-    a library-wide backfill re-runnable without redoing finished work.
+    Progress is tracked in `figure_extraction_state`
+    (`service.figure_extraction`), keyed on `(source_asset_sha256, extractor,
+    dpi, max_figures)` -- not on "does a figures row exist", which cannot tell a
+    complete extraction from one interrupted halfway, cannot tell a genuine
+    zero-figure PDF from one never attempted, and cannot tell a changed DPI/extractor
+    from the one already run. `should_run=False` (this call's `skipped=True`) only
+    when a PRIOR attempt already completed under the exact same configuration;
+    anything else -- never attempted, a different configuration, a prior failure, or
+    a prior attempt that never got to mark itself complete (interrupted) -- runs
+    again. `replace=True` forces a rerun even of an already-complete, unchanged
+    configuration.
+
+    Returns `{"figures": n, "skipped": bool, ...}`. `skipped` reports the figure
+    count `complete_attempt` recorded last time, not a placeholder.
     """
     import library as _library_mod
-
-    if not replace and service.figures.has_figures_for_attachment(attachment_id):
-        return {"attachment_id": attachment_id, "figures": 0, "skipped": True}
 
     attachment = next(
         (a for a in service.attachments.list_for_paper(paper_id)
@@ -186,15 +202,35 @@ def extract_figures_for_attachment(service, paper_id: str, attachment_id: str, *
     if attachment is None:
         return {"attachment_id": attachment_id, "figures": 0, "skipped": False,
                 "error": "no such attachment for this paper"}
+
+    options = {"dpi": dpi, "max_figures": max_figures}
+    state = service.figure_extraction.begin_attempt(
+        paper_id=paper_id, source_attachment_id=attachment_id,
+        source_asset_sha256=attachment["asset_sha256"], extractor=FIGURE_EXTRACTOR,
+        options=options, force=replace,
+    )
+    if not state["should_run"]:
+        return {"attachment_id": attachment_id,
+                "figures": state["figure_count"] or 0, "skipped": True}
+
     pdf_path = service.asset_path(attachment["asset_sha256"])
     if pdf_path is None or not pdf_path.exists():
+        error = "asset bytes are missing (run `registry.py doctor`)"
+        service.figure_extraction.fail_attempt(attachment_id, error)
         return {"attachment_id": attachment_id, "figures": 0, "skipped": False,
-                "error": "asset bytes are missing (run `registry.py doctor`)"}
+                "error": error}
 
-    figures = _library_mod.extract_figures(
-        pdf_path, dpi=dpi, max_figures=max_figures)
-    stored = service.import_figures(
-        paper_id, attachment_id, figures, extractor=FIGURE_EXTRACTOR, replace=replace)
+    try:
+        figures = _library_mod.extract_figures(
+            pdf_path, dpi=dpi, max_figures=max_figures)
+        stored = service.import_figures(
+            paper_id, attachment_id, figures, extractor=FIGURE_EXTRACTOR, replace=True)
+    except Exception as exc:  # a failed attempt must be recorded, not left 'running'
+        service.figure_extraction.fail_attempt(attachment_id, str(exc))
+        return {"attachment_id": attachment_id, "figures": 0, "skipped": False,
+                "error": f"figure extraction failed: {exc}"}
+
+    service.figure_extraction.complete_attempt(attachment_id, len(stored))
     return {"attachment_id": attachment_id, "figures": len(stored),
             "skipped": False, "stored": stored}
 
@@ -232,15 +268,42 @@ def _refmgr_metadata(rec: dict) -> dict:
     return out
 
 
+class AdvisoryLockTimeout(TimeoutError):
+    """Raised when `advisory_lock(..., timeout=...)` cannot acquire the lock in time."""
+
+
 @contextlib.contextmanager
-def advisory_lock(repo_root: Path, name: str):
-    """Cross-process exclusive lock, repo-scoped (`corpus.py advisory_lock` is run-scoped)."""
+def advisory_lock(repo_root: Path, name: str, *, timeout: float | None = None):
+    """Cross-process exclusive lock, repo-scoped (`corpus.py advisory_lock` is run-scoped).
+
+    `timeout=None` (the default, and every existing call site's behavior) blocks
+    indefinitely, matching a normal CLI command that should simply wait its turn.
+    A caller that must not hang forever -- `backup.py create`, which needs to refuse
+    cleanly rather than block a live library indefinitely -- passes a bound and gets
+    `AdvisoryLockTimeout` instead of an unbounded wait.
+    """
     import fcntl
+    import time as _time
+
     lock_dir = repo_paths(repo_root)["locks"]
     lock_dir.mkdir(parents=True, exist_ok=True)
     lock_path = lock_dir / f"{name}.lock"
     with open(lock_path, "a+", encoding="utf-8") as fh:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        if timeout is None:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        else:
+            deadline = _time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if _time.monotonic() >= deadline:
+                        raise AdvisoryLockTimeout(
+                            f"could not acquire {name!r} lock on {repo_root} within "
+                            f"{timeout}s — another process is writing to this repo"
+                        )
+                    _time.sleep(0.1)
         try:
             yield
         finally:
@@ -442,6 +505,7 @@ class Registry:
         # Lazy, like every other refmgr import here: nothing in this module pulls the
         # package in until a caller actually touches the library.
         import refmgr.repositories.terms as _refmgr_terms
+        from refmgr.repositories.identifiers import IdentifierConflictError
 
         own_service = service is None
         if own_service:
@@ -469,6 +533,20 @@ class Registry:
                     report["terms"] += service.terms.set_terms(
                         paper_id, _refmgr_terms.terms_from_metadata(rec))
                     report["mirrored"] += 1
+                except IdentifierConflictError as exc:
+                    # A conflicting enrichment must be reported with enough detail
+                    # to resolve by hand -- both paper identities, not just a
+                    # message -- and must leave the record (both its registry
+                    # fields and refmgr state) exactly as it was: nothing above
+                    # this point in the try block wrote anything for this record,
+                    # since `_refmgr_paper_id`/`reconcile_identifiers` validate
+                    # every identifier before attaching any of them.
+                    report["errors"].append({
+                        "evidence_id": eid, "error": str(exc), "kind": "identifier_conflict",
+                        "scheme": exc.scheme, "value": exc.value,
+                        "existing_paper_id": exc.existing_paper_id,
+                        "conflicting_paper_id": exc.new_paper_id,
+                    })
                 except Exception as exc:  # one bad record must not abort a bulk import
                     report["errors"].append({"evidence_id": eid, "error": str(exc)})
         finally:
@@ -1377,23 +1455,33 @@ def _extraction_claim_texts(extraction: dict) -> list[str]:
     return texts
 
 
+_NOT_GIVEN = object()
+
+
 def _search_text_pieces(rec: dict, repo_root: Path, project: str | None,
-                        *, include_fulltext: bool = True) -> list[str]:
+                        *, include_fulltext: bool = True, extraction=_NOT_GIVEN) -> list[str]:
     """Every text piece searched by `--q`, in the order a snippet should prefer them:
     title, abstract, journal, extraction claims/outcomes, extraction narrative fields,
     appraisal rationale, then full-text snapshot bodies (plan §1 "Keyword search").
     Missing/unreadable pieces are skipped silently — best-effort, never a hard error.
 
     `include_fulltext=False` leaves out the snapshot bodies: that is the expensive part
-    (every cited snapshot re-read and lowercased per query), and it is redundant once
-    the chunk index covers the corpus — see `_keyword_filter`."""
+    (every cited snapshot re-read and lowercased per query), and it is redundant only
+    for a record whose chunk-index coverage is current for every source it cites — see
+    `_record_chunk_coverage`/`_keyword_filter`, which decide this per record, never
+    globally.
+
+    `extraction` lets a caller that already loaded the extraction record (to compute
+    coverage, say) pass it in rather than have this function re-read the file --
+    omit it to have this function load it itself, same as before."""
     pieces: list[str] = []
     for field in ("title", "abstract", "journal"):
         val = rec.get(field)
         if isinstance(val, str) and val.strip():
             pieces.append(val.strip())
 
-    extraction = _extraction_data(rec, repo_root)
+    if extraction is _NOT_GIVEN:
+        extraction = _extraction_data(rec, repo_root)
     if extraction:
         pieces.extend(_extraction_claim_texts(extraction))
         for field in ("population", "intervention", "comparator", "limitations", "extractor_notes"):
@@ -1437,44 +1525,47 @@ def _snippet_for(pieces: list[str], terms: list[str]) -> str | None:
     return None
 
 
-def _chunk_index_hits(repo_root: Path, terms: list[str], query: str) -> dict | None:
-    """Full-text matches from refmgr's chunk index, or None when it cannot serve them.
+def _record_chunk_coverage(rec: dict, extraction: dict | None, service) -> bool:
+    """True when refmgr's chunk index currently covers every source this record cites.
 
-    Returns `{"papers": {paper_id, ...}, "snippets": {paper_id: snippet}}`. None means
-    "no usable index" — no refmgr database, or an empty chunk table — and the caller
-    falls back to scanning snapshot bodies (OPTIMIZATION_PLAN.md item 5: the index is
-    an accelerator, never a new precondition for searching).
+    Coverage is decided per record, never from the index's global row count: a nonzero
+    count proves some paper somewhere is indexed, not that THIS record's paper is, or
+    that its coverage is still current. Trusting the global count let indexing one
+    paper silently suppress full-text results for every other paper that had not been
+    (re)indexed yet -- this function is what a caller checks instead, per record, so
+    that can no longer happen (OPTIMIZATION_PLAN.md item 5 / hardening plan package 2).
+
+    A record with no `refmgr_paper_id` (never mirrored) or no cited sources at all is
+    handled by the caller's fallback path — the former has nothing to look up, and the
+    latter has nothing to miss, so both are reported as covered here would be
+    misleading; callers treat "no paper id" as "not covered" and "no sources" as
+    trivially covered.
     """
-    if not (repo_paths(repo_root)["refmgr"] / "library.sqlite3").exists():
-        return None
-    service = None
-    try:
-        service = _refmgr_service(repo_root)
-        if service.chunks.coverage()["chunks"] == 0:
-            return None
-        papers = service.chunks.papers_matching_all(terms)
-        snippets: dict[str, str] = {}
-        if papers:
-            for hit in service.chunks.search(query, limit=len(papers) * 2):
-                snippets.setdefault(hit["paper_id"], hit["snippet"])
-        return {"papers": papers, "snippets": snippets}
-    except Exception as exc:  # a broken index must degrade to the scan, not fail the search
-        print(f"registry.py: chunk index unusable ({exc}); falling back to a full scan "
-              f"— `registry.py reindex --repo {repo_root}` rebuilds it", file=sys.stderr)
-        return None
-    finally:
-        if service is not None:
-            service.close()
+    paper_id = rec.get("refmgr_paper_id")
+    if not paper_id:
+        return False
+    source_ids = _record_source_ids(rec, extraction)
+    if not source_ids:
+        return True
+    indexed = service.chunks.indexed_source_ids(paper_id)
+    return all(sid in indexed for sid in source_ids)
 
 
 def _keyword_filter(records: list[dict], args) -> tuple[list[dict], dict[str, str]]:
     """`--q "<terms>"`: lowercase-tokenized AND-match across every `_search_text_pieces`
-    source. Returns the surviving records plus a `{evidence_id: snippet}` map.
+    source, plus refmgr's chunk index for full text. Returns the surviving records plus
+    a `{evidence_id: snippet}` map.
 
-    Metadata, claims and appraisal rationale are matched in memory, as before. Full
-    text is served by refmgr's bm25 chunk index when it has rows, which is what keeps
-    the query off the "re-read every snapshot body" path; without an index the old
-    scan still runs, so behavior is identical, only slower.
+    Each record's full text is served by the chunk index ONLY when that record's own
+    coverage is current for every source it cites (`_record_chunk_coverage`); any other
+    record still gets its snapshot bodies read and scanned directly, exactly as before
+    the index existed, so an incompletely-indexed library never loses full-text
+    results — it just serves some of them slower until `reindex` catches up.
+
+    A term counts as matched for AND purposes if it occurs *anywhere* in the union of
+    a record's metadata/claims/appraisal text and its full text (scanned or
+    chunk-indexed) — never only in one or only in the other, so a query with one term
+    in the title and another only in the body still matches.
     """
     if not args.q:
         return records, {}
@@ -1482,27 +1573,64 @@ def _keyword_filter(records: list[dict], args) -> tuple[list[dict], dict[str, st
     if not terms:
         return records, {}
     repo_root = repo_paths(args.repo)["repo_root"]
-    index = _chunk_index_hits(repo_root, terms, args.q)
+
+    service = None
+    term_paper_sets: dict[str, set] | None = None
+    if (repo_paths(args.repo)["refmgr"] / "library.sqlite3").exists():
+        try:
+            service = _refmgr_service(repo_root)
+            if service.chunks.coverage()["chunks"] > 0:
+                term_paper_sets = {
+                    term: service.chunks.papers_matching_all([term]) for term in terms
+                }
+        except Exception as exc:  # a broken index must degrade to a scan, not fail search
+            print(f"registry.py: chunk index unusable ({exc}); falling back to a full "
+                  f"scan — `registry.py reindex --repo {repo_root}` rebuilds it",
+                  file=sys.stderr)
+            if service is not None:
+                service.close()
+            service = None
+            term_paper_sets = None
 
     out: list[dict] = []
     snippets: dict[str, str] = {}
-    for rec in records:
-        pieces = _search_text_pieces(rec, repo_root, args.project,
-                                     include_fulltext=index is None)
-        haystack = "\n".join(pieces).lower()
-        matched = all(term in haystack for term in terms)
-        chunk_snippet = None
-        if not matched and index is not None:
+    try:
+        for rec in records:
+            extraction = _extraction_data(rec, repo_root)
             paper_id = rec.get("refmgr_paper_id")
-            if paper_id and paper_id in index["papers"]:
-                matched = True
-                chunk_snippet = index["snippets"].get(paper_id)
-        if not matched:
-            continue
-        out.append(rec)
-        snippet = _snippet_for(pieces, terms) or chunk_snippet
-        if snippet:
-            snippets[rec["evidence_id"]] = snippet
+            covered = (
+                term_paper_sets is not None
+                and _record_chunk_coverage(rec, extraction, service)
+            )
+            pieces = _search_text_pieces(
+                rec, repo_root, args.project,
+                include_fulltext=not covered, extraction=extraction,
+            )
+            haystack = "\n".join(pieces).lower()
+
+            matched = True
+            for term in terms:
+                if term in haystack:
+                    continue
+                if covered and paper_id in term_paper_sets[term]:
+                    continue
+                matched = False
+                break
+            if not matched:
+                continue
+
+            out.append(rec)
+            chunk_snippet = None
+            if covered:
+                hits = service.chunks.search(args.q, paper_ids=[paper_id], limit=1)
+                if hits:
+                    chunk_snippet = hits[0]["snippet"]
+            snippet = _snippet_for(pieces, terms) or chunk_snippet
+            if snippet:
+                snippets[rec["evidence_id"]] = snippet
+    finally:
+        if service is not None:
+            service.close()
     return out, snippets
 
 

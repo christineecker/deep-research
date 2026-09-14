@@ -71,6 +71,51 @@ class TermRepository:
                 written += cursor.rowcount or 0
             return written
 
+    def reassign_paper(self, old_paper_id: str, new_paper_id: str) -> dict:
+        """Move every term row from one paper to another.
+
+        Used by merge/revert. `paper_terms` is `PRIMARY KEY (paper_id, scheme,
+        value_norm)`, so a term the destination paper already carries cannot be
+        moved on top of it -- that row is dropped from the source instead,
+        since the destination already holds an equivalent value. Returns
+        `{"moved": [...], "dropped_duplicates": [...]}`, both lists of
+        `{"scheme", "value", "value_norm"}`; only `moved` rows need undoing on
+        revert, since a dropped duplicate's information already survives on
+        the destination.
+        """
+        with db.transaction(self.conn):
+            return self._reassign_paper_locked(old_paper_id, new_paper_id)
+
+    def _reassign_paper_locked(self, old_paper_id: str, new_paper_id: str) -> dict:
+        rows = self.conn.execute(
+            "SELECT scheme, value, value_norm FROM paper_terms WHERE paper_id = ?",
+            (old_paper_id,),
+        ).fetchall()
+        moved, dropped = [], []
+        for row in rows:
+            scheme, value, value_norm = row["scheme"], row["value"], row["value_norm"]
+            exists = self.conn.execute(
+                "SELECT 1 FROM paper_terms WHERE paper_id = ? AND scheme = ? "
+                "AND value_norm = ?",
+                (new_paper_id, scheme, value_norm),
+            ).fetchone()
+            self.conn.execute(
+                "DELETE FROM paper_terms WHERE paper_id = ? AND scheme = ? "
+                "AND value_norm = ?",
+                (old_paper_id, scheme, value_norm),
+            )
+            entry = {"scheme": scheme, "value": value, "value_norm": value_norm}
+            if exists is not None:
+                dropped.append(entry)
+                continue
+            self.conn.execute(
+                "INSERT INTO paper_terms (paper_id, scheme, value, value_norm) "
+                "VALUES (?, ?, ?, ?)",
+                (new_paper_id, scheme, value, value_norm),
+            )
+            moved.append(entry)
+        return {"moved": moved, "dropped_duplicates": dropped}
+
     def remove_paper(self, paper_id: str) -> None:
         with db.transaction(self.conn):
             self.conn.execute("DELETE FROM paper_terms WHERE paper_id = ?", (paper_id,))

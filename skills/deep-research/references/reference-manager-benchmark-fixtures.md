@@ -6,10 +6,22 @@ Phase 0 ("Define a benchmark fixture: proposed metadata scales of 10k and
 validation targets, not promised capacity limits.") and used again in
 Phase 4's latency measurements.
 
-## Metadata-scale fixtures (synthetic)
+## Metadata-scale fixtures (synthetic) — built
 
-Two synthetic SQLite fixture generators, not built yet — specified here so
-Phase 1/4 work has an agreed shape to build against:
+`skills/deep-research/scripts/benchmark_refmgr.py` (`index`/`coverage`/`diff`
+subcommands) is the generator this section specified: deterministic
+(fixed-seed, closed-vocabulary) synthetic `Paper`/`Identifier` rows at 10k
+and 100k scale, plus a small real-snapshot-file corpus for the
+incomplete-chunk-coverage workload. It does not stub in `Attachment`/tag/
+collection distributions as originally sketched below — the actual
+bottleneck it found and fixed (`SearchRepository.rebuild()` was O(n²); see
+`BENCHMARK_RESULTS.md` at the repo root) lived in `papers_fts` indexing, not
+attachment/organization queries, so the fixture was scoped to what the
+measurement needed rather than the full distribution originally proposed.
+Revisit the richer distribution below only if a future benchmark actually
+needs it.
+
+Original spec (for reference, not current shape):
 
 - **10k-paper fixture**: 10,000 `Paper` rows with plausible field
   distributions (year range 1990–2026, ~30% missing abstract, ~5% missing
@@ -52,9 +64,10 @@ disk usage on named hardware) rather than assumed from this spec.
 
 ## Where these live
 
-Once built: synthetic fixtures as a generator script (not checked-in data) 
-under `skills/deep-research/scripts/` or a dedicated `tools/` location;
-the real PDF corpus under a `fixtures/` directory outside the installed
-plugin path — user-facing/application data stays separate from the plugin
-directory (see `skills/deep-research/references/fixtures/compat-trial/`
-for the precedent this follows).
+Synthetic fixtures: `skills/deep-research/scripts/benchmark_refmgr.py`, a
+generator script, not checked-in data — matches the plan above. The real
+PDF corpus is still not built; when it is, it belongs under a `fixtures/`
+directory outside the installed plugin path — user-facing/application data
+stays separate from the plugin directory (see
+`skills/deep-research/references/fixtures/compat-trial/` for the precedent
+this follows).

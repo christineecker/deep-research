@@ -89,6 +89,116 @@ class FigureRepository:
                 )
         return figure_id
 
+    def replace_for_attachment(self, source_attachment_id: str, specs: list[dict]) -> list[str]:
+        """Atomically swap this attachment's figure rows for `specs`.
+
+        Every dict in `specs` needs `paper_id`/`figure_attachment_id`/`asset_sha256`/
+        `kind`/`extractor` plus optional `label`/`number`/`caption`/`page`/`bbox` -- the
+        same shape `record`'s keyword arguments take. Unlike calling `record` in a loop
+        after a separate `remove_for_attachment`, the delete and every insert happen in
+        ONE transaction: a failure partway through rolls back the whole thing, leaving
+        the PREVIOUS figure rows completely intact rather than a mix of old and new (or
+        none at all). Callers needing a from-scratch changed-configuration re-extraction
+        should build `specs` in full and call this once, not delete-then-loop themselves
+        (hardening plan package 7: "stage a complete replacement, then switch atomically;
+        retain the prior result until the replacement succeeds").
+        """
+        with db.transaction(self.conn):
+            return self._replace_for_attachment_locked(source_attachment_id, specs)
+
+    def _replace_for_attachment_locked(
+        self, source_attachment_id: str, specs: list[dict]
+    ) -> list[str]:
+        old_rows = self.conn.execute(
+            "SELECT id FROM figures WHERE source_attachment_id = ?",
+            (source_attachment_id,),
+        ).fetchall()
+        for row in old_rows:
+            self.conn.execute("DELETE FROM figures_fts WHERE figure_id = ?", (row["id"],))
+        self.conn.execute(
+            "DELETE FROM figures WHERE source_attachment_id = ?", (source_attachment_id,)
+        )
+
+        now = _now()
+        figure_ids = []
+        for spec in specs:
+            figure_id = identity.new_id()
+            bbox = spec.get("bbox")
+            self.conn.execute(
+                "INSERT INTO figures (id, paper_id, source_attachment_id, "
+                "figure_attachment_id, asset_sha256, kind, label, number, caption, "
+                "page, bbox_json, extractor, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (figure_id, spec["paper_id"], source_attachment_id,
+                 spec["figure_attachment_id"], spec["asset_sha256"],
+                 spec.get("kind") or "figure", spec.get("label"), spec.get("number"),
+                 spec.get("caption"), spec.get("page"),
+                 json.dumps(bbox) if bbox is not None else None,
+                 spec["extractor"], now),
+            )
+            if spec.get("caption"):
+                self.conn.execute(
+                    "INSERT INTO figures_fts (figure_id, paper_id, caption) "
+                    "VALUES (?, ?, ?)",
+                    (figure_id, spec["paper_id"], spec["caption"]),
+                )
+            figure_ids.append(figure_id)
+        return figure_ids
+
+    def reassign_paper(self, old_paper_id: str, new_paper_id: str) -> list[str]:
+        """Move every figure (and its `figures_fts` row) from one paper to another.
+
+        Used by merge/revert. `source_attachment_id`/`asset_sha256` -- the
+        provenance of *which PDF and which crop* this figure is -- are
+        untouched; only paper ownership changes.
+        """
+        with db.transaction(self.conn):
+            return self._reassign_paper_locked(old_paper_id, new_paper_id)
+
+    def _reassign_paper_locked(self, old_paper_id: str, new_paper_id: str) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT id FROM figures WHERE paper_id = ?", (old_paper_id,)
+        ).fetchall()
+        ids = [row["id"] for row in rows]
+        if ids:
+            self.conn.execute(
+                "UPDATE figures SET paper_id = ? WHERE paper_id = ?",
+                (new_paper_id, old_paper_id),
+            )
+            self.conn.execute(
+                "UPDATE figures_fts SET paper_id = ? WHERE paper_id = ?",
+                (new_paper_id, old_paper_id),
+            )
+        return ids
+
+    def reassign_ids(self, figure_ids: list[str], new_paper_id: str) -> None:
+        """Move specific figure rows (by id) to `new_paper_id`. Used by merge
+        revert, where only the exact rows a prior merge moved should move
+        back -- never every figure the current owner happens to hold."""
+        with db.transaction(self.conn):
+            self._reassign_ids_locked(figure_ids, new_paper_id)
+
+    def _reassign_ids_locked(self, figure_ids: list[str], new_paper_id: str) -> None:
+        for figure_id in figure_ids:
+            self.conn.execute(
+                "UPDATE figures SET paper_id = ? WHERE id = ?", (new_paper_id, figure_id)
+            )
+            self.conn.execute(
+                "UPDATE figures_fts SET paper_id = ? WHERE figure_id = ?",
+                (new_paper_id, figure_id),
+            )
+
+    def current_owners(self, figure_ids: list[str]) -> dict:
+        """`{figure_id: paper_id}` for rows that still exist among `figure_ids`."""
+        if not figure_ids:
+            return {}
+        placeholders = ",".join("?" * len(figure_ids))
+        rows = self.conn.execute(
+            f"SELECT id, paper_id FROM figures WHERE id IN ({placeholders})",
+            figure_ids,
+        ).fetchall()
+        return {row["id"]: row["paper_id"] for row in rows}
+
     def remove_for_attachment(self, source_attachment_id: str) -> int:
         """Drop the figure rows derived from one PDF attachment.
 

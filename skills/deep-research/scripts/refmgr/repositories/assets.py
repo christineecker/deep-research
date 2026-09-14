@@ -79,12 +79,29 @@ class AssetRepository:
         final_path = self.library_root / relative_path
 
         existing = self.get(digest)
-        if existing is not None and final_path.exists():
-            byte_size = final_path.stat().st_size
+        if existing is not None:
+            existing_path = self.library_root / existing["storage_path"]
+            if not existing_path.exists():
+                raise AssetCorruptionError(
+                    f"asset {digest}: recorded storage_path "
+                    f"{existing['storage_path']!r} does not exist on disk"
+                )
+            byte_size = existing_path.stat().st_size
             if byte_size != existing["byte_size"]:
                 raise AssetCorruptionError(
                     f"asset {digest}: stored file size {byte_size} does not match "
                     f"recorded byte_size {existing['byte_size']}"
+                )
+            # A matching size is not proof of matching bytes -- two different
+            # files can happen to be the same length. Re-hash the *stored*
+            # file (independent of `final_path`, which is derived from the
+            # incoming filename's extension and may differ from the path the
+            # asset was originally stored under) before trusting the reuse.
+            actual_hash = _hash_file(existing_path)
+            if actual_hash != digest:
+                raise AssetCorruptionError(
+                    f"asset {digest}: stored file at {existing['storage_path']!r} "
+                    f"hashes to {actual_hash}, not its recorded sha256"
                 )
             return digest
 

@@ -228,6 +228,62 @@ class IdentifierRepositoryTest(RepoTestBase):
         with self.assertRaises(KeyError):
             self.identifiers.reassign("nonexistent", p2)
 
+    def test_first_identifier_for_a_scheme_is_primary_by_default(self):
+        paper_id = self.papers.create("Title", "article")
+        identifier_id = self.identifiers.add(paper_id, "doi", "10.1000/first")
+        rows = self.identifiers.list_for_paper(paper_id)
+        self.assertEqual(rows[0]["id"], identifier_id)
+        self.assertEqual(rows[0]["is_primary"], 1)
+
+    def test_second_identifier_for_same_scheme_is_not_primary(self):
+        paper_id = self.papers.create("Title", "article")
+        first = self.identifiers.add(paper_id, "doi", "10.1000/first")
+        second = self.identifiers.add(paper_id, "doi", "10.1000/second")
+        by_id = {r["id"]: r for r in self.identifiers.list_for_paper(paper_id)}
+        self.assertEqual(by_id[first]["is_primary"], 1)
+        self.assertEqual(by_id[second]["is_primary"], 0)
+
+    def test_primary_for_scheme_prefers_flagged_row_over_earliest(self):
+        paper_id = self.papers.create("Title", "article")
+        first = self.identifiers.add(paper_id, "doi", "10.1000/first")
+        second = self.identifiers.add(paper_id, "doi", "10.1000/second")
+        self.assertEqual(
+            self.identifiers.primary_for_scheme(paper_id, "doi")["id"], first
+        )
+        self.identifiers.set_primary(paper_id, second)
+        self.assertEqual(
+            self.identifiers.primary_for_scheme(paper_id, "doi")["id"], second
+        )
+        # Demoted, not deleted -- still a retained alias.
+        values = {r["value"] for r in self.identifiers.list_for_paper(paper_id)}
+        self.assertEqual(values, {"10.1000/first", "10.1000/second"})
+
+    def test_set_primary_wrong_paper_raises_valueerror(self):
+        p1 = self.papers.create("Paper 1", "article")
+        p2 = self.papers.create("Paper 2", "article")
+        identifier_id = self.identifiers.add(p1, "doi", "10.1000/xyz")
+        with self.assertRaises(ValueError):
+            self.identifiers.set_primary(p2, identifier_id)
+
+    def test_primary_for_scheme_with_no_identifiers_returns_none(self):
+        paper_id = self.papers.create("Title", "article")
+        self.assertIsNone(self.identifiers.primary_for_scheme(paper_id, "doi"))
+
+    def test_normalize_primaries_collapses_duplicate_primary_flags(self):
+        paper_id = self.papers.create("Title", "article")
+        first = self.identifiers.add(paper_id, "doi", "10.1000/first")
+        second = self.identifiers.add(paper_id, "doi", "10.1000/second")
+        # Force both rows to be flagged primary directly, simulating what a
+        # merge that moves an already-primary alias onto a paper with its own
+        # settled primary could otherwise produce.
+        self.conn.execute(
+            "UPDATE identifiers SET is_primary = 1 WHERE paper_id = ?", (paper_id,)
+        )
+        self.identifiers.normalize_primaries(paper_id)
+        by_id = {r["id"]: r for r in self.identifiers.list_for_paper(paper_id)}
+        self.assertEqual(by_id[first]["is_primary"], 1)
+        self.assertEqual(by_id[second]["is_primary"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

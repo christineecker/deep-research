@@ -28,11 +28,137 @@ from __future__ import annotations
 from pathlib import Path
 
 from .repositories.assets import _hash_file
+from .repositories.chunks import CHUNKER_VERSION
 
 
 def _asset_rows(conn) -> list[dict]:
     return [dict(row) for row in conn.execute(
         "SELECT sha256, byte_size, storage_path FROM assets ORDER BY sha256")]
+
+
+def check_sqlite_integrity(conn) -> dict:
+    """SQLite's own structural checks: page-level corruption and dangling foreign keys.
+
+    Both are cheap relative to hashing assets, so unlike `check_assets` there is no
+    shallow/deep split here -- this always runs at full strength. A non-'ok' integrity
+    row or any foreign-key violation means the database file itself is damaged, not
+    merely that a derived index is stale; that distinction is why these count toward
+    `problems` while index-staleness findings elsewhere do not.
+    """
+    integrity_rows = [row[0] for row in conn.execute("PRAGMA integrity_check").fetchall()]
+    ok = integrity_rows == ["ok"]
+    fk_violations = [
+        {"table": row[0], "rowid": row[1], "parent": row[2], "fkid": row[3]}
+        for row in conn.execute("PRAGMA foreign_key_check").fetchall()
+    ]
+    return {
+        "integrity_ok": ok,
+        "integrity_errors": [] if ok else integrity_rows,
+        "foreign_key_violations": fk_violations,
+    }
+
+
+def check_figure_ownership(conn) -> dict:
+    """Figure rows whose source PDF or crop attachment belongs to a DIFFERENT paper
+    than the figure row itself claims.
+
+    `check_figures` (below) only checks that the referenced attachment/asset rows
+    still EXIST; this checks that the reference is semantically correct. The two
+    diverge after an incompletely-applied merge or a direct `attachments.reassign`
+    that moved an attachment without also moving the figure rows derived from it --
+    existence alone would miss that the figure now points at the right row for the
+    wrong paper.
+    """
+    mismatched_source = [dict(row) for row in conn.execute(
+        "SELECT f.id AS figure_id, f.paper_id AS figure_paper_id, "
+        "at.paper_id AS attachment_paper_id FROM figures f "
+        "JOIN attachments at ON at.id = f.source_attachment_id "
+        "WHERE at.paper_id != f.paper_id ORDER BY f.id")]
+    mismatched_figure_attachment = [dict(row) for row in conn.execute(
+        "SELECT f.id AS figure_id, f.paper_id AS figure_paper_id, "
+        "at.paper_id AS attachment_paper_id FROM figures f "
+        "JOIN attachments at ON at.id = f.figure_attachment_id "
+        "WHERE at.paper_id != f.paper_id ORDER BY f.id")]
+    return {
+        "figures_with_wrong_source_owner": mismatched_source,
+        "figures_with_wrong_crop_owner": mismatched_figure_attachment,
+    }
+
+
+def check_identifier_consistency(conn) -> dict:
+    """Identifier bookkeeping that should never happen if merge/reconcile stayed
+    consistent, but is cheap to verify rather than assume.
+
+    `identifiers_on_deleted_papers`: a reassign/merge step that soft-deletes a paper
+    without first moving its identifiers off would leave one stranded here.
+    `duplicate_primary_schemes`: `refmgr.repositories.identifiers.normalize_primaries`
+    is supposed to guarantee at most one `is_primary` row per (paper_id, scheme) --
+    this is the check that verifies that guarantee actually held, rather than trusting
+    call sites to have remembered to call it.
+    """
+    on_deleted = [dict(row) for row in conn.execute(
+        "SELECT i.id AS identifier_id, i.paper_id AS paper_id, i.scheme AS scheme, "
+        "i.value AS value FROM identifiers i "
+        "JOIN papers p ON p.id = i.paper_id "
+        "WHERE p.deleted_at IS NOT NULL ORDER BY i.id")]
+    duplicate_primary = [dict(row) for row in conn.execute(
+        "SELECT paper_id, scheme, COUNT(*) AS primary_count FROM identifiers "
+        "WHERE is_primary = 1 GROUP BY paper_id, scheme HAVING COUNT(*) > 1 "
+        "ORDER BY paper_id, scheme")]
+    return {
+        "identifiers_on_deleted_papers": on_deleted,
+        "duplicate_primary_schemes": duplicate_primary,
+    }
+
+
+def check_chunk_staleness(conn) -> dict:
+    """How much of the chunk index was built by an earlier `CHUNKER_VERSION`.
+
+    A stale-version row is neither corrupt nor missing -- the text it was split from
+    may be perfectly current -- but `search --q` (registry.py `_record_chunk_coverage`)
+    will not trust it, so a paper stuck here effectively falls back to a full scan
+    until `registry.py reindex` re-chunks it. Rebuildable drift, not data loss: this
+    never counts toward `problems`.
+    """
+    total = conn.execute("SELECT COUNT(*) AS c FROM chunks").fetchone()["c"]
+    stale = conn.execute(
+        "SELECT COUNT(*) AS c FROM chunks WHERE chunker_version != ?",
+        (CHUNKER_VERSION,),
+    ).fetchone()["c"]
+    stale_papers = conn.execute(
+        "SELECT COUNT(DISTINCT paper_id) AS c FROM chunks WHERE chunker_version != ?",
+        (CHUNKER_VERSION,),
+    ).fetchone()["c"]
+    return {
+        "current_chunker_version": CHUNKER_VERSION,
+        "chunks_total": total,
+        "chunks_at_stale_version": stale,
+        "papers_with_stale_chunks": stale_papers,
+    }
+
+
+def check_untracked_asset_files(conn, library_root: Path) -> dict:
+    """Files under `assets/sha256/` with no corresponding `assets` row.
+
+    Harmless retained bytes, not corruption or missing canonical data: a writer that
+    staged a file and crashed before its `INSERT` (package 1 keeps filesystem staging
+    outside the database write lock, so this is possible by design, not a bug), or a
+    file left behind by a since-reverted operation. Never counts toward `problems` --
+    an operator can delete these freely, but this never does so itself (read-only).
+    """
+    assets_root = Path(library_root) / "assets" / "sha256"
+    if not assets_root.is_dir():
+        return {"untracked_files": []}
+    known = {row["sha256"] for row in _asset_rows(conn)}
+    untracked = []
+    for prefix_dir in sorted(p for p in assets_root.iterdir() if p.is_dir()):
+        for path in sorted(prefix_dir.iterdir()):
+            if not path.is_file():
+                continue
+            stem = path.name.split(".", 1)[0]
+            if stem not in known:
+                untracked.append(str(path.relative_to(library_root)))
+    return {"untracked_files": untracked}
 
 
 def check_assets(conn, library_root: Path, *, deep: bool = False) -> dict:
@@ -166,21 +292,79 @@ _PROBLEM_KEYS = ("missing_files", "corrupt_assets", "orphan_attachments",
                  "attachments_without_paper", "figures_without_source",
                  "figures_without_asset")
 
+#: Nested problem lists reached via `report[section][key]` rather than top-level.
+_NESTED_PROBLEM_KEYS = (
+    ("integrity", "integrity_errors"),
+    ("integrity", "foreign_key_violations"),
+    ("figure_ownership", "figures_with_wrong_source_owner"),
+    ("figure_ownership", "figures_with_wrong_crop_owner"),
+    ("identifiers", "duplicate_primary_schemes"),
+)
+
 
 def run(service, *, deep: bool = False) -> dict:
-    """Full report. `service` is a `ReferenceManagerService`."""
+    """Full report. `service` is a `ReferenceManagerService`.
+
+    Every check here is read-only and inspects the library as it currently stands --
+    nothing migrates, repairs, or otherwise modifies it. Findings are kept in three
+    distinct buckets rather than one flat problem list, per the plan's "separate
+    corruption, missing canonical data, rebuildable index drift, and harmless
+    retained files": `problems` (corruption/missing canonical data -- these make
+    `healthy` False), `indexes`/`chunk_staleness` (rebuildable derived-index drift --
+    never a problem), and `untracked_files` (harmless retained bytes -- never a
+    problem, never touched).
+    """
     conn = service.conn
     report = {"library_root": str(service.library_root)}
     report.update(check_assets(conn, service.library_root, deep=deep))
+    report["asset_check_mode"] = "deep" if deep else "shallow"
     report.update(check_links(conn))
     report.update(check_figures(conn))
     report["indexes"] = check_indexes(conn)
+    report["integrity"] = check_sqlite_integrity(conn)
+    report["figure_ownership"] = check_figure_ownership(conn)
+    report["identifiers"] = check_identifier_consistency(conn)
+    report["chunk_staleness"] = check_chunk_staleness(conn)
+    report["untracked_files"] = check_untracked_asset_files(
+        conn, service.library_root)["untracked_files"]
 
     problems = {key: len(report[key]) for key in _PROBLEM_KEYS if report.get(key)}
+    for section, key in _NESTED_PROBLEM_KEYS:
+        value = report.get(section, {}).get(key)
+        if value:
+            problems[f"{section}.{key}"] = len(value)
     report["problems"] = problems
     report["healthy"] = not problems
 
     advice: list[str] = []
+    if not report["integrity"]["integrity_ok"]:
+        advice.append("SQLite integrity_check reported structural corruption in the "
+                      "database file itself; stop writing to this library and restore "
+                      "from a backup rather than continuing to use it")
+    if report["integrity"]["foreign_key_violations"]:
+        advice.append("foreign key violations found — a row references a parent that "
+                      "no longer exists; this should be unreachable via the repository "
+                      "layer and points at direct/out-of-band database edits")
+    if (report["figure_ownership"]["figures_with_wrong_source_owner"]
+            or report["figure_ownership"]["figures_with_wrong_crop_owner"]):
+        advice.append("figure rows reference an attachment owned by a different paper "
+                      "— an incompletely-applied merge or a direct attachment reassign; "
+                      "reconcile paper ownership by hand, this is not rebuildable")
+    if report["identifiers"]["identifiers_on_deleted_papers"]:
+        advice.append("identifiers still point at a soft-deleted paper — expected for "
+                      "a plain delete (they are not freed for reuse), but worth a look "
+                      "if that paper was meant to be absorbed by a merge instead")
+    if report["identifiers"]["duplicate_primary_schemes"]:
+        advice.append("more than one identifier is flagged primary for the same "
+                      "paper/scheme — run refmgr.repositories.identifiers."
+                      "normalize_primaries for the affected paper(s)")
+    if report["chunk_staleness"]["chunks_at_stale_version"]:
+        advice.append("some chunk rows were built by an earlier chunker version — "
+                      "`registry.py reindex` will re-split them; no data is at risk")
+    if report["untracked_files"]:
+        advice.append("files under assets/ have no matching database row — harmless "
+                      "leftovers from an interrupted import; safe to delete by hand, "
+                      "doctor never deletes them itself")
     if report["missing_files"]:
         advice.append("missing asset files cannot be rebuilt from the registry — restore "
                       "them from backup, or re-import the PDFs")

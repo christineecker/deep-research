@@ -13,14 +13,17 @@ re-imports and "ambiguous paper matches require review"
 
 from __future__ import annotations
 
+import json
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
-from . import db
+from . import db, identity
 from .repositories.assets import AssetRepository
 from .repositories.attachments import AttachmentRepository
 from .repositories.audit import AuditRepository
 from .repositories.chunks import ChunkRepository
+from .repositories.figure_extraction import FigureExtractionStateRepository
 from .repositories.figures import FigureRepository
 from .repositories.identifiers import IdentifierConflictError, IdentifierRepository
 from .repositories.organization import OrganizationRepository
@@ -28,6 +31,10 @@ from .repositories.papers import PaperRepository
 from .repositories.saved_searches import SavedSearchRepository
 from .repositories.search import SearchRepository
 from .repositories.terms import TermRepository
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class ReferenceManagerService:
@@ -45,6 +52,7 @@ class ReferenceManagerService:
         self.terms = TermRepository(self.conn)
         self.saved_searches = SavedSearchRepository(self.conn)
         self.figures = FigureRepository(self.conn)
+        self.figure_extraction = FigureExtractionStateRepository(self.conn)
 
     def reindex_paper(self, paper_id: str) -> None:
         """Bring the search index up to date for one paper.
@@ -90,29 +98,89 @@ class ReferenceManagerService:
         """
         identifiers = identifiers or []
 
-        existing_paper_id = None
-        for scheme, raw_value in identifiers:
-            found = self.identifiers.find_paper_by_identifier(scheme, raw_value)
-            if found is None:
-                continue
-            if existing_paper_id is None:
-                existing_paper_id = found
-            elif found != existing_paper_id:
-                raise IdentifierConflictError(scheme, raw_value, existing_paper_id, found)
-
-        if existing_paper_id is not None:
+        # Paper lookup/create, every identifier attachment, and the FTS
+        # reindex all happen inside one transaction: a conflict discovered
+        # partway through (or any other failure) must not leave a paper
+        # created with only some of its identifiers attached, or a paper
+        # attached to identifiers but never indexed.
+        with db.transaction(self.conn):
+            existing_paper_id = None
             for scheme, raw_value in identifiers:
-                self.identifiers.add(existing_paper_id, scheme, raw_value)
-            self.reindex_paper(existing_paper_id)
-            return existing_paper_id
+                found = self.identifiers.find_paper_by_identifier(scheme, raw_value)
+                if found is None:
+                    continue
+                if existing_paper_id is None:
+                    existing_paper_id = found
+                elif found != existing_paper_id:
+                    raise IdentifierConflictError(scheme, raw_value, existing_paper_id, found)
 
-        paper_id = self.papers.create(
-            title=title, paper_type=paper_type, metadata=metadata, provenance=provenance
-        )
-        for scheme, raw_value in identifiers:
-            self.identifiers.add(paper_id, scheme, raw_value)
-        self.reindex_paper(paper_id)
+            if existing_paper_id is not None:
+                paper_id = existing_paper_id
+            else:
+                paper_id = self.papers._create_locked(
+                    paper_id=identity.new_id(),
+                    title=title,
+                    paper_type=paper_type,
+                    metadata_json=json.dumps(metadata or {}),
+                    provenance=provenance,
+                    now=_now(),
+                )
+
+            for scheme, raw_value in identifiers:
+                normalized = identity.normalize_identifier(scheme, raw_value)
+                self.identifiers._add_locked(paper_id, scheme, normalized)
+
+            self.search._reindex_paper_locked(paper_id)
+
         return paper_id
+
+    def reconcile_identifiers(
+        self, paper_id: str, identifiers: list[tuple[str, str]]
+    ) -> dict:
+        """Attach any of `identifiers` not yet linked to `paper_id`, atomically.
+
+        This is what an already-mirrored record must go through on every later
+        pass, instead of an existing `refmgr_paper_id` short-circuiting straight
+        past identifier attachment: a PMID-only record enriched with a DOI later
+        needs that DOI reconciled onto the SAME paper, not silently dropped.
+
+        Every given identifier is checked against its current owner BEFORE
+        anything is written: if any of them already points at a different paper,
+        the whole call is rejected with `IdentifierConflictError` (carrying both
+        paper ids) and nothing is attached -- not even the other, non-conflicting
+        identifiers in the same batch. A conflicting enrichment must never leave a
+        paper with only some of a record's new identifiers reconciled; the
+        caller's previous state stays exactly as it was, and the conflict is
+        reported for manual review rather than guessed at.
+
+        A value already attached to `paper_id` (regardless of scheme) is a no-op.
+        Returns `{"paper_id": ..., "attached": [identifier_id, ...]}` for the
+        identifiers this call actually added.
+        """
+        if self.papers.get(paper_id) is None:
+            raise KeyError(paper_id)
+        identifiers = identifiers or []
+
+        with db.transaction(self.conn):
+            for scheme, raw_value in identifiers:
+                owner = self.identifiers.find_paper_by_identifier(scheme, raw_value)
+                if owner is not None and owner != paper_id:
+                    normalized = identity.normalize_identifier(scheme, raw_value)
+                    raise IdentifierConflictError(scheme, normalized, owner, paper_id)
+
+            attached = []
+            for scheme, raw_value in identifiers:
+                normalized = identity.normalize_identifier(scheme, raw_value)
+                before = self.identifiers.find_paper_by_identifier(scheme, raw_value)
+                identifier_id = self.identifiers._add_locked(paper_id, scheme, normalized)
+                if before is None:
+                    attached.append(identifier_id)
+
+            if attached:
+                self.identifiers._normalize_primaries_locked(paper_id)
+                self.search._reindex_paper_locked(paper_id)
+
+        return {"paper_id": paper_id, "attached": attached}
 
     def import_attachment(
         self,
@@ -177,14 +245,19 @@ class ReferenceManagerService:
 
         Idempotent: re-running the same extractor over the same PDF re-derives
         identical bytes, which dedupe to the same asset and collide on the figure
-        table's uniqueness key. Pass `replace=True` to drop the previous rows
-        first, which is what a *changed* extractor wants (the old crops' assets
-        survive; only the derived rows are rebuilt).
-        """
-        if replace:
-            self.figures.remove_for_attachment(source_attachment_id)
+        table's uniqueness key.
 
-        stored: list[dict] = []
+        `replace=True` is what a *changed* extractor/configuration wants: every
+        `figure`'s bytes are staged as an asset and linked as a figure attachment
+        FIRST -- both idempotent, safe to redo on any retry -- and only once all of
+        that has succeeded does `FigureRepository.replace_for_attachment` swap the
+        `figures`/`figures_fts` rows for this attachment in a single transaction.
+        A failure at any point before that final call leaves the PREVIOUS figure
+        rows completely untouched (hardening plan package 7: "retain the prior
+        result until the replacement succeeds") -- there is no window where the old
+        rows are gone but the new ones are not yet all present.
+        """
+        prepared: list[dict] = []
         for figure in figures:
             png_bytes = figure.get("png_bytes")
             if not png_bytes:
@@ -199,22 +272,46 @@ class ReferenceManagerService:
 
             figure_attachment_id = self._figure_attachment_id(
                 paper_id, asset_sha256, figure)
+            prepared.append({
+                "paper_id": paper_id,
+                "figure_attachment_id": figure_attachment_id,
+                "asset_sha256": asset_sha256,
+                "kind": figure.get("kind") or "figure",
+                "extractor": extractor,
+                "label": figure.get("label"),
+                "number": figure.get("number"),
+                "caption": figure.get("caption"),
+                "page": figure.get("page"),
+                "bbox": figure.get("bbox"),
+            })
+
+        if replace:
+            figure_ids = self.figures.replace_for_attachment(source_attachment_id, prepared)
+            return [
+                {"figure_id": figure_id, "asset_sha256": spec["asset_sha256"],
+                 "attachment_id": spec["figure_attachment_id"],
+                 "label": spec["label"], "page": spec["page"]}
+                for figure_id, spec in zip(figure_ids, prepared)
+            ]
+
+        stored: list[dict] = []
+        for spec in prepared:
             figure_id = self.figures.record(
-                paper_id=paper_id,
+                paper_id=spec["paper_id"],
                 source_attachment_id=source_attachment_id,
-                figure_attachment_id=figure_attachment_id,
-                asset_sha256=asset_sha256,
-                kind=figure.get("kind") or "figure",
-                extractor=extractor,
-                label=figure.get("label"),
-                number=figure.get("number"),
-                caption=figure.get("caption"),
-                page=figure.get("page"),
-                bbox=figure.get("bbox"),
+                figure_attachment_id=spec["figure_attachment_id"],
+                asset_sha256=spec["asset_sha256"],
+                kind=spec["kind"],
+                extractor=spec["extractor"],
+                label=spec["label"],
+                number=spec["number"],
+                caption=spec["caption"],
+                page=spec["page"],
+                bbox=spec["bbox"],
             )
-            stored.append({"figure_id": figure_id, "asset_sha256": asset_sha256,
-                           "attachment_id": figure_attachment_id,
-                           "label": figure.get("label"), "page": figure.get("page")})
+            stored.append({"figure_id": figure_id, "asset_sha256": spec["asset_sha256"],
+                           "attachment_id": spec["figure_attachment_id"],
+                           "label": spec["label"], "page": spec["page"]})
         return stored
 
     def _figure_attachment_id(self, paper_id: str, asset_sha256: str,
