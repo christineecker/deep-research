@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:ital,wght@0,400;0,500;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:ital,wght@0,400;0,500;1,400&family=Kalam:wght@400;700&display=swap');
 
 :root {
   color-scheme: dark;
@@ -378,6 +378,61 @@ p {
   color: var(--accent);
   background: transparent;
   padding: 0;
+}
+
+.sketch-diagram {
+  margin: 20px 0 28px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  max-width: 1150px;
+  overflow-x: auto;
+}
+
+.sketch-diagram svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.sketch-diagram figcaption {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.sketch-rect {
+  fill: var(--surface-alt);
+  stroke: var(--ink);
+  stroke-width: 2;
+}
+
+.sketch-rect.is-root {
+  stroke: var(--accent);
+  fill: var(--accent-soft);
+}
+
+.sketch-rect.is-file {
+  stroke: var(--muted);
+}
+
+.sketch-line {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.75;
+}
+
+.sketch-text-title {
+  font-family: "Kalam", cursive;
+  font-weight: 700;
+  fill: var(--ink);
+}
+
+.sketch-text-sub {
+  font-family: "Kalam", cursive;
+  font-weight: 400;
+  fill: var(--muted);
 }
 
 table {

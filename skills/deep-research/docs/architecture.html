@@ -53,7 +53,62 @@
       <p><code>--wiki</code> and <code>--repo</code> are mutually exclusive per invocation, not per script — most commands accept either. Everything about the pipeline's <em>shape</em> is identical between them; only the root and which script handles pool/PDF intake differ.</p>
 
       <h2>Layout</h2>
-      <p>Exactly what <code>research.py init &lt;path&gt;</code> creates, plus the directories that appear on first use:</p>
+      <p>Exactly what <code>research.py init &lt;path&gt;</code> creates, plus the directories that appear on first use. Sketch first, exact tree below it:</p>
+
+      <figure class="sketch-diagram">
+        <svg viewBox="0 0 960 400" role="img" aria-labelledby="repo-diagram-title">
+          <title id="repo-diagram-title">Repo root folder structure, hand-drawn diagram</title>
+          <filter id="sketchRepo" x="-10%" y="-10%" width="120%" height="120%">
+            <feTurbulence type="fractalNoise" baseFrequency="0.018" numOctaves="2" seed="7" result="n"/>
+            <feDisplacementMap in="SourceGraphic" in2="n" scale="3.2"/>
+          </filter>
+          <g filter="url(#sketchRepo)">
+            <path class="sketch-line" d="M170,222 C195,222 205,110 230,110"/>
+            <path class="sketch-line" d="M170,222 C195,222 205,166 230,166"/>
+            <path class="sketch-line" d="M170,222 C195,222 205,222 230,222"/>
+            <path class="sketch-line" d="M170,222 C195,222 205,278 230,278"/>
+            <path class="sketch-line" d="M170,222 C195,222 205,334 230,334"/>
+            <path class="sketch-line" d="M460,110 C485,110 495,48 520,48"/>
+            <path class="sketch-line" d="M460,110 C485,110 495,110 520,110"/>
+            <path class="sketch-line" d="M460,110 C485,110 495,172 520,172"/>
+            <rect class="sketch-rect is-root" x="20" y="197" width="150" height="50" rx="9"/>
+            <rect class="sketch-rect" x="230" y="90" width="230" height="40" rx="8"/>
+            <rect class="sketch-rect" x="230" y="146" width="230" height="40" rx="8"/>
+            <rect class="sketch-rect" x="230" y="202" width="230" height="40" rx="8"/>
+            <rect class="sketch-rect" x="230" y="258" width="230" height="40" rx="8"/>
+            <rect class="sketch-rect" x="230" y="314" width="230" height="40" rx="8"/>
+            <rect class="sketch-rect is-file" x="520" y="24" width="380" height="48" rx="8"/>
+            <rect class="sketch-rect is-file" x="520" y="86" width="380" height="48" rx="8"/>
+            <rect class="sketch-rect is-file" x="520" y="148" width="380" height="48" rx="8"/>
+          </g>
+          <text class="sketch-text-title" x="95" y="227" font-size="15" text-anchor="middle">&lt;repo&gt;/</text>
+
+          <text class="sketch-text-title" x="345" y="112" font-size="14" text-anchor="middle">data/</text>
+          <text class="sketch-text-sub" x="345" y="124" font-size="9.5" text-anchor="middle">registry · snapshots · refmgr index</text>
+
+          <text class="sketch-text-title" x="345" y="168" font-size="14" text-anchor="middle">projects/&lt;slug&gt;/</text>
+          <text class="sketch-text-sub" x="345" y="180" font-size="9.5" text-anchor="middle">protocol · synthesis · manuscript.qmd · refs.bib</text>
+
+          <text class="sketch-text-title" x="345" y="226" font-size="14" text-anchor="middle">runs/&lt;slug&gt;/</text>
+          <text class="sketch-text-sub" x="345" y="238" font-size="9.5" text-anchor="middle">same shape as a wiki-backed run</text>
+
+          <text class="sketch-text-title" x="345" y="283" font-size="14" text-anchor="middle">templates/</text>
+
+          <text class="sketch-text-title" x="345" y="333" font-size="14" text-anchor="middle">exports/</text>
+          <text class="sketch-text-sub" x="345" y="345" font-size="9.5" text-anchor="middle">wiki · bib · html · docx · pdf</text>
+
+          <text class="sketch-text-title" x="710" y="46" font-size="14" text-anchor="middle">papers/</text>
+          <text class="sketch-text-sub" x="710" y="60" font-size="9.5" text-anchor="middle">registry.jsonl · extractions/ · appraisals/&lt;project&gt;/ · annotations.jsonl</text>
+
+          <text class="sketch-text-title" x="710" y="108" font-size="14" text-anchor="middle">sources/</text>
+          <text class="sketch-text-sub" x="710" y="122" font-size="9.5" text-anchor="middle">snapshots/ (write-once) · events.jsonl (retrieval log)</text>
+
+          <text class="sketch-text-title" x="710" y="170" font-size="14" text-anchor="middle">refmgr/</text>
+          <text class="sketch-text-sub" x="710" y="184" font-size="9.5" text-anchor="middle">library.sqlite3 · assets/sha256/&lt;xx&gt;/ (content-addressed PDFs)</text>
+        </svg>
+        <figcaption>Root → top-level directories → <code>data/</code>'s three stores. Files inside each directory are listed in the tree below.</figcaption>
+      </figure>
+
       <pre><code>&lt;repo&gt;/
   data/
     refmgr/                 # created on first PDF intake or `registry.py reindex`
